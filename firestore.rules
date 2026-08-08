@@ -1,0 +1,18 @@
+rules_version = '2';
+
+// hamster Firestore security rules.
+//
+// All Firestore access in this app goes through the backend, which uses the
+// Firebase Admin SDK. The Admin SDK runs with service-account privileges and
+// bypasses these rules entirely, so the app keeps functioning normally.
+//
+// No client (the React frontend or anything else) ever reads or writes
+// Firestore directly — the frontend only uses Firebase Auth and talks to the
+// backend API. Therefore direct client access is denied across the board.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
