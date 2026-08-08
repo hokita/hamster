@@ -1,0 +1,17 @@
+{
+  "name": "hamster-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0",
+    "firebase-tools": "^15.22.0"
+  },
+  "volta": {
+    "node": "24.17.0"
+  }
+}
