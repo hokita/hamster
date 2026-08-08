@@ -47,7 +47,7 @@ npm install
 npm run dev              # starts on :5173
 ```
 
-Open http://localhost:5173 and sign in with the Google account listed in `ALLOWED_EMAILS`.
+Open http://localhost:5173 and sign in — locally, sign-in goes through the Auth emulator's fake identity picker, so type the email listed in `ALLOWED_EMAILS` when prompted.
 
 ## Tests
 
@@ -65,6 +65,8 @@ cd e2e && npm test        # runs emulators + backend + frontend automatically
 | `FIREBASE_PROJECT_ID` | Firebase project ID (`demo-hamster` for local dev — no real GCP project needed) |
 | `FRONTEND_URL` | Frontend origin for CORS |
 | `PORT` | Port the backend listens on |
+| `FIRESTORE_EMULATOR_HOST` | Host:port of the Firestore emulator (routes the Admin SDK to it instead of production) |
+| `FIREBASE_AUTH_EMULATOR_HOST` | Host:port of the Auth emulator (routes the Admin SDK to it instead of production) |
 
 ## Environment variables (frontend)
 
@@ -74,6 +76,7 @@ cd e2e && npm test        # runs emulators + backend + frontend automatically
 | `VITE_FIREBASE_AUTH_DOMAIN` | Firebase Auth domain |
 | `VITE_FIREBASE_PROJECT_ID` | Firebase project ID |
 | `VITE_API_URL` | Backend base URL |
+| `VITE_USE_AUTH_EMULATOR` | Connect the Firebase Auth client to the local Auth emulator |
 
 ## Troubleshooting
 

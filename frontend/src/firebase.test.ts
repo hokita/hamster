@@ -21,8 +21,8 @@ describe('firebase emulator wiring', () => {
     vi.unstubAllEnvs()
   })
 
-  it('connects to the Auth emulator when VITE_E2E is true', async () => {
-    vi.stubEnv('VITE_E2E', 'true')
+  it('connects to the Auth emulator when VITE_USE_AUTH_EMULATOR is true', async () => {
+    vi.stubEnv('VITE_USE_AUTH_EMULATOR', 'true')
     await import('./firebase')
     expect(mockConnectAuthEmulator).toHaveBeenCalledWith(
       expect.anything(),
@@ -32,7 +32,7 @@ describe('firebase emulator wiring', () => {
   })
 
   it('does not connect to the Auth emulator otherwise', async () => {
-    vi.stubEnv('VITE_E2E', 'false')
+    vi.stubEnv('VITE_USE_AUTH_EMULATOR', 'false')
     await import('./firebase')
     expect(mockConnectAuthEmulator).not.toHaveBeenCalled()
   })

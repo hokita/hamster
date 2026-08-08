@@ -10,6 +10,6 @@ const firebaseConfig = {
 export const app = initializeApp(firebaseConfig)
 export const auth = getAuth(app)
 
-if (import.meta.env.VITE_E2E === 'true') {
+if (import.meta.env.VITE_USE_AUTH_EMULATOR === 'true') {
   connectAuthEmulator(auth, 'http://localhost:9099', { disableWarnings: true })
 }
