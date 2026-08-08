@@ -9,3 +9,10 @@ describe('GET /health', () => {
     expect(res.body).toEqual({ ok: true })
   })
 })
+
+describe('GET /api/bookmarks', () => {
+  it('requires authentication', async () => {
+    const res = await request(createApp()).get('/api/bookmarks')
+    expect(res.status).toBe(401)
+  })
+})
