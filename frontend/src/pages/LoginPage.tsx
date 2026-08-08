@@ -1,18 +1,26 @@
+import { useState } from 'react'
 import { GoogleAuthProvider, signInWithPopup, signInWithEmailAndPassword } from 'firebase/auth'
 import { auth } from '../firebase'
 
 export default function LoginPage() {
+  const [error, setError] = useState<string | null>(null)
+
   async function handleSignIn() {
-    if (import.meta.env.VITE_E2E === 'true') {
-      await signInWithEmailAndPassword(
-        auth,
-        import.meta.env.VITE_E2E_TEST_EMAIL,
-        import.meta.env.VITE_E2E_TEST_PASSWORD
-      )
-      return
+    try {
+      if (import.meta.env.VITE_E2E === 'true') {
+        await signInWithEmailAndPassword(
+          auth,
+          import.meta.env.VITE_E2E_TEST_EMAIL,
+          import.meta.env.VITE_E2E_TEST_PASSWORD
+        )
+      } else {
+        const provider = new GoogleAuthProvider()
+        await signInWithPopup(auth, provider)
+      }
+      setError(null)
+    } catch {
+      setError('Sign-in failed.')
     }
-    const provider = new GoogleAuthProvider()
-    await signInWithPopup(auth, provider)
   }
 
   return (
@@ -24,6 +32,7 @@ export default function LoginPage() {
       >
         Sign in with Google
       </button>
+      {error && <p className="text-red-600">{error}</p>}
     </div>
   )
 }

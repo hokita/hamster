@@ -35,10 +35,7 @@ export default function BookmarkForm({ onAdd }: BookmarkFormProps) {
         aria-label="URL"
         className="flex-1 border border-gray-300 rounded px-3 py-2"
       />
-      <button
-        type="submit"
-        className="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700"
-      >
+      <button type="submit" className="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700">
         Add bookmark
       </button>
     </form>

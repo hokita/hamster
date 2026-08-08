@@ -42,4 +42,11 @@ describe('LoginPage', () => {
     )
     expect(mockSignInWithPopup).not.toHaveBeenCalled()
   })
+
+  it('shows an error message when sign-in fails', async () => {
+    mockSignInWithPopup.mockRejectedValue(new Error('popup blocked'))
+    render(<LoginPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in with Google' }))
+    expect(await screen.findByText('Sign-in failed.')).toBeInTheDocument()
+  })
 })

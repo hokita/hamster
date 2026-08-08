@@ -55,4 +55,22 @@ describe('BookmarksPage', () => {
     expect(await screen.findByRole('link', { name: 'New Site' })).toBeInTheDocument()
     expect(api.listBookmarks).toHaveBeenCalledTimes(2)
   })
+
+  it('shows an error message when loading bookmarks fails', async () => {
+    vi.mocked(api.listBookmarks).mockRejectedValue(new Error('network error'))
+    render(<BookmarksPage />)
+    expect(await screen.findByText('Failed to load bookmarks.')).toBeInTheDocument()
+  })
+
+  it('shows an error message when adding a bookmark fails', async () => {
+    vi.mocked(api.createBookmark).mockRejectedValue(new Error('network error'))
+    render(<BookmarksPage />)
+    await waitFor(() => expect(api.listBookmarks).toHaveBeenCalledTimes(1))
+
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'New Site' } })
+    fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
+
+    expect(await screen.findByText('Failed to add bookmark.')).toBeInTheDocument()
+  })
 })
