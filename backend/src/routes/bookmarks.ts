@@ -6,8 +6,12 @@ export function createBookmarksRouter(): Router {
   const router = Router()
 
   router.get('/', async (_req: Request, res: Response) => {
-    const bookmarks = await db.listBookmarks()
-    res.json(bookmarks)
+    try {
+      const bookmarks = await db.listBookmarks()
+      res.json(bookmarks)
+    } catch {
+      res.status(500).json({ error: 'Failed to list bookmarks' })
+    }
   })
 
   router.post('/', async (req: Request, res: Response) => {
@@ -16,8 +20,12 @@ export function createBookmarksRouter(): Router {
       res.status(400).json({ error: 'url and title are required' })
       return
     }
-    const bookmark = await db.createBookmark(url, title)
-    res.status(201).json(bookmark)
+    try {
+      const bookmark = await db.createBookmark(url, title)
+      res.status(201).json(bookmark)
+    } catch {
+      res.status(500).json({ error: 'Failed to create bookmark' })
+    }
   })
 
   return router

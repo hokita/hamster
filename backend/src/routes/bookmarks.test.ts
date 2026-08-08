@@ -31,6 +31,13 @@ describe('GET /api/bookmarks', () => {
     expect(res.body).toHaveLength(1)
     expect(res.body[0].title).toBe('Example')
   })
+
+  it('returns 500 when listBookmarks rejects', async () => {
+    vi.mocked(db.listBookmarks).mockRejectedValue(new Error('firestore down'))
+    const res = await request(app).get('/api/bookmarks')
+    expect(res.status).toBe(500)
+    expect(res.body).toEqual({ error: expect.any(String) })
+  })
 })
 
 describe('POST /api/bookmarks', () => {
@@ -61,5 +68,14 @@ describe('POST /api/bookmarks', () => {
     const res = await request(app).post('/api/bookmarks').send({ url: 'https://example.com' })
     expect(res.status).toBe(400)
     expect(db.createBookmark).not.toHaveBeenCalled()
+  })
+
+  it('returns 500 when createBookmark rejects', async () => {
+    vi.mocked(db.createBookmark).mockRejectedValue(new Error('firestore down'))
+    const res = await request(app)
+      .post('/api/bookmarks')
+      .send({ url: 'https://example.com', title: 'Example' })
+    expect(res.status).toBe(500)
+    expect(res.body).toEqual({ error: expect.any(String) })
   })
 })
