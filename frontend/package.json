@@ -1,0 +1,45 @@
+{
+  "name": "hamster-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:e2e": "vite --mode e2e --port 5174 --strictPort",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "dependencies": {
+    "firebase": "^10.12.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@tailwindcss/vite": "^4.3.1",
+    "@testing-library/jest-dom": "^6.4.0",
+    "@testing-library/react": "^16.0.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "eslint": "^10.5.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.3",
+    "globals": "^17.6.0",
+    "jsdom": "^24.1.0",
+    "prettier": "^3.3.0",
+    "tailwindcss": "^4.3.1",
+    "typescript": "^5.4.0",
+    "typescript-eslint": "^8.61.1",
+    "vite": "^5.3.0",
+    "vitest": "^1.6.0"
+  },
+  "volta": {
+    "node": "24.17.0"
+  }
+}
