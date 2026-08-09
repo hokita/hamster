@@ -15,9 +15,13 @@ export function createBookmarksRouter(): Router {
   })
 
   router.post('/', async (req: Request, res: Response) => {
-    const { url, title } = req.body as { url?: string; title?: string }
-    if (!url || !title) {
+    const { url, title } = req.body as { url?: unknown; title?: unknown }
+    if (typeof url !== 'string' || typeof title !== 'string' || !url || !title) {
       res.status(400).json({ error: 'url and title are required' })
+      return
+    }
+    if (!/^https?:\/\//.test(url)) {
+      res.status(400).json({ error: 'url must be an http(s) URL' })
       return
     }
     try {

@@ -70,6 +70,30 @@ describe('POST /api/bookmarks', () => {
     expect(db.createBookmark).not.toHaveBeenCalled()
   })
 
+  it('returns 400 when url is not a string', async () => {
+    const res = await request(app)
+      .post('/api/bookmarks')
+      .send({ url: { a: 1 }, title: 'Example' })
+    expect(res.status).toBe(400)
+    expect(db.createBookmark).not.toHaveBeenCalled()
+  })
+
+  it('returns 400 when title is not a string', async () => {
+    const res = await request(app)
+      .post('/api/bookmarks')
+      .send({ url: 'https://example.com', title: { a: 1 } })
+    expect(res.status).toBe(400)
+    expect(db.createBookmark).not.toHaveBeenCalled()
+  })
+
+  it('returns 400 when url is not an http(s) URL', async () => {
+    const res = await request(app)
+      .post('/api/bookmarks')
+      .send({ url: 'javascript:alert(1)', title: 'Example' })
+    expect(res.status).toBe(400)
+    expect(db.createBookmark).not.toHaveBeenCalled()
+  })
+
   it('returns 500 when createBookmark rejects', async () => {
     vi.mocked(db.createBookmark).mockRejectedValue(new Error('firestore down'))
     const res = await request(app)
