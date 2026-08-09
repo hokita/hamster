@@ -50,6 +50,9 @@ export default function BookmarksPage() {
       await api.createBookmark(bookmark)
       await refresh()
     } catch {
+      // Invalidate any in-flight load (mount fetch or refresh) so its eventual
+      // resolution can't silently clear this error once it lands.
+      requestId.current++
       setError('Failed to add bookmark.')
       throw new Error('Failed to add bookmark.')
     }

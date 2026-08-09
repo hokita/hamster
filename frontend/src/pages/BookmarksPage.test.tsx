@@ -104,6 +104,32 @@ describe('BookmarksPage', () => {
     expect(screen.getByRole('link', { name: 'New Site' })).toBeInTheDocument()
   })
 
+  it('keeps the add-failure error visible even if a slower, earlier load succeeds afterward', async () => {
+    let resolveMountFetch!: (value: Awaited<ReturnType<typeof api.listBookmarks>>) => void
+    const mountFetchPromise = new Promise<Awaited<ReturnType<typeof api.listBookmarks>>>(
+      (resolve) => {
+        resolveMountFetch = resolve
+      }
+    )
+    vi.mocked(api.listBookmarks).mockReturnValueOnce(mountFetchPromise)
+    vi.mocked(api.createBookmark).mockRejectedValue(new Error('network error'))
+
+    render(<BookmarksPage />)
+    await waitFor(() => expect(api.listBookmarks).toHaveBeenCalledTimes(1))
+
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'New Site' } })
+    fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
+
+    expect(await screen.findByText('Failed to add bookmark.')).toBeInTheDocument()
+
+    // The slower, earlier mount fetch finally resolves successfully — it must not
+    // silently clear the add-failure error the user is currently looking at.
+    resolveMountFetch([])
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(screen.getByText('Failed to add bookmark.')).toBeInTheDocument()
+  })
+
   it('signs out when the sign out button is clicked', async () => {
     render(<BookmarksPage />)
     await waitFor(() => expect(api.listBookmarks).toHaveBeenCalledTimes(1))

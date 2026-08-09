@@ -52,12 +52,10 @@ Open http://localhost:5173 and sign in — locally, sign-in goes through the Aut
 ## Tests
 
 ```sh
-cd backend && npm test
-cd frontend && npm test
-cd e2e
-npm install
-npx playwright install --with-deps chromium
-npm test        # runs emulators + backend + frontend automatically
+(cd backend && npm test)
+(cd frontend && npm test)
+(cd e2e && npm install && npx playwright install --with-deps chromium && npm test)
+# e2e runs emulators + backend + frontend automatically
 ```
 
 ## Environment variables (backend)
