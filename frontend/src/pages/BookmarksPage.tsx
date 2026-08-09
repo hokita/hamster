@@ -1,4 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
+import { signOut } from 'firebase/auth'
+import { auth } from '../firebase'
 import { api } from '../api'
 import type { Bookmark } from '../api'
 import BookmarkForm from '../components/BookmarkForm'
@@ -55,7 +57,15 @@ export default function BookmarksPage() {
 
   return (
     <div className="max-w-2xl mx-auto">
-      <h1 className="text-2xl font-bold px-4 pt-6">hamster</h1>
+      <div className="flex items-center justify-between px-4 pt-6">
+        <h1 className="text-2xl font-bold">hamster</h1>
+        <button
+          onClick={() => signOut(auth)}
+          className="text-sm text-gray-500 hover:text-gray-700 cursor-pointer"
+        >
+          Sign out
+        </button>
+      </div>
       {error && <p className="px-4 text-red-600">{error}</p>}
       <BookmarkForm onAdd={handleAdd} />
       <BookmarkList bookmarks={bookmarks} />

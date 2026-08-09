@@ -7,7 +7,10 @@ vi.mock('../api', () => ({
     createBookmark: vi.fn(),
   },
 }))
+vi.mock('../firebase', () => ({ auth: {} }))
+vi.mock('firebase/auth', () => ({ signOut: vi.fn() }))
 
+import { signOut } from 'firebase/auth'
 import { api } from '../api'
 import BookmarksPage from './BookmarksPage'
 
@@ -99,6 +102,15 @@ describe('BookmarksPage', () => {
     resolveMountFetch([])
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(screen.getByRole('link', { name: 'New Site' })).toBeInTheDocument()
+  })
+
+  it('signs out when the sign out button is clicked', async () => {
+    render(<BookmarksPage />)
+    await waitFor(() => expect(api.listBookmarks).toHaveBeenCalledTimes(1))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }))
+
+    expect(signOut).toHaveBeenCalled()
   })
 
   it('shows an error message when adding a bookmark fails', async () => {
