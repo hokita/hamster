@@ -22,7 +22,11 @@ export async function authMiddleware(
   }
   try {
     const decoded = await getAuth().verifyIdToken(token)
-    if (!decoded.email || !allowedEmails().has(decoded.email.toLowerCase())) {
+    if (
+      !decoded.email ||
+      !decoded.email_verified ||
+      !allowedEmails().has(decoded.email.toLowerCase())
+    ) {
       res.status(401).json({ error: 'Unauthorized' })
       return
     }
