@@ -1,0 +1,11 @@
+{
+  "name": "hamster",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "emulators": "firebase emulators:start --project demo-hamster"
+  },
+  "devDependencies": {
+    "firebase-tools": "^15.22.0"
+  }
+}
