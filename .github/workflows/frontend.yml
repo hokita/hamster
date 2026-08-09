@@ -11,9 +11,14 @@ on:
       - '.github/workflows/frontend.yml'
   workflow_dispatch:
 
+concurrency:
+  group: frontend-deploy
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
 
     permissions:
       contents: read
