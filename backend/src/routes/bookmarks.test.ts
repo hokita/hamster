@@ -58,6 +58,15 @@ describe('POST /api/bookmarks', () => {
     expect(res.body.title).toBe('Example')
   })
 
+  it('returns 400 when the request body is null', async () => {
+    const res = await request(app)
+      .post('/api/bookmarks')
+      .set('Content-Type', 'application/json')
+      .send('null')
+    expect(res.status).toBe(400)
+    expect(db.createBookmark).not.toHaveBeenCalled()
+  })
+
   it('returns 400 when url is missing', async () => {
     const res = await request(app).post('/api/bookmarks').send({ title: 'Example' })
     expect(res.status).toBe(400)

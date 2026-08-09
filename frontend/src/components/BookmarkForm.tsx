@@ -33,6 +33,7 @@ export default function BookmarkForm({ onAdd }: BookmarkFormProps) {
         onChange={(e) => setTitle(e.target.value)}
         placeholder="Title"
         aria-label="Title"
+        disabled={submitting}
         className="flex-1 border border-gray-300 rounded px-3 py-2"
       />
       <input
@@ -41,6 +42,7 @@ export default function BookmarkForm({ onAdd }: BookmarkFormProps) {
         onChange={(e) => setUrl(e.target.value)}
         placeholder="URL"
         aria-label="URL"
+        disabled={submitting}
         className="flex-1 border border-gray-300 rounded px-3 py-2"
       />
       <button

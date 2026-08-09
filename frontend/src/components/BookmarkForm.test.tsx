@@ -40,6 +40,27 @@ describe('BookmarkForm', () => {
     expect(onAdd).not.toHaveBeenCalled()
   })
 
+  it('disables the inputs while a submit is in flight, preventing edits from being lost', async () => {
+    let resolveOnAdd!: () => void
+    const onAdd = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveOnAdd = resolve
+        })
+    )
+    render(<BookmarkForm onAdd={onAdd} />)
+
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Example' } })
+    fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
+
+    expect(screen.getByLabelText('Title')).toBeDisabled()
+    expect(screen.getByLabelText('URL')).toBeDisabled()
+
+    resolveOnAdd()
+    await waitFor(() => expect(screen.getByLabelText('Title')).not.toBeDisabled())
+  })
+
   it('ignores a second submit while the first is still in flight', async () => {
     let resolveOnAdd!: () => void
     const onAdd = vi.fn(
