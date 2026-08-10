@@ -42,33 +42,43 @@ function decodeEntities(text: string): string {
     .replace(/&#39;/g, "'")
 }
 
-function decoderForContentType(contentType: string) {
-  const charset = contentType.match(/charset=["']?([^"';\s]+)/i)?.[1]
-  if (!charset) return new TextDecoder()
+// A charset extracted from the HTTP Content-Type header always wins over an in-document
+// <meta charset> declaration, matching how browsers resolve the two when both are present.
+function resolveCharset(contentType: string, asciiSafeText: string): string | undefined {
+  return (
+    contentType.match(/charset=["']?([^"';\s]+)/i)?.[1] ??
+    asciiSafeText.match(/<meta[^>]+charset=["']?([^"';\s>]+)/i)?.[1]
+  )
+}
+
+function decodeWithCharset(bytes: Uint8Array, charset: string | undefined): string {
   try {
-    return new TextDecoder(charset)
+    return new TextDecoder(charset).decode(bytes)
   } catch {
-    return new TextDecoder()
+    return new TextDecoder().decode(bytes)
   }
 }
 
-async function readBoundedText(response: Response, contentType: string): Promise<string> {
+async function readBoundedBytes(response: Response): Promise<Uint8Array> {
   const reader = response.body?.getReader()
-  if (!reader) return ''
-  const decoder = decoderForContentType(contentType)
-  let text = ''
+  if (!reader) return new Uint8Array(0)
+  const chunks: Uint8Array[] = []
   let bytesRead = 0
   while (bytesRead < MAX_BYTES) {
     const { done, value } = await reader.read()
     if (done) break
     const remaining = MAX_BYTES - bytesRead
     const chunk = value.byteLength > remaining ? value.subarray(0, remaining) : value
+    chunks.push(chunk)
     bytesRead += chunk.byteLength
-    text += decoder.decode(chunk, { stream: true })
-    if (TITLE_REGEX.test(text)) break
+    // ASCII-range markup (a <title> tag) decodes identically under latin1 regardless of
+    // the page's real charset, so this is a safe way to check for an early exit without
+    // yet knowing — or mis-decoding non-ASCII bytes with the wrong guess for — the actual
+    // encoding, which isn't resolved until the whole (bounded) body has been read.
+    if (TITLE_REGEX.test(Buffer.concat(chunks).toString('latin1'))) break
   }
   await reader.cancel().catch(() => {})
-  return text
+  return Buffer.concat(chunks)
 }
 
 async function fetchTitleInner(url: string, signal: AbortSignal): Promise<string | null> {
@@ -92,7 +102,10 @@ async function fetchTitleInner(url: string, signal: AbortSignal): Promise<string
     const contentType = response.headers.get('content-type') ?? ''
     if (!HTML_CONTENT_TYPE.test(contentType)) return null
 
-    const text = await readBoundedText(response, contentType)
+    const bytes = await readBoundedBytes(response)
+    const asciiSafeText = Buffer.from(bytes).toString('latin1')
+    const charset = resolveCharset(contentType, asciiSafeText)
+    const text = decodeWithCharset(bytes, charset)
     const match = TITLE_REGEX.exec(text)
     if (!match) return null
 

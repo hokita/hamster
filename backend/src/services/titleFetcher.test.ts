@@ -138,6 +138,27 @@ describe('fetchTitle', () => {
     expect(result).toBe('Fallback')
   })
 
+  it("decodes the title using an in-document <meta charset> when the HTTP header doesn't declare one", async () => {
+    const html = '<html><head><meta charset="iso-8859-1"><title>Caf\xe9</title></head></html>'
+    const latin1Bytes = Buffer.from(html, 'latin1')
+    mockFetch.mockResolvedValue(mockResponseBytes([latin1Bytes], { contentType: 'text/html' }))
+    const result = await fetchTitle('https://example.com')
+    expect(result).toBe('Café')
+  })
+
+  it('prefers the HTTP header charset over an in-document meta charset when both are present', async () => {
+    // meta claims iso-8859-1, but the header (the real source of truth here) says utf-8;
+    // encoding the title as genuine UTF-8 bytes proves the header's declaration wins,
+    // since decoding UTF-8 bytes as iso-8859-1 would produce mojibake instead of 'Café'.
+    const html = '<html><head><meta charset="iso-8859-1"><title>Café</title></head></html>'
+    const utf8Bytes = new TextEncoder().encode(html)
+    mockFetch.mockResolvedValue(
+      mockResponseBytes([utf8Bytes], { contentType: 'text/html; charset=utf-8' })
+    )
+    const result = await fetchTitle('https://example.com')
+    expect(result).toBe('Café')
+  })
+
   it('follows a redirect and extracts the title from the final response', async () => {
     mockFetch
       .mockResolvedValueOnce(mockRedirect('https://example.com/final'))
