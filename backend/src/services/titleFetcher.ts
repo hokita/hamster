@@ -42,22 +42,15 @@ async function readBoundedText(response: Response): Promise<string> {
   return text
 }
 
-export async function fetchTitle(url: string): Promise<string | null> {
+async function fetchTitleInner(url: string, signal: AbortSignal): Promise<string | null> {
   let currentUrl = url
 
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     const parsed = new URL(currentUrl)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null
     if (await isDisallowedHost(parsed.hostname)) return null
 
-    let response: Response
-    try {
-      response = await fetch(currentUrl, {
-        redirect: 'manual',
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      })
-    } catch {
-      return null
-    }
+    const response = await fetch(currentUrl, { redirect: 'manual', signal })
 
     if (response.status >= 300 && response.status < 400) {
       if (hop === MAX_REDIRECTS) return null
@@ -79,4 +72,12 @@ export async function fetchTitle(url: string): Promise<string | null> {
   }
 
   return null
+}
+
+export async function fetchTitle(url: string): Promise<string | null> {
+  try {
+    return await fetchTitleInner(url, AbortSignal.timeout(FETCH_TIMEOUT_MS))
+  } catch {
+    return null
+  }
 }

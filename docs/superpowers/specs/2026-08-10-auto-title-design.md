@@ -35,6 +35,10 @@ New module `backend/src/services/titleFetcher.ts` exporting `fetchTitle(url: str
 
 The route handler (or `createBookmark`) calls `fetchTitle(url)`; a `null` result falls back to the URL string itself as the title.
 
+### Residual risk: DNS rebinding
+
+The guard resolves the hostname once (step 1) and `fetch()` resolves it again independently when connecting — a small window exists where an attacker controlling their own DNS with a very low TTL could return a public IP to the guard and a private/internal IP to the actual connection. Closing this fully would require pinning the validated IP (e.g. a custom fetch dispatcher or connecting directly to the resolved IP with an explicit `Host` header), which is a larger change than this feature warrants. Accepted as a known limitation given `POST /api/bookmarks` is already behind `authMiddleware`'s verified-email allowlist — only the app's own authenticated owner can reach this endpoint, not the general internet.
+
 ## Route & frontend changes
 
 - **`backend/src/routes/bookmarks.ts`** — `POST /` validates only `{ url: string }` (existing http/https regex check unchanged). Calls `fetchTitle(url)`, falls back to `url` on `null`, then calls `db.createBookmark(url, title)` as before. The existing 400 responses for missing/non-string `title` are removed, since title is no longer client-supplied.

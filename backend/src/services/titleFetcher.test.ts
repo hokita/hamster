@@ -129,4 +129,45 @@ describe('fetchTitle', () => {
     const result = await fetchTitle('https://example.com')
     expect(result).toBeNull()
   })
+
+  it('returns null when the URL is malformed (e.g. missing host)', async () => {
+    const result = await fetchTitle('https://')
+    expect(result).toBeNull()
+    expect(mockFetch).not.toHaveBeenCalled()
+  })
+
+  it('returns null when reading the response body rejects mid-stream', async () => {
+    mockFetch.mockResolvedValue({
+      status: 200,
+      headers: {
+        get: (name: string) => (name.toLowerCase() === 'content-type' ? 'text/html' : null),
+      },
+      body: {
+        getReader: () => ({
+          read: async () => {
+            throw new TypeError('terminated')
+          },
+          cancel: async () => {},
+        }),
+      },
+    })
+    const result = await fetchTitle('https://example.com')
+    expect(result).toBeNull()
+  })
+
+  it('rejects a redirect target that is not http(s)', async () => {
+    mockFetch.mockResolvedValueOnce(mockRedirect('ftp://ftp.example.com/'))
+    const result = await fetchTitle('https://example.com/redirect')
+    expect(result).toBeNull()
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('shares one timeout budget across all hops rather than resetting it per redirect', async () => {
+    mockFetch.mockResolvedValueOnce(mockRedirect('https://example.com/final'))
+    mockFetch.mockResolvedValueOnce(mockResponse(['<title>Final Page</title>']))
+    await fetchTitle('https://example.com/redirect')
+    const firstSignal = mockFetch.mock.calls[0][1].signal
+    const secondSignal = mockFetch.mock.calls[1][1].signal
+    expect(firstSignal).toBe(secondSignal)
+  })
 })
