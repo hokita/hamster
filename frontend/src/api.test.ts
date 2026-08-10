@@ -48,12 +48,12 @@ describe('api.createBookmark', () => {
         createdAt: '2024-01-01',
       }),
     })
-    const result = await api.createBookmark({ url: 'https://example.com', title: 'Example' })
+    const result = await api.createBookmark({ url: 'https://example.com' })
     expect(mockFetch).toHaveBeenCalledWith(
       expect.stringContaining('/api/bookmarks'),
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ url: 'https://example.com', title: 'Example' }),
+        body: JSON.stringify({ url: 'https://example.com' }),
       })
     )
     expect(result.title).toBe('Example')
