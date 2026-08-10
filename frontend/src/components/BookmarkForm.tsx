@@ -41,7 +41,11 @@ export default function BookmarkForm({ onAdd }: BookmarkFormProps) {
         disabled={submitting}
         className="flex items-center gap-2 px-4 py-2 rounded-md bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50"
       >
-        <FontAwesomeIcon icon={submitting ? faSpinner : faPlus} spin={submitting} aria-hidden="true" />
+        <FontAwesomeIcon
+          icon={submitting ? faSpinner : faPlus}
+          spin={submitting}
+          aria-hidden="true"
+        />
         Add bookmark
       </button>
     </form>

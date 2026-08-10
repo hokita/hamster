@@ -14,9 +14,7 @@ const bookmarks = [
 describe('BookmarkList', () => {
   it('shows an empty state when there are no bookmarks', () => {
     render(<BookmarkList bookmarks={[]} />)
-    expect(
-      screen.getByText('No bookmarks yet — paste a URL above to add one.')
-    ).toBeInTheDocument()
+    expect(screen.getByText('No bookmarks yet — paste a URL above to add one.')).toBeInTheDocument()
   })
 
   it('renders each bookmark as a link to its URL', () => {

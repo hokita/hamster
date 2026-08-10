@@ -1,7 +1,11 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { signOut } from 'firebase/auth'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faRightFromBracket, faTriangleExclamation, faSpinner } from '@fortawesome/free-solid-svg-icons'
+import {
+  faRightFromBracket,
+  faTriangleExclamation,
+  faSpinner,
+} from '@fortawesome/free-solid-svg-icons'
 import { auth } from '../firebase'
 import { api } from '../api'
 import type { Bookmark } from '../api'
