@@ -7,6 +7,14 @@ interface BookmarkListProps {
   bookmarks: Bookmark[]
 }
 
+function hostnameOf(url: string): string | null {
+  try {
+    return new URL(url).hostname
+  } catch {
+    return null
+  }
+}
+
 export default function BookmarkList({ bookmarks }: BookmarkListProps) {
   if (bookmarks.length === 0) {
     return (
@@ -19,32 +27,36 @@ export default function BookmarkList({ bookmarks }: BookmarkListProps) {
 
   return (
     <ul className="flex flex-col p-4">
-      {bookmarks.map((bookmark) => (
-        <li key={bookmark.id} className="group border-b border-gray-100 last:border-b-0">
-          <a
-            href={bookmark.url}
-            target="_blank"
-            rel="noreferrer"
-            aria-label={bookmark.title}
-            className="flex items-center gap-3 py-2.5 px-1 rounded-md hover:bg-gray-50"
-          >
-            <span className="flex items-center justify-center w-7 h-7 rounded-md bg-gray-100 text-gray-400 flex-shrink-0">
-              <FontAwesomeIcon icon={faLink} size="xs" aria-hidden="true" />
-            </span>
-            <span className="flex-1 min-w-0">
-              <span className="block font-medium text-gray-900 truncate">{bookmark.title}</span>
-              <span className="block text-xs text-gray-500">
-                {new URL(bookmark.url).hostname} · {formatRelativeTime(bookmark.createdAt)}
+      {bookmarks.map((bookmark) => {
+        const hostname = hostnameOf(bookmark.url)
+        return (
+          <li key={bookmark.id} className="group border-b border-gray-100 last:border-b-0">
+            <a
+              href={bookmark.url}
+              target="_blank"
+              rel="noreferrer"
+              aria-label={bookmark.title}
+              className="flex items-center gap-3 py-2.5 px-1 rounded-md hover:bg-gray-50"
+            >
+              <span className="flex items-center justify-center w-7 h-7 rounded-md bg-gray-100 text-gray-400 flex-shrink-0">
+                <FontAwesomeIcon icon={faLink} size="xs" aria-hidden="true" />
               </span>
-            </span>
-            <FontAwesomeIcon
-              icon={faArrowUpRightFromSquare}
-              aria-hidden="true"
-              className="text-gray-300 opacity-0 group-hover:opacity-100 flex-shrink-0"
-            />
-          </a>
-        </li>
-      ))}
+              <span className="flex-1 min-w-0">
+                <span className="block font-medium text-gray-900 truncate">{bookmark.title}</span>
+                <span className="block text-xs text-gray-500">
+                  {hostname ? `${hostname} · ` : ''}
+                  {formatRelativeTime(bookmark.createdAt)}
+                </span>
+              </span>
+              <FontAwesomeIcon
+                icon={faArrowUpRightFromSquare}
+                aria-hidden="true"
+                className="text-gray-300 opacity-0 group-hover:opacity-100 flex-shrink-0"
+              />
+            </a>
+          </li>
+        )
+      })}
     </ul>
   )
 }

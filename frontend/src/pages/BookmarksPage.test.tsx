@@ -64,6 +64,15 @@ describe('BookmarksPage', () => {
     expect(await screen.findByText('Failed to load bookmarks.')).toBeInTheDocument()
   })
 
+  it('does not show the empty-state message when the initial load fails', async () => {
+    vi.mocked(api.listBookmarks).mockRejectedValue(new Error('network error'))
+    render(<BookmarksPage />)
+    expect(await screen.findByText('Failed to load bookmarks.')).toBeInTheDocument()
+    expect(
+      screen.queryByText('No bookmarks yet — paste a URL above to add one.')
+    ).not.toBeInTheDocument()
+  })
+
   it('ignores a stale mount-fetch response that resolves after a newer add', async () => {
     let resolveMountFetch!: (value: Awaited<ReturnType<typeof api.listBookmarks>>) => void
     const mountFetchPromise = new Promise<Awaited<ReturnType<typeof api.listBookmarks>>>(

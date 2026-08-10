@@ -99,7 +99,7 @@ export default function BookmarksPage() {
           <FontAwesomeIcon icon={faSpinner} spin size="lg" aria-hidden="true" />
         </div>
       ) : (
-        <BookmarkList bookmarks={bookmarks} />
+        !(error && bookmarks.length === 0) && <BookmarkList bookmarks={bookmarks} />
       )}
     </div>
   )

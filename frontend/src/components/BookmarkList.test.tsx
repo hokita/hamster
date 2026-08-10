@@ -30,4 +30,10 @@ describe('BookmarkList', () => {
     expect(link).toHaveTextContent('example.com')
     expect(link).toHaveTextContent('just now')
   })
+
+  it('renders without throwing when a bookmark has a URL that new URL() rejects', () => {
+    const malformed = [{ ...bookmarks[0], url: 'https://exa mple.com' }]
+    expect(() => render(<BookmarkList bookmarks={malformed} />)).not.toThrow()
+    expect(screen.getByRole('link', { name: 'Example Site' })).toBeInTheDocument()
+  })
 })

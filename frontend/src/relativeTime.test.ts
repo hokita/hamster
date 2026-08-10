@@ -48,4 +48,9 @@ describe('formatRelativeTime', () => {
     const createdAt = new Date('2025-01-15T12:00:00.000Z').toISOString()
     expect(formatRelativeTime(createdAt, now)).toBe('Jan 15, 2025')
   })
+
+  it('returns an empty string for a malformed createdAt instead of throwing', () => {
+    expect(() => formatRelativeTime('not-a-date', now)).not.toThrow()
+    expect(formatRelativeTime('not-a-date', now)).toBe('')
+  })
 })

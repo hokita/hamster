@@ -1,5 +1,7 @@
 export function formatRelativeTime(createdAt: string, now: Date = new Date()): string {
   const created = new Date(createdAt)
+  if (Number.isNaN(created.getTime())) return ''
+
   const diffSec = Math.floor((now.getTime() - created.getTime()) / 1000)
 
   if (diffSec < 60) return 'just now'
