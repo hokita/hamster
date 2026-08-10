@@ -9,24 +9,22 @@ test.describe('bookmarks', () => {
   })
 
   test('adds a bookmark and shows it in the list', async ({ page }) => {
-    await page.getByLabel('Title').fill('Example Site')
     await page.getByLabel('URL').fill('https://example.com')
     await page.getByRole('button', { name: 'Add bookmark' }).click()
 
-    await expect(page.getByRole('link', { name: 'Example Site' })).toBeVisible()
-    await expect(page.getByRole('link', { name: 'Example Site' })).toHaveAttribute(
+    await expect(page.getByRole('link', { name: 'Example Domain' })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Example Domain' })).toHaveAttribute(
       'href',
       'https://example.com'
     )
   })
 
   test('persists bookmarks across a reload', async ({ page }) => {
-    await page.getByLabel('Title').fill('Example Site')
     await page.getByLabel('URL').fill('https://example.com')
     await page.getByRole('button', { name: 'Add bookmark' }).click()
-    await expect(page.getByRole('link', { name: 'Example Site' })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Example Domain' })).toBeVisible()
 
     await page.reload()
-    await expect(page.getByRole('link', { name: 'Example Site' })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Example Domain' })).toBeVisible()
   })
 })
