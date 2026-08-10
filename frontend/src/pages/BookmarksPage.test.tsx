@@ -146,4 +146,29 @@ describe('BookmarksPage', () => {
 
     expect(await screen.findByText('Failed to add bookmark.')).toBeInTheDocument()
   })
+
+  it('shows a loading indicator until the initial fetch resolves, then hides it', async () => {
+    let resolveMountFetch!: (value: Awaited<ReturnType<typeof api.listBookmarks>>) => void
+    const mountFetchPromise = new Promise<Awaited<ReturnType<typeof api.listBookmarks>>>(
+      (resolve) => {
+        resolveMountFetch = resolve
+      }
+    )
+    vi.mocked(api.listBookmarks).mockReturnValueOnce(mountFetchPromise)
+
+    render(<BookmarksPage />)
+    expect(screen.getByRole('status', { name: 'Loading bookmarks' })).toBeInTheDocument()
+
+    resolveMountFetch([])
+    await waitFor(() =>
+      expect(screen.queryByRole('status', { name: 'Loading bookmarks' })).not.toBeInTheDocument()
+    )
+  })
+
+  it('hides the loading indicator even when the initial fetch fails', async () => {
+    vi.mocked(api.listBookmarks).mockRejectedValueOnce(new Error('network error'))
+    render(<BookmarksPage />)
+    await screen.findByText('Failed to load bookmarks.')
+    expect(screen.queryByRole('status', { name: 'Loading bookmarks' })).not.toBeInTheDocument()
+  })
 })

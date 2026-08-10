@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { signOut } from 'firebase/auth'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faRightFromBracket, faTriangleExclamation } from '@fortawesome/free-solid-svg-icons'
+import { faRightFromBracket, faTriangleExclamation, faSpinner } from '@fortawesome/free-solid-svg-icons'
 import { auth } from '../firebase'
 import { api } from '../api'
 import type { Bookmark } from '../api'
@@ -11,6 +11,7 @@ import BookmarkList from '../components/BookmarkList'
 export default function BookmarksPage() {
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
   // Shared across the mount effect and refresh() so a slow, superseded request can't
   // overwrite state a newer request already applied.
   const requestId = useRef(0)
@@ -25,6 +26,8 @@ export default function BookmarksPage() {
     } catch {
       if (id !== requestId.current) return
       setError('Failed to load bookmarks.')
+    } finally {
+      if (id === requestId.current) setIsLoading(false)
     }
   }, [])
 
@@ -41,6 +44,10 @@ export default function BookmarksPage() {
       .catch(() => {
         if (cancelled || id !== requestId.current) return
         setError('Failed to load bookmarks.')
+      })
+      .finally(() => {
+        if (cancelled) return
+        setIsLoading(false)
       })
     return () => {
       cancelled = true
@@ -79,7 +86,17 @@ export default function BookmarksPage() {
         </div>
       )}
       <BookmarkForm onAdd={handleAdd} />
-      <BookmarkList bookmarks={bookmarks} />
+      {isLoading ? (
+        <div
+          role="status"
+          aria-label="Loading bookmarks"
+          className="flex justify-center py-10 text-gray-400"
+        >
+          <FontAwesomeIcon icon={faSpinner} spin size="lg" aria-hidden="true" />
+        </div>
+      ) : (
+        <BookmarkList bookmarks={bookmarks} />
+      )}
     </div>
   )
 }
