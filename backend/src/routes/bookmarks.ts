@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import type { Request, Response } from 'express'
 import * as db from '../services/firestore'
+import { fetchTitle } from '../services/titleFetcher'
 
 export function createBookmarksRouter(): Router {
   const router = Router()
@@ -15,9 +16,9 @@ export function createBookmarksRouter(): Router {
   })
 
   router.post('/', async (req: Request, res: Response) => {
-    const { url, title } = req.body as { url?: unknown; title?: unknown }
-    if (typeof url !== 'string' || typeof title !== 'string' || !url || !title) {
-      res.status(400).json({ error: 'url and title are required' })
+    const { url } = req.body as { url?: unknown }
+    if (typeof url !== 'string' || !url) {
+      res.status(400).json({ error: 'url is required' })
       return
     }
     if (!/^https?:\/\//.test(url)) {
@@ -25,6 +26,7 @@ export function createBookmarksRouter(): Router {
       return
     }
     try {
+      const title = (await fetchTitle(url)) ?? url
       const bookmark = await db.createBookmark(url, title)
       res.status(201).json(bookmark)
     } catch {

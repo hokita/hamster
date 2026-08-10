@@ -6,9 +6,13 @@ vi.mock('../services/firestore', () => ({
   listBookmarks: vi.fn(),
   createBookmark: vi.fn(),
 }))
+vi.mock('../services/titleFetcher', () => ({
+  fetchTitle: vi.fn(),
+}))
 
 import { createBookmarksRouter } from './bookmarks'
 import * as db from '../services/firestore'
+import { fetchTitle } from '../services/titleFetcher'
 
 const app = express()
 app.use(express.json())
@@ -43,19 +47,32 @@ describe('GET /api/bookmarks', () => {
 describe('POST /api/bookmarks', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it('creates a bookmark and returns it', async () => {
+  it('creates a bookmark using the fetched title', async () => {
+    vi.mocked(fetchTitle).mockResolvedValue('Example')
     vi.mocked(db.createBookmark).mockResolvedValue({
       id: '1',
       url: 'https://example.com',
       title: 'Example',
       createdAt: '2024-01-01T00:00:00.000Z',
     })
-    const res = await request(app)
-      .post('/api/bookmarks')
-      .send({ url: 'https://example.com', title: 'Example' })
+    const res = await request(app).post('/api/bookmarks').send({ url: 'https://example.com' })
     expect(res.status).toBe(201)
+    expect(fetchTitle).toHaveBeenCalledWith('https://example.com')
     expect(db.createBookmark).toHaveBeenCalledWith('https://example.com', 'Example')
     expect(res.body.title).toBe('Example')
+  })
+
+  it('falls back to the URL as the title when fetchTitle returns null', async () => {
+    vi.mocked(fetchTitle).mockResolvedValue(null)
+    vi.mocked(db.createBookmark).mockResolvedValue({
+      id: '1',
+      url: 'https://example.com',
+      title: 'https://example.com',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    })
+    const res = await request(app).post('/api/bookmarks').send({ url: 'https://example.com' })
+    expect(res.status).toBe(201)
+    expect(db.createBookmark).toHaveBeenCalledWith('https://example.com', 'https://example.com')
   })
 
   it('returns 400 when the request body is null', async () => {
@@ -68,46 +85,27 @@ describe('POST /api/bookmarks', () => {
   })
 
   it('returns 400 when url is missing', async () => {
-    const res = await request(app).post('/api/bookmarks').send({ title: 'Example' })
-    expect(res.status).toBe(400)
-    expect(db.createBookmark).not.toHaveBeenCalled()
-  })
-
-  it('returns 400 when title is missing', async () => {
-    const res = await request(app).post('/api/bookmarks').send({ url: 'https://example.com' })
+    const res = await request(app).post('/api/bookmarks').send({})
     expect(res.status).toBe(400)
     expect(db.createBookmark).not.toHaveBeenCalled()
   })
 
   it('returns 400 when url is not a string', async () => {
-    const res = await request(app)
-      .post('/api/bookmarks')
-      .send({ url: { a: 1 }, title: 'Example' })
-    expect(res.status).toBe(400)
-    expect(db.createBookmark).not.toHaveBeenCalled()
-  })
-
-  it('returns 400 when title is not a string', async () => {
-    const res = await request(app)
-      .post('/api/bookmarks')
-      .send({ url: 'https://example.com', title: { a: 1 } })
+    const res = await request(app).post('/api/bookmarks').send({ url: { a: 1 } })
     expect(res.status).toBe(400)
     expect(db.createBookmark).not.toHaveBeenCalled()
   })
 
   it('returns 400 when url is not an http(s) URL', async () => {
-    const res = await request(app)
-      .post('/api/bookmarks')
-      .send({ url: 'javascript:alert(1)', title: 'Example' })
+    const res = await request(app).post('/api/bookmarks').send({ url: 'javascript:alert(1)' })
     expect(res.status).toBe(400)
     expect(db.createBookmark).not.toHaveBeenCalled()
   })
 
   it('returns 500 when createBookmark rejects', async () => {
+    vi.mocked(fetchTitle).mockResolvedValue('Example')
     vi.mocked(db.createBookmark).mockRejectedValue(new Error('firestore down'))
-    const res = await request(app)
-      .post('/api/bookmarks')
-      .send({ url: 'https://example.com', title: 'Example' })
+    const res = await request(app).post('/api/bookmarks').send({ url: 'https://example.com' })
     expect(res.status).toBe(500)
     expect(res.body).toEqual({ error: expect.any(String) })
   })

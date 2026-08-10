@@ -25,7 +25,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 export const api = {
   listBookmarks: () => request<Bookmark[]>('/api/bookmarks'),
-  createBookmark: (bookmark: { url: string; title: string }) =>
+  createBookmark: (bookmark: { url: string }) =>
     request<Bookmark>('/api/bookmarks', {
       method: 'POST',
       body: JSON.stringify(bookmark),

@@ -45,7 +45,7 @@ export default function BookmarksPage() {
     }
   }, [])
 
-  async function handleAdd(bookmark: { url: string; title: string }) {
+  async function handleAdd(bookmark: { url: string }) {
     try {
       await api.createBookmark(bookmark)
       await refresh()

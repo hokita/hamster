@@ -51,7 +51,6 @@ describe('BookmarksPage', () => {
         createdAt: '2024-01-01T00:00:00.000Z',
       },
     ])
-    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'New Site' } })
     fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://example.com' } })
     fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
 
@@ -91,7 +90,6 @@ describe('BookmarksPage', () => {
         createdAt: '2024-01-01T00:00:00.000Z',
       },
     ])
-    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'New Site' } })
     fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://example.com' } })
     fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
 
@@ -117,7 +115,6 @@ describe('BookmarksPage', () => {
     render(<BookmarksPage />)
     await waitFor(() => expect(api.listBookmarks).toHaveBeenCalledTimes(1))
 
-    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'New Site' } })
     fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://example.com' } })
     fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
 
@@ -144,7 +141,6 @@ describe('BookmarksPage', () => {
     render(<BookmarksPage />)
     await waitFor(() => expect(api.listBookmarks).toHaveBeenCalledTimes(1))
 
-    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'New Site' } })
     fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://example.com' } })
     fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
 
