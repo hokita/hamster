@@ -19,14 +19,14 @@ describe('BookmarkList', () => {
 
   it('renders each bookmark as a link to its URL', () => {
     render(<BookmarkList bookmarks={bookmarks} />)
-    const link = screen.getByRole('link', { name: 'Example Site' })
+    const link = screen.getByRole('link', { name: /Example Site/ })
     expect(link).toHaveAttribute('href', 'https://example.com')
   })
 
   it("shows the bookmark's domain and relative time", () => {
     const recent = [{ ...bookmarks[0], createdAt: new Date().toISOString() }]
     render(<BookmarkList bookmarks={recent} />)
-    const link = screen.getByRole('link', { name: 'Example Site' })
+    const link = screen.getByRole('link', { name: /Example Site/ })
     expect(link).toHaveTextContent('example.com')
     expect(link).toHaveTextContent('just now')
   })
@@ -34,6 +34,35 @@ describe('BookmarkList', () => {
   it('renders without throwing when a bookmark has a URL that new URL() rejects', () => {
     const malformed = [{ ...bookmarks[0], url: 'https://exa mple.com' }]
     expect(() => render(<BookmarkList bookmarks={malformed} />)).not.toThrow()
-    expect(screen.getByRole('link', { name: 'Example Site' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /Example Site/ })).toBeInTheDocument()
+  })
+
+  it('gives two same-titled bookmarks from different domains distinguishable accessible names', () => {
+    const sameTitleDifferentDomains = [
+      {
+        id: '1',
+        url: 'https://example.com',
+        title: 'Same Title',
+        createdAt: '2024-01-01T00:00:00.000Z',
+      },
+      {
+        id: '2',
+        url: 'https://other.com',
+        title: 'Same Title',
+        createdAt: '2024-01-01T00:00:00.000Z',
+      },
+    ]
+    render(<BookmarkList bookmarks={sameTitleDifferentDomains} />)
+    const links = screen.getAllByRole('link', { name: /Same Title/ })
+    expect(links).toHaveLength(2)
+    expect(links[0]).toHaveAccessibleName(expect.stringContaining('example.com'))
+    expect(links[1]).toHaveAccessibleName(expect.stringContaining('other.com'))
+  })
+
+  it('renders the empty state instead of throwing when bookmarks is not an array', () => {
+    expect(() =>
+      render(<BookmarkList bookmarks={null as unknown as typeof bookmarks} />)
+    ).not.toThrow()
+    expect(screen.getByText('No bookmarks yet — paste a URL above to add one.')).toBeInTheDocument()
   })
 })

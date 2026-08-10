@@ -16,9 +16,11 @@ function hostnameOf(url: string): string | null {
 }
 
 export default function BookmarkList({ bookmarks }: BookmarkListProps) {
-  if (bookmarks.length === 0) {
+  const items = Array.isArray(bookmarks) ? bookmarks : []
+
+  if (items.length === 0) {
     return (
-      <div className="flex flex-col items-center gap-2 py-10 text-gray-400">
+      <div className="flex flex-col items-center gap-2 py-10 text-gray-500">
         <FontAwesomeIcon icon={faLink} size="lg" aria-hidden="true" />
         <p className="m-0 text-sm">No bookmarks yet — paste a URL above to add one.</p>
       </div>
@@ -27,7 +29,7 @@ export default function BookmarkList({ bookmarks }: BookmarkListProps) {
 
   return (
     <ul className="flex flex-col p-4">
-      {bookmarks.map((bookmark) => {
+      {items.map((bookmark) => {
         const hostname = hostnameOf(bookmark.url)
         return (
           <li key={bookmark.id} className="group border-b border-gray-100 last:border-b-0">
@@ -35,15 +37,20 @@ export default function BookmarkList({ bookmarks }: BookmarkListProps) {
               href={bookmark.url}
               target="_blank"
               rel="noreferrer"
-              aria-label={bookmark.title}
+              aria-labelledby={`bookmark-title-${bookmark.id} bookmark-meta-${bookmark.id}`}
               className="flex items-center gap-3 py-2.5 px-1 rounded-md hover:bg-gray-50"
             >
               <span className="flex items-center justify-center w-7 h-7 rounded-md bg-gray-100 text-gray-400 flex-shrink-0">
                 <FontAwesomeIcon icon={faLink} size="xs" aria-hidden="true" />
               </span>
               <span className="flex-1 min-w-0">
-                <span className="block font-medium text-gray-900 truncate">{bookmark.title}</span>
-                <span className="block text-xs text-gray-500">
+                <span
+                  className="block font-medium text-gray-900 truncate"
+                  id={`bookmark-title-${bookmark.id}`}
+                >
+                  {bookmark.title}
+                </span>
+                <span className="block text-xs text-gray-500" id={`bookmark-meta-${bookmark.id}`}>
                   {hostname ? `${hostname} · ` : ''}
                   {formatRelativeTime(bookmark.createdAt)}
                 </span>
