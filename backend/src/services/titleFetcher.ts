@@ -5,6 +5,7 @@ const HTML_CONTENT_TYPE = /^(text\/html|application\/xhtml\+xml)/i
 const TITLE_REGEX = /<title[^>]*>([^<]*)<\/title>/i
 const MAX_REDIRECTS = 3
 const MAX_BYTES = 100_000
+const FETCH_TIMEOUT_MS = 5000
 
 async function isDisallowedHost(hostname: string): Promise<boolean> {
   try {
@@ -48,7 +49,15 @@ export async function fetchTitle(url: string): Promise<string | null> {
     const parsed = new URL(currentUrl)
     if (await isDisallowedHost(parsed.hostname)) return null
 
-    const response = await fetch(currentUrl, { redirect: 'manual' })
+    let response: Response
+    try {
+      response = await fetch(currentUrl, {
+        redirect: 'manual',
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      })
+    } catch {
+      return null
+    }
 
     if (response.status >= 300 && response.status < 400) {
       if (hop === MAX_REDIRECTS) return null

@@ -117,4 +117,16 @@ describe('fetchTitle', () => {
     expect(result).toBeNull()
     expect(mockFetch).toHaveBeenCalledTimes(1)
   })
+
+  it('returns null when the request times out', async () => {
+    mockFetch.mockRejectedValue(new DOMException('The operation was aborted.', 'TimeoutError'))
+    const result = await fetchTitle('https://example.com')
+    expect(result).toBeNull()
+  })
+
+  it('returns null when fetch throws a network error', async () => {
+    mockFetch.mockRejectedValue(new TypeError('fetch failed'))
+    const result = await fetchTitle('https://example.com')
+    expect(result).toBeNull()
+  })
 })
