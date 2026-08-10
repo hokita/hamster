@@ -16,6 +16,7 @@ export default function BookmarksPage() {
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([])
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false)
   // Shared across the mount effect and refresh() so a slow, superseded request can't
   // overwrite state a newer request already applied.
   const requestId = useRef(0)
@@ -27,6 +28,7 @@ export default function BookmarksPage() {
       if (id !== requestId.current) return
       setBookmarks(result)
       setError(null)
+      setHasLoadedOnce(true)
     } catch {
       if (id !== requestId.current) return
       setError('Failed to load bookmarks.')
@@ -44,13 +46,14 @@ export default function BookmarksPage() {
         if (cancelled || id !== requestId.current) return
         setBookmarks(result)
         setError(null)
+        setHasLoadedOnce(true)
       })
       .catch(() => {
         if (cancelled || id !== requestId.current) return
         setError('Failed to load bookmarks.')
       })
       .finally(() => {
-        if (cancelled) return
+        if (cancelled || id !== requestId.current) return
         setIsLoading(false)
       })
     return () => {
@@ -99,7 +102,7 @@ export default function BookmarksPage() {
           <FontAwesomeIcon icon={faSpinner} spin size="lg" aria-hidden="true" />
         </div>
       ) : (
-        !(error && bookmarks.length === 0) && <BookmarkList bookmarks={bookmarks} />
+        !(error && !hasLoadedOnce) && <BookmarkList bookmarks={bookmarks} />
       )}
     </div>
   )
