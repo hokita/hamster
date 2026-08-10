@@ -22,7 +22,7 @@ The current frontend (`LoginPage`, `BookmarksPage`, `BookmarkForm`, `BookmarkLis
 
 ## Visual language
 
-- **Palette**: near-grayscale (`gray-50`/`white` backgrounds, `gray-200`/`gray-100` borders, `gray-900`/`gray-500` text), with `amber-600` (hover `amber-700`) as the single accent color. Amber appears only on the primary "Add bookmark" button and on link/icon hover states — nowhere else (not the header, not the login page, no background gradients).
+- **Palette**: near-grayscale (`gray-50`/`white` backgrounds, `gray-200`/`gray-100` borders, `gray-900`/`gray-500` text), with `amber-600` (hover `amber-700`) as the single accent color. Amber appears only on the primary "Add bookmark" button (background) and its input's focus ring — nowhere else (not the header, not bookmark-row hovers, not the login page, no background gradients).
 - **Shape**: subtle rounding (`rounded-md`, ~6px) on inputs, buttons, and the favicon chip. No pill shapes.
 - **Icons**: `@fortawesome/react-fontawesome` + `@fortawesome/fontawesome-svg-core` + `@fortawesome/free-solid-svg-icons` + `@fortawesome/free-brands-svg-icons`. This is the React-idiomatic setup (per-icon tree-shakeable imports via `<FontAwesomeIcon icon={faX} />`), as opposed to importing the `@fortawesome/fontawesome-free` CSS/webfont package — it avoids pulling in an unused icon-set bundle and fits the existing React + TypeScript stack.
   - Icons used: `faLink` (favicon placeholder chip), `faArrowUpRightFromSquare` (external-link hover affordance on rows), `faRightFromBracket` (sign out), `faPlus` (add button, default state), `faSpinner` with a spin animation (add button, submitting state; initial-load spinner), `faTriangleExclamation` (error banners), `faGoogle` from the brands package (sign-in button).

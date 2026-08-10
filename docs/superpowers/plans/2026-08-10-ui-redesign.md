@@ -16,7 +16,7 @@
 - No backend changes of any kind (no new endpoints, no schema changes).
 - Light mode only — no dark mode.
 - No mascot or emoji iconography anywhere. Icons come only from Font Awesome.
-- `amber-600` (hover `amber-700`) is the *only* accent color, used only on the primary "Add bookmark" button and hover affordances on bookmark rows. Everything else is neutral gray/white. The login page uses no amber at all.
+- `amber-600` (hover `amber-700`) is the *only* accent color, used only on the primary "Add bookmark" button (background) and its input's focus ring. Everything else — including bookmark-row hover states, the favicon chip, and the external-link hover icon — stays neutral gray/white. The login page uses no amber at all.
 - Icons via `@fortawesome/react-fontawesome` component (`<FontAwesomeIcon icon={faX} />`), not the CSS/webfont package. All decorative icons get `aria-hidden="true"`.
 - The favicon chip next to each bookmark uses the generic `faLink` icon as a placeholder — no real per-site favicon fetching.
 - Follow this repo's TDD workflow: write the failing test before the implementation for every behavior-bearing change.
