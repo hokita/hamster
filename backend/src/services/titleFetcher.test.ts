@@ -37,6 +37,32 @@ function mockResponse(
   }
 }
 
+function mockResponseBytes(
+  chunks: Uint8Array[],
+  { contentType = 'text/html; charset=utf-8', status = 200 } = {}
+) {
+  let index = 0
+  return {
+    status,
+    headers: {
+      get: (name: string) => (name.toLowerCase() === 'content-type' ? contentType : null),
+    },
+    body: {
+      getReader: () => ({
+        read: async () => {
+          if (index < chunks.length) {
+            const value = chunks[index]
+            index += 1
+            return { done: false, value }
+          }
+          return { done: true, value: undefined }
+        },
+        cancel: async () => {},
+      }),
+    },
+  }
+}
+
 function mockRedirect(location: string, status = 302) {
   return {
     status,
@@ -93,6 +119,23 @@ describe('fetchTitle', () => {
     mockFetch.mockResolvedValue(mockResponse([straddlingChunk]))
     const result = await fetchTitle('https://example.com')
     expect(result).toBeNull()
+  })
+
+  it("decodes the title using the response's declared charset", async () => {
+    const latin1Bytes = Buffer.from('<title>Caf\xe9</title>', 'latin1')
+    mockFetch.mockResolvedValue(
+      mockResponseBytes([latin1Bytes], { contentType: 'text/html; charset=iso-8859-1' })
+    )
+    const result = await fetchTitle('https://example.com')
+    expect(result).toBe('Café')
+  })
+
+  it('falls back to UTF-8 when the declared charset is unrecognized', async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse(['<title>Fallback</title>'], { contentType: 'text/html; charset=bogus-charset' })
+    )
+    const result = await fetchTitle('https://example.com')
+    expect(result).toBe('Fallback')
   })
 
   it('follows a redirect and extracts the title from the final response', async () => {

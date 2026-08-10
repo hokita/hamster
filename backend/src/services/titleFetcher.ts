@@ -42,10 +42,20 @@ function decodeEntities(text: string): string {
     .replace(/&#39;/g, "'")
 }
 
-async function readBoundedText(response: Response): Promise<string> {
+function decoderForContentType(contentType: string) {
+  const charset = contentType.match(/charset=["']?([^"';\s]+)/i)?.[1]
+  if (!charset) return new TextDecoder()
+  try {
+    return new TextDecoder(charset)
+  } catch {
+    return new TextDecoder()
+  }
+}
+
+async function readBoundedText(response: Response, contentType: string): Promise<string> {
   const reader = response.body?.getReader()
   if (!reader) return ''
-  const decoder = new TextDecoder()
+  const decoder = decoderForContentType(contentType)
   let text = ''
   let bytesRead = 0
   while (bytesRead < MAX_BYTES) {
@@ -82,7 +92,7 @@ async function fetchTitleInner(url: string, signal: AbortSignal): Promise<string
     const contentType = response.headers.get('content-type') ?? ''
     if (!HTML_CONTENT_TYPE.test(contentType)) return null
 
-    const text = await readBoundedText(response)
+    const text = await readBoundedText(response, contentType)
     const match = TITLE_REGEX.exec(text)
     if (!match) return null
 
