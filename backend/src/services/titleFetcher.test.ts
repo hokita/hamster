@@ -80,9 +80,17 @@ describe('fetchTitle', () => {
     expect(mockFetch).not.toHaveBeenCalled()
   })
 
-  it('stops reading once the body exceeds the size cap without finding a title', async () => {
+  it('stops reading once the size cap is exceeded across chunks, without finding a title', async () => {
     const padding = 'x'.repeat(100_001)
     mockFetch.mockResolvedValue(mockResponse([padding, '<title>Too Late</title>']))
+    const result = await fetchTitle('https://example.com')
+    expect(result).toBeNull()
+  })
+
+  it('truncates a single chunk at the byte cap even when it straddles the boundary and contains a title past it', async () => {
+    const padding = 'x'.repeat(100_000)
+    const straddlingChunk = padding + '<title>Should Not Be Found</title>'
+    mockFetch.mockResolvedValue(mockResponse([straddlingChunk]))
     const result = await fetchTitle('https://example.com')
     expect(result).toBeNull()
   })

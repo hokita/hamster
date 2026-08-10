@@ -26,7 +26,13 @@ describe('isDisallowedIp', () => {
     expect(isDisallowedIp('::ffff:127.0.0.1', 6)).toBe(true)
   })
 
-  it('allows public IPv6 addresses', () => {
+  it('rejects the canonical hexadecimal form of IPv4-mapped private addresses (as WHATWG URL serializes bracketed IPv6 literals)', () => {
+    expect(isDisallowedIp('::ffff:7f00:1', 6)).toBe(true) // 127.0.0.1
+    expect(isDisallowedIp('::ffff:a00:1', 6)).toBe(true) // 10.0.0.1
+  })
+
+  it('allows public IPv6 addresses, including the hex-mapped form of a public IPv4 address', () => {
     expect(isDisallowedIp('2606:2800:220:1:248:1893:25c8:1946', 6)).toBe(false)
+    expect(isDisallowedIp('::ffff:5db8:d822', 6)).toBe(false) // 93.184.216.34
   })
 })

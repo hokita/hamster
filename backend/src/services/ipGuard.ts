@@ -19,11 +19,21 @@ function isDisallowedIpv4(ip: string): boolean {
   })
 }
 
+function hexGroupsToIpv4(high: string, low: string): string {
+  const h = parseInt(high, 16)
+  const l = parseInt(low, 16)
+  return [h >> 8, h & 0xff, l >> 8, l & 0xff].join('.')
+}
+
 function isDisallowedIpv6(ip: string): boolean {
   const normalized = ip.toLowerCase()
   if (normalized === '::1' || normalized === '::') return true
-  const mapped = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)
-  if (mapped) return isDisallowedIpv4(mapped[1])
+  const mappedDotted = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)
+  if (mappedDotted) return isDisallowedIpv4(mappedDotted[1])
+  // WHATWG URL serializes bracketed IPv4-mapped IPv6 literals in this canonical hex
+  // form (e.g. "::ffff:7f00:1" for 127.0.0.1), not the dotted-decimal form above.
+  const mappedHex = normalized.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/)
+  if (mappedHex) return isDisallowedIpv4(hexGroupsToIpv4(mappedHex[1], mappedHex[2]))
   const firstGroup = parseInt(normalized.split(':')[0] || '0', 16)
   if ((firstGroup & 0xfe00) === 0xfc00) return true // fc00::/7 (unique local)
   if ((firstGroup & 0xffc0) === 0xfe80) return true // fe80::/10 (link-local)

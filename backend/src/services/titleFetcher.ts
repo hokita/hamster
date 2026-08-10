@@ -51,8 +51,10 @@ async function readBoundedText(response: Response): Promise<string> {
   while (bytesRead < MAX_BYTES) {
     const { done, value } = await reader.read()
     if (done) break
-    bytesRead += value.byteLength
-    text += decoder.decode(value, { stream: true })
+    const remaining = MAX_BYTES - bytesRead
+    const chunk = value.byteLength > remaining ? value.subarray(0, remaining) : value
+    bytesRead += chunk.byteLength
+    text += decoder.decode(chunk, { stream: true })
     if (TITLE_REGEX.test(text)) break
   }
   await reader.cancel().catch(() => {})
