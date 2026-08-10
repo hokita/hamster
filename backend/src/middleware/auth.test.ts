@@ -41,15 +41,21 @@ describe('authMiddleware', () => {
     expect(res.status).toBe(401)
   })
 
-  it('calls next when the token is valid and the email is allowed', async () => {
-    mockVerifyIdToken.mockResolvedValue({ email: 'owner@example.com' })
+  it('returns 401 when the email is not verified', async () => {
+    mockVerifyIdToken.mockResolvedValue({ email: 'owner@example.com', email_verified: false })
+    const res = await request(app).get('/test').set('Authorization', 'Bearer valid-token')
+    expect(res.status).toBe(401)
+  })
+
+  it('calls next when the token is valid, verified, and the email is allowed', async () => {
+    mockVerifyIdToken.mockResolvedValue({ email: 'owner@example.com', email_verified: true })
     const res = await request(app).get('/test').set('Authorization', 'Bearer valid-token')
     expect(res.status).toBe(200)
   })
 
   it('accepts case and whitespace variations in the configured address', async () => {
     process.env.ALLOWED_EMAILS = ' Owner@Example.com '
-    mockVerifyIdToken.mockResolvedValue({ email: 'OWNER@example.com' })
+    mockVerifyIdToken.mockResolvedValue({ email: 'OWNER@example.com', email_verified: true })
     const res = await request(app).get('/test').set('Authorization', 'Bearer valid-token')
     expect(res.status).toBe(200)
   })
