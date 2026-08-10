@@ -21,7 +21,7 @@ function isDisallowedIpv4(ip: string): boolean {
 
 function isDisallowedIpv6(ip: string): boolean {
   const normalized = ip.toLowerCase()
-  if (normalized === '::1') return true
+  if (normalized === '::1' || normalized === '::') return true
   const mapped = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)
   if (mapped) return isDisallowedIpv4(mapped[1])
   const firstGroup = parseInt(normalized.split(':')[0] || '0', 16)

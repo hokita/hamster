@@ -18,8 +18,9 @@ describe('isDisallowedIp', () => {
     expect(isDisallowedIp('172.15.255.255', 4)).toBe(false)
   })
 
-  it('rejects loopback, unique-local, link-local, and IPv4-mapped private IPv6 addresses', () => {
+  it('rejects loopback, unspecified, unique-local, link-local, and IPv4-mapped private IPv6 addresses', () => {
     expect(isDisallowedIp('::1', 6)).toBe(true)
+    expect(isDisallowedIp('::', 6)).toBe(true)
     expect(isDisallowedIp('fd12:3456:789a::1', 6)).toBe(true)
     expect(isDisallowedIp('fe80::1', 6)).toBe(true)
     expect(isDisallowedIp('::ffff:127.0.0.1', 6)).toBe(true)

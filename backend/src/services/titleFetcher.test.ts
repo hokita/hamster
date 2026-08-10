@@ -5,7 +5,7 @@ vi.mock('node:dns/promises', () => ({
 }))
 
 import { lookup } from 'node:dns/promises'
-import { fetchTitle } from './titleFetcher'
+import { fetchTitle, withSignal } from './titleFetcher'
 
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
@@ -169,5 +169,31 @@ describe('fetchTitle', () => {
     const firstSignal = mockFetch.mock.calls[0][1].signal
     const secondSignal = mockFetch.mock.calls[1][1].signal
     expect(firstSignal).toBe(secondSignal)
+  })
+
+  it('resolves a bracketed IPv6 literal host directly without a DNS lookup', async () => {
+    mockFetch.mockResolvedValue(mockResponse(['<title>V6 Page</title>']))
+    const result = await fetchTitle('https://[2606:2800:220:1:248:1893:25c8:1946]/')
+    expect(result).toBe('V6 Page')
+    expect(lookup).not.toHaveBeenCalled()
+  })
+
+  it('rejects a bracketed IPv6 literal host that is disallowed, without a DNS lookup', async () => {
+    const result = await fetchTitle('https://[::1]/')
+    expect(result).toBeNull()
+    expect(lookup).not.toHaveBeenCalled()
+    expect(mockFetch).not.toHaveBeenCalled()
+  })
+
+  it('withSignal rejects as soon as the signal aborts, even if the wrapped promise never settles', async () => {
+    // isDisallowedHost races dns.lookup() against fetchTitle's shared deadline via this
+    // helper, so a hanging DNS resolution can no longer stall past the deadline. Node's
+    // AbortSignal.timeout() isn't fake-timer-controllable, so this is tested directly
+    // against an AbortController instead of waiting out a real 5s deadline end-to-end.
+    const controller = new AbortController()
+    const hanging = new Promise<never>(() => {})
+    const resultPromise = withSignal(hanging, controller.signal)
+    controller.abort(new Error('boom'))
+    await expect(resultPromise).rejects.toThrow('boom')
   })
 })

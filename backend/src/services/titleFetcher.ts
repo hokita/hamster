@@ -1,4 +1,5 @@
 import { lookup } from 'node:dns/promises'
+import { isIP } from 'node:net'
 import { isDisallowedIp } from './ipGuard'
 
 const HTML_CONTENT_TYPE = /^(text\/html|application\/xhtml\+xml)/i
@@ -7,9 +8,25 @@ const MAX_REDIRECTS = 3
 const MAX_BYTES = 100_000
 const FETCH_TIMEOUT_MS = 5000
 
-async function isDisallowedHost(hostname: string): Promise<boolean> {
+export function withSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason)
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(signal.reason)
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort))
+  })
+}
+
+async function isDisallowedHost(hostname: string, signal: AbortSignal): Promise<boolean> {
+  // URL.hostname brackets IPv6 literals (e.g. "[::1]"); dns.lookup() rejects that form,
+  // so literal IPs are checked directly instead of going through DNS at all.
+  const literal =
+    hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname
+  const literalFamily = isIP(literal)
+  if (literalFamily) return isDisallowedIp(literal, literalFamily)
+
   try {
-    const { address, family } = await lookup(hostname)
+    const { address, family } = await withSignal(lookup(hostname), signal)
     return isDisallowedIp(address, family)
   } catch {
     return true
@@ -48,7 +65,7 @@ async function fetchTitleInner(url: string, signal: AbortSignal): Promise<string
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     const parsed = new URL(currentUrl)
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null
-    if (await isDisallowedHost(parsed.hostname)) return null
+    if (await isDisallowedHost(parsed.hostname, signal)) return null
 
     const response = await fetch(currentUrl, { redirect: 'manual', signal })
 
