@@ -1,15 +1,22 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const mockGet = vi.fn()
+const mockAdd = vi.fn()
 const mockOrderBy = vi.fn(() => ({ get: mockGet }))
-const mockCollection = vi.fn(() => ({ orderBy: mockOrderBy }))
+const mockCollection = vi.fn(() => ({ orderBy: mockOrderBy, add: mockAdd }))
+const fixedDate = new Date('2024-01-01T00:00:00.000Z')
 
 vi.mock('firebase-admin/firestore', () => ({
   getFirestore: () => ({ collection: mockCollection }),
-  Timestamp: { now: vi.fn() },
+  Timestamp: { now: () => ({ toDate: () => fixedDate }) },
 }))
 
-import { listBookmarks } from './firestore'
+import { listBookmarks, createBookmark } from './firestore'
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  mockAdd.mockResolvedValue({ id: 'new-id' })
+})
 
 describe('listBookmarks', () => {
   it('skips a document with a malformed createdAt instead of failing the whole list', async () => {
@@ -38,5 +45,94 @@ describe('listBookmarks', () => {
 
     expect(result).toHaveLength(1)
     expect(result[0].id).toBe('good')
+  })
+})
+
+describe('createBookmark', () => {
+  it('persists faviconUrl when one was resolved', async () => {
+    const result = await createBookmark('https://example.com', 'Example', 'https://example.com/f.ico')
+
+    expect(mockAdd).toHaveBeenCalledWith(
+      expect.objectContaining({ faviconUrl: 'https://example.com/f.ico' })
+    )
+    expect(result.faviconUrl).toBe('https://example.com/f.ico')
+  })
+
+  it('omits the faviconUrl key entirely when null, since Firestore rejects undefined', async () => {
+    const result = await createBookmark('https://example.com', 'Example', null)
+
+    expect(mockAdd).toHaveBeenCalledTimes(1)
+    expect(Object.keys(mockAdd.mock.calls[0][0])).not.toContain('faviconUrl')
+    expect(result).not.toHaveProperty('faviconUrl')
+  })
+
+  it('omits the faviconUrl key when the argument is not supplied at all', async () => {
+    await createBookmark('https://example.com', 'Example')
+
+    expect(Object.keys(mockAdd.mock.calls[0][0])).not.toContain('faviconUrl')
+  })
+})
+
+describe('listBookmarks faviconUrl handling', () => {
+  it('returns faviconUrl when the document has one', async () => {
+    mockGet.mockResolvedValue({
+      docs: [
+        {
+          id: 'a',
+          data: () => ({
+            url: 'https://example.com',
+            title: 'A',
+            faviconUrl: 'https://example.com/f.ico',
+            createdAt: { toDate: () => fixedDate },
+          }),
+        },
+      ],
+    })
+
+    const result = await listBookmarks()
+
+    expect(result[0].faviconUrl).toBe('https://example.com/f.ico')
+  })
+
+  it('still returns documents saved before faviconUrl existed', async () => {
+    mockGet.mockResolvedValue({
+      docs: [
+        {
+          id: 'legacy',
+          data: () => ({
+            url: 'https://example.com',
+            title: 'Legacy',
+            createdAt: { toDate: () => fixedDate },
+          }),
+        },
+      ],
+    })
+
+    const result = await listBookmarks()
+
+    expect(result).toHaveLength(1)
+    expect(result[0].id).toBe('legacy')
+    expect(result[0].faviconUrl).toBeUndefined()
+  })
+
+  it('ignores a non-string faviconUrl rather than dropping the document', async () => {
+    mockGet.mockResolvedValue({
+      docs: [
+        {
+          id: 'weird',
+          data: () => ({
+            url: 'https://example.com',
+            title: 'Weird',
+            faviconUrl: 42,
+            createdAt: { toDate: () => fixedDate },
+          }),
+        },
+      ],
+    })
+
+    const result = await listBookmarks()
+
+    expect(result).toHaveLength(1)
+    expect(result[0].faviconUrl).toBeUndefined()
   })
 })

@@ -26,8 +26,8 @@ export function createBookmarksRouter(): Router {
       return
     }
     try {
-      const { title } = await fetchMetadata(url)
-      const bookmark = await db.createBookmark(url, title ?? url)
+      const { title, faviconUrl } = await fetchMetadata(url)
+      const bookmark = await db.createBookmark(url, title ?? url, faviconUrl)
       res.status(201).json(bookmark)
     } catch {
       res.status(500).json({ error: 'Failed to create bookmark' })

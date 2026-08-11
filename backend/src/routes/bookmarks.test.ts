@@ -58,7 +58,7 @@ describe('POST /api/bookmarks', () => {
     const res = await request(app).post('/api/bookmarks').send({ url: 'https://example.com' })
     expect(res.status).toBe(201)
     expect(fetchMetadata).toHaveBeenCalledWith('https://example.com')
-    expect(db.createBookmark).toHaveBeenCalledWith('https://example.com', 'Example')
+    expect(db.createBookmark).toHaveBeenCalledWith('https://example.com', 'Example', null)
     expect(res.body.title).toBe('Example')
   })
 
@@ -72,7 +72,11 @@ describe('POST /api/bookmarks', () => {
     })
     const res = await request(app).post('/api/bookmarks').send({ url: 'https://example.com' })
     expect(res.status).toBe(201)
-    expect(db.createBookmark).toHaveBeenCalledWith('https://example.com', 'https://example.com')
+    expect(db.createBookmark).toHaveBeenCalledWith(
+      'https://example.com',
+      'https://example.com',
+      null
+    )
   })
 
   it('returns 400 when the request body is null', async () => {
@@ -108,5 +112,29 @@ describe('POST /api/bookmarks', () => {
     const res = await request(app).post('/api/bookmarks').send({ url: 'https://example.com' })
     expect(res.status).toBe(500)
     expect(res.body).toEqual({ error: expect.any(String) })
+  })
+
+  it('passes the fetched faviconUrl through to createBookmark', async () => {
+    vi.mocked(fetchMetadata).mockResolvedValue({
+      title: 'Example',
+      faviconUrl: 'https://example.com/f.ico',
+    })
+    vi.mocked(db.createBookmark).mockResolvedValue({
+      id: '1',
+      url: 'https://example.com',
+      title: 'Example',
+      faviconUrl: 'https://example.com/f.ico',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    })
+
+    const res = await request(app).post('/api/bookmarks').send({ url: 'https://example.com' })
+
+    expect(res.status).toBe(201)
+    expect(db.createBookmark).toHaveBeenCalledWith(
+      'https://example.com',
+      'Example',
+      'https://example.com/f.ico'
+    )
+    expect(res.body.faviconUrl).toBe('https://example.com/f.ico')
   })
 })
