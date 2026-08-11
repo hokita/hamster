@@ -3,7 +3,7 @@
   "short_name": "hamster",
   "description": "Your bookmarks, all in one place",
   "start_url": "/",
-  "display": "standalone",
+  "display": "browser",
   "theme_color": "#ffffff",
   "background_color": "#ffffff",
   "icons": [
