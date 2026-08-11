@@ -505,6 +505,45 @@ describe('fetchMetadata', () => {
     expect(result.faviconUrl).toBe('https://example.com/real.png')
   })
 
+  it('does not treat </head> or <body written inside a double-quoted attribute value as the end of head', async () => {
+    // Regression: a legitimate quoted attribute (e.g. a page documenting HTML) containing the
+    // literal text "<body" must not be mistaken for a real end-of-head marker. The split across
+    // chunks matters: chunk 1 ends mid-head, right after the offending quoted text, so the old
+    // buggy check (which ran on every chunk) would fire before the title/icon ever arrived.
+    mockFetch.mockResolvedValue(
+      mockResponse([
+        '<head><meta name="description" content="All about the <body tag">',
+        '<title>HTML Guide</title><link rel="icon" href="/real.png"></head>',
+      ])
+    )
+    const result = await fetchMetadata('https://example.com')
+    expect(result.title).toBe('HTML Guide')
+    expect(result.faviconUrl).toBe('https://example.com/real.png')
+  })
+
+  it('does not treat </head> or <body written inside a single-quoted attribute value as the end of head', async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse([
+        "<head><meta name='description' content='All about the <body tag'>",
+        '<title>HTML Guide</title><link rel="icon" href="/real.png"></head>',
+      ])
+    )
+    const result = await fetchMetadata('https://example.com')
+    expect(result.title).toBe('HTML Guide')
+    expect(result.faviconUrl).toBe('https://example.com/real.png')
+  })
+
+  it('does not hang or read past the byte cap when a quoted attribute value is never terminated', async () => {
+    // An attribute value that opens a quote and never closes it must not let the head-end scanner
+    // get stuck, and MAX_BYTES must still be the thing that stops the read.
+    const padding = 'x'.repeat(100_000)
+    mockFetch.mockResolvedValue(
+      mockResponse([`<head><meta content="${padding}`, '<title>Should Not Be Found</title>'])
+    )
+    const result = await fetchMetadata('https://example.com')
+    expect(result.title).toBeNull()
+  })
+
   it('still extracts a real, unmasked icon link on a normal page (guard against over-masking)', async () => {
     mockFetch.mockResolvedValue(
       mockResponse(['<head><title>T</title><link rel="icon" href="/plain.ico"></head>'])

@@ -4,7 +4,6 @@ import { isDisallowedIp } from './ipGuard'
 
 const HTML_CONTENT_TYPE = /^(text\/html|application\/xhtml\+xml)/i
 const TITLE_REGEX = /<title[^>]*>([^<]*)<\/title>/i
-const HEAD_END_REGEX = /<\/head\s*>|<body\b/i
 const MAX_REDIRECTS = 3
 const MAX_BYTES = 100_000
 const FETCH_TIMEOUT_MS = 5000
@@ -86,11 +85,277 @@ function decodeWithCharset(bytes: Uint8Array, charset: string | undefined): stri
   }
 }
 
+// --- Head-end scanner -------------------------------------------------------------------------
+//
+// readBoundedBytes (below) needs to know, as bytes stream in, whether the document's <head> has
+// genuinely ended — either a real closing `</head>` tag, or the start of a real `<body` tag (the
+// same two markers HEAD_END_REGEX used to match directly with a plain regex). "Genuine" excludes
+// three regions where a page can legitimately contain that literal text without it meaning the
+// head actually ended:
+//   - inside an HTML comment (<!-- ... -->)
+//   - inside <script>/<style> element content (e.g. document.write("<body>"), a JS template string)
+//   - inside a quoted attribute value (e.g. <meta content="... the <body> tag">) — this was the
+//     regression: the old masking covered the first two but not this one.
+//
+// A regex can't express "not inside a quote" without re-deriving tag structure itself, so this is
+// a small character-by-character state machine instead. It doubles as a fully general tokenizer of
+// "are we currently inside real markup, or inside one of the three regions above" — the exact same
+// question NON_MARKUP_MASKS answers for extractIconHref/extractBaseUrl, just answered per-character
+// instead of via a final regex pass. It intentionally does NOT replace NON_MARKUP_MASKS: that masks
+// script/style/comment content to blank spaces but leaves quoted attribute values completely intact
+// (parseAttributes needs the quotes to extract a real href), whereas this scanner also treats quoted
+// attribute values as "not real markup" for the narrower purpose of the </head>/<body> check. Making
+// NON_MARKUP_MASKS quote-aware in the same way would blank out every href="..." along with it, which
+// would break icon extraction — so the two intentionally stay separate.
+//
+// The scanner is resumable: `HeadScanState` carries `pos` (how far into the accumulated text it has
+// already scanned) plus enough in-progress state (current mode, any partially-read tag/attribute
+// name) to pick up exactly where it left off when called again with more text appended. Each
+// character is visited at most once across the whole read, so scanning the growing buffer stays
+// O(total bytes) instead of being re-scanned from the start on every chunk.
+
+type HeadScanMode =
+  | 'data' // outside any tag — real markup; '<' here may start a tag
+  | 'tagOpen' // just consumed '<', deciding what kind of construct follows
+  | 'closeTagOpen' // just consumed '</', expecting a tag name
+  | 'bang' // just consumed '<!', deciding whether this is a comment
+  | 'bangDash' // just consumed '<!-', need one more '-' to confirm a comment
+  | 'comment' // inside <!-- ... -->, watching for '-->'
+  | 'commentDash' // inside a comment, just saw one trailing '-'
+  | 'commentDashDash' // inside a comment, just saw '--', watching for the closing '>'
+  | 'tagName' // accumulating an opening tag's name (to detect <body, <script, <style)
+  | 'closeTagName' // accumulating a closing tag's name (to detect </head)
+  | 'afterHeadClose' // saw a closing "head" tag name; only whitespace may precede the closing '>'
+  | 'tag' // inside a tag, outside any quoted attribute value
+  | 'squote' // inside a tag, inside a '...'-quoted attribute value
+  | 'dquote' // inside a tag, inside a "..."-quoted attribute value
+  | 'rawtext' // inside <script>/<style> element content
+  | 'rawtextLt' // inside rawtext content, just saw '<'
+  | 'rawtextEndSlash' // inside rawtext content, just saw '</', accumulating the end tag's name
+
+interface HeadScanState {
+  mode: HeadScanMode
+  pos: number
+  name: string // accumulator shared by tagName / closeTagName / rawtextEndSlash
+  pendingRawtext: 'script' | 'style' | null // set while inside an opening <script>/<style> tag
+  rawtextTag: 'script' | 'style' | null // which element's content we're currently inside
+}
+
+function createHeadScanState(): HeadScanState {
+  return { mode: 'data', pos: 0, name: '', pendingRawtext: null, rawtextTag: null }
+}
+
+function isAsciiLetter(ch: string): boolean {
+  return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
+}
+
+function isWordChar(ch: string): boolean {
+  return isAsciiLetter(ch) || (ch >= '0' && ch <= '9') || ch === '_'
+}
+
+function isAsciiWhitespace(ch: string): boolean {
+  return ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r' || ch === '\f' || ch === '\v'
+}
+
+// Advances `state` across `text` starting at `state.pos`, mutating it in place. Returns true as
+// soon as a genuine end-of-head marker is found (matching state.pos is left where it was — the
+// caller is about to stop reading anyway). Returns false once it has consumed all of `text` without
+// finding one; `state` is left ready to resume from the same point once more text is appended.
+function scanForHeadEnd(text: string, state: HeadScanState): boolean {
+  const len = text.length
+  while (state.pos < len) {
+    const ch = text[state.pos]
+    switch (state.mode) {
+      case 'data':
+        state.mode = ch === '<' ? 'tagOpen' : 'data'
+        state.pos++
+        break
+
+      case 'tagOpen':
+        if (ch === '/') {
+          state.mode = 'closeTagOpen'
+          state.pos++
+        } else if (ch === '!') {
+          state.mode = 'bang'
+          state.pos++
+        } else if (isAsciiLetter(ch)) {
+          state.mode = 'tagName'
+          state.name = ch.toLowerCase()
+          state.pos++
+        } else {
+          // '<' wasn't followed by a valid tag/comment start, so it wasn't a real tag after all —
+          // reprocess this same character as plain data (do not consume it here).
+          state.mode = 'data'
+        }
+        break
+
+      case 'closeTagOpen':
+        if (isAsciiLetter(ch)) {
+          state.mode = 'closeTagName'
+          state.name = ch.toLowerCase()
+          state.pos++
+        } else {
+          state.mode = 'data' // "</" not followed by a letter — not a real closing tag
+        }
+        break
+
+      case 'bang':
+        if (ch === '-') {
+          state.mode = 'bangDash'
+          state.pos++
+        } else {
+          state.mode = 'tag' // e.g. <!DOCTYPE ...> — treat as an ordinary tag
+          state.pendingRawtext = null
+        }
+        break
+
+      case 'bangDash':
+        if (ch === '-') {
+          state.mode = 'comment'
+          state.pos++
+        } else {
+          state.mode = 'tag'
+          state.pendingRawtext = null
+        }
+        break
+
+      case 'comment':
+        state.mode = ch === '-' ? 'commentDash' : 'comment'
+        state.pos++
+        break
+
+      case 'commentDash':
+        state.mode = ch === '-' ? 'commentDashDash' : 'comment'
+        state.pos++
+        break
+
+      case 'commentDashDash':
+        if (ch === '>') {
+          state.mode = 'data'
+          state.pos++
+        } else if (ch === '-') {
+          state.pos++ // absorb runs of dashes, still watching for the closing '>'
+        } else {
+          state.mode = 'comment'
+          state.pos++
+        }
+        break
+
+      case 'tagName':
+        if (isWordChar(ch)) {
+          state.name += ch.toLowerCase()
+          state.pos++
+        } else if (state.name === 'body') {
+          return true // genuine <body\b
+        } else if (state.name === 'script' || state.name === 'style') {
+          state.pendingRawtext = state.name
+          state.mode = 'tag'
+        } else {
+          state.pendingRawtext = null
+          state.mode = 'tag'
+        }
+        break
+
+      case 'closeTagName':
+        if (isWordChar(ch)) {
+          state.name += ch.toLowerCase()
+          state.pos++
+        } else if (state.name === 'head') {
+          state.mode = 'afterHeadClose'
+        } else {
+          state.pendingRawtext = null
+          state.mode = 'tag'
+        }
+        break
+
+      case 'afterHeadClose':
+        if (isAsciiWhitespace(ch)) {
+          state.pos++
+        } else if (ch === '>') {
+          state.pos++
+          return true // genuine </head\s*>
+        } else {
+          state.mode = 'tag' // e.g. "</headfoo>" — not a real closing head tag after all
+          state.pendingRawtext = null
+        }
+        break
+
+      case 'tag':
+        if (ch === '"') {
+          state.mode = 'dquote'
+          state.pos++
+        } else if (ch === "'") {
+          state.mode = 'squote'
+          state.pos++
+        } else if (ch === '>') {
+          state.pos++
+          if (state.pendingRawtext) {
+            state.rawtextTag = state.pendingRawtext
+            state.pendingRawtext = null
+            state.mode = 'rawtext'
+          } else {
+            state.mode = 'data'
+          }
+        } else {
+          state.pos++
+        }
+        break
+
+      case 'dquote':
+        state.pos++
+        if (ch === '"') state.mode = 'tag'
+        break
+
+      case 'squote':
+        state.pos++
+        if (ch === "'") state.mode = 'tag'
+        break
+
+      case 'rawtext':
+        state.mode = ch === '<' ? 'rawtextLt' : 'rawtext'
+        state.pos++
+        break
+
+      case 'rawtextLt':
+        if (ch === '/') {
+          state.mode = 'rawtextEndSlash'
+          state.name = ''
+          state.pos++
+        } else {
+          state.mode = 'rawtext'
+          state.pos++
+        }
+        break
+
+      case 'rawtextEndSlash':
+        if (isWordChar(ch)) {
+          state.name += ch.toLowerCase()
+          state.pos++
+        } else if (state.name === state.rawtextTag) {
+          state.rawtextTag = null
+          state.mode = 'tag' // let 'tag' consume the rest of the closing tag up to '>'
+        } else {
+          state.mode = 'rawtext' // not the matching close tag — just more content
+        }
+        break
+    }
+  }
+  return false
+}
+
 async function readBoundedBytes(response: Response): Promise<Uint8Array> {
   const reader = response.body?.getReader()
   if (!reader) return new Uint8Array(0)
   const chunks: Uint8Array[] = []
   let bytesRead = 0
+  // Built up incrementally (one chunk's worth of latin1 text appended at a time) rather than
+  // re-decoding Buffer.concat(chunks) on every iteration, so decoding stays O(total bytes) instead
+  // of O(bytes^2) over the read. These markers are ASCII-range markup and decode identically under
+  // latin1 regardless of the page's real charset, so this is a safe early-exit check without yet
+  // knowing — or mis-decoding non-ASCII bytes with the wrong guess for — the actual encoding, which
+  // isn't resolved until the whole (bounded) body has been read.
+  let bufferedText = ''
+  const headScanState = createHeadScanState()
   while (bytesRead < MAX_BYTES) {
     const { done, value } = await reader.read()
     if (done) break
@@ -98,14 +363,10 @@ async function readBoundedBytes(response: Response): Promise<Uint8Array> {
     const chunk = value.byteLength > remaining ? value.subarray(0, remaining) : value
     chunks.push(chunk)
     bytesRead += chunk.byteLength
+    bufferedText += Buffer.from(chunk).toString('latin1')
     // Stop at the end of <head> rather than at </title>: <link rel="icon"> commonly follows
     // the title, so exiting at the title would truncate the icon away on most real pages.
-    // These markers are ASCII-range markup and decode identically under latin1 regardless of
-    // the page's real charset, so this is a safe early-exit check without yet knowing — or
-    // mis-decoding non-ASCII bytes with the wrong guess for — the actual encoding, which
-    // isn't resolved until the whole (bounded) body has been read.
-    const bufferedText = Buffer.concat(chunks).toString('latin1')
-    if (HEAD_END_REGEX.test(maskNonMarkup(bufferedText))) break
+    if (scanForHeadEnd(bufferedText, headScanState)) break
   }
   await reader.cancel().catch(() => {})
   return Buffer.concat(chunks)
