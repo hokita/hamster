@@ -18,16 +18,41 @@ function hostnameOf(url: string): string | null {
 
 // Mirrors the private/loopback/link-local IP-literal check in backend/src/services/ipGuard.ts.
 // Duplicated here (not imported) because frontend and backend are separate packages with no
-// shared module, and this check is small enough not to warrant one. Kept intentionally narrower
-// than the backend's: only the ranges called out for this guard, not the full SSRF range list
-// (e.g. documentation/benchmarking ranges are irrelevant to "don't auto-load an image").
+// shared module, and this check is small enough not to warrant one. This mirrors the backend's
+// range lists in full (nothing deliberately excluded): a narrower frontend copy is exactly what
+// let an IPv4-mapped IPv6 literal (e.g. "::ffff:127.0.0.1") slip past this guard once before, and
+// ranges like the documentation/benchmarking blocks cost nothing to include — worst case a
+// bookmark on one of those addresses just shows the generic glyph instead of a real favicon,
+// same as any other blocked host.
 const IPV4_PRIVATE_RANGES: [string, number][] = [
-  ['0.0.0.0', 8],
-  ['10.0.0.0', 8],
-  ['127.0.0.0', 8],
-  ['169.254.0.0', 16],
-  ['172.16.0.0', 12],
-  ['192.168.0.0', 16],
+  ['0.0.0.0', 8], // "This host on this network"
+  ['10.0.0.0', 8], // Private-use
+  ['100.64.0.0', 10], // Shared Address Space (carrier-grade NAT)
+  ['127.0.0.0', 8], // Loopback
+  ['169.254.0.0', 16], // Link-local
+  ['172.16.0.0', 12], // Private-use
+  ['192.0.0.0', 24], // IETF Protocol Assignments
+  ['192.0.2.0', 24], // Documentation (TEST-NET-1)
+  ['192.88.99.0', 24], // 6to4 Relay Anycast
+  ['192.168.0.0', 16], // Private-use
+  ['198.18.0.0', 15], // Benchmarking
+  ['198.51.100.0', 24], // Documentation (TEST-NET-2)
+  ['203.0.113.0', 24], // Documentation (TEST-NET-3)
+  ['240.0.0.0', 4], // Reserved for future use
+  ['255.255.255.255', 32], // Limited broadcast
+]
+
+const IPV6_PRIVATE_RANGES: [string, number][] = [
+  ['::1', 128], // Loopback
+  ['::', 128], // Unspecified
+  ['64:ff9b::', 96], // NAT64
+  ['64:ff9b:1::', 48], // NAT64 (local use)
+  ['100::', 64], // Discard-only
+  ['2001::', 23], // IETF Protocol Assignments (includes Teredo)
+  ['2001:db8::', 32], // Documentation
+  ['2002::', 16], // 6to4
+  ['fc00::', 7], // Unique local
+  ['fe80::', 10], // Link-local
 ]
 
 function ipv4ToInt(ip: string): number {
@@ -47,16 +72,42 @@ function isPrivateIpv4(host: string): boolean {
   })
 }
 
+function hexGroupsToIpv4(high: string, low: string): string {
+  const h = parseInt(high, 16)
+  const l = parseInt(low, 16)
+  return [h >> 8, h & 0xff, l >> 8, l & 0xff].join('.')
+}
+
+function ipv6ToBigInt(ip: string): bigint {
+  const [head, tail] = ip.includes('::') ? ip.split('::') : [ip, '']
+  const headParts = head ? head.split(':') : []
+  const tailParts = tail ? tail.split(':') : []
+  const missing = 8 - headParts.length - tailParts.length
+  const groups = [...headParts, ...Array(missing).fill('0'), ...tailParts]
+  return groups.reduce((acc, group) => (acc << 16n) | BigInt(parseInt(group || '0', 16)), 0n)
+}
+
 // host here is the bracket-stripped IPv6 literal, e.g. "::1" or "fe80::1".
 function isPrivateIpv6(host: string): boolean {
   const normalized = host.toLowerCase()
-  if (normalized === '::1' || normalized === '::') return true
-  if (normalized.startsWith('fc') || normalized.startsWith('fd')) return true // fc00::/7 unique local
-  if (normalized.startsWith('fe')) {
-    const third = normalized[2]
-    if (third === '8' || third === '9' || third === 'a' || third === 'b') return true // fe80::/10 link-local
-  }
-  return false
+
+  // IPv4-mapped ("::ffff:a.b.c.d") and the deprecated IPv4-compatible ("::a.b.c.d") forms embed
+  // a full IPv4 address in the low 32 bits. WHATWG URL normalization can serialize either as
+  // dotted-decimal or as compressed hex pairs (e.g. "::ffff:127.0.0.1" vs "::ffff:7f00:1"), and
+  // the "ffff:" marker is optional here so the deprecated compatible form ("::127.0.0.1" /
+  // "::7f00:1") is caught the same way. Delegate to the IPv4 check so these get exactly the same
+  // treatment as a bare IPv4-literal bookmark.
+  const dotted = normalized.match(/^::(?:ffff:)?(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/)
+  if (dotted && isIpv4Literal(dotted[1])) return isPrivateIpv4(dotted[1])
+
+  const hex = normalized.match(/^::(?:ffff:)?([0-9a-f]{1,4}):([0-9a-f]{1,4})$/)
+  if (hex) return isPrivateIpv4(hexGroupsToIpv4(hex[1], hex[2]))
+
+  const ipInt = ipv6ToBigInt(normalized)
+  return IPV6_PRIVATE_RANGES.some(([base, bits]) => {
+    const mask = bits === 0 ? 0n : (~0n << BigInt(128 - bits)) & ((1n << 128n) - 1n)
+    return (ipInt & mask) === (ipv6ToBigInt(base) & mask)
+  })
 }
 
 // Host-literal only: a hostname that merely *resolves* to a private IP (e.g. a LAN mDNS name

@@ -513,6 +513,73 @@ describe('fetchMetadata', () => {
     expect(result.faviconUrl).toBe('https://example.com/plain.ico')
   })
 
+  it('resolves a relative icon href against a declared <base href>', async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse([
+        '<head><base href="https://cdn.example/assets/"><link rel="icon" href="icon.png"></head>',
+      ])
+    )
+    const result = await fetchMetadata('https://example.com/blog/post')
+    expect(result.faviconUrl).toBe('https://cdn.example/assets/icon.png')
+  })
+
+  it('resolves a relative <base href> against the page URL first, then the icon against that', async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse(['<head><base href="/assets/"><link rel="icon" href="icon.png"></head>'])
+    )
+    const result = await fetchMetadata('https://example.com/blog/post')
+    expect(result.faviconUrl).toBe('https://example.com/assets/icon.png')
+  })
+
+  it('resolves the icon against the page URL as before when there is no <base> tag', async () => {
+    mockFetch.mockResolvedValue(mockResponse(['<head><link rel="icon" href="icon.png"></head>']))
+    const result = await fetchMetadata('https://example.com/blog/post')
+    expect(result.faviconUrl).toBe('https://example.com/blog/icon.png')
+  })
+
+  it('leaves an absolute icon href unaffected by a declared <base href>', async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse([
+        '<head><base href="https://cdn.example/assets/">' +
+          '<link rel="icon" href="https://other.example/icon.png"></head>',
+      ])
+    )
+    const result = await fetchMetadata('https://example.com')
+    expect(result.faviconUrl).toBe('https://other.example/icon.png')
+  })
+
+  it('only honors the first <base href> when two are present', async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse([
+        '<head><base href="https://first.example/"><base href="https://second.example/">' +
+          '<link rel="icon" href="icon.png"></head>',
+      ])
+    )
+    const result = await fetchMetadata('https://example.com')
+    expect(result.faviconUrl).toBe('https://first.example/icon.png')
+  })
+
+  it('does not let a <base href> written inside a script string affect icon resolution', async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse([
+        '<head><script>var tpl = \'<base href="https://evil.example/">\';</script>' +
+          '<link rel="icon" href="icon.png"></head>',
+      ])
+    )
+    const result = await fetchMetadata('https://example.com/blog/post')
+    expect(result.faviconUrl).toBe('https://example.com/blog/icon.png')
+  })
+
+  it('falls back to the origin favicon when a declared <base href> points at a private host', async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse([
+        '<head><base href="http://169.254.169.254/"><link rel="icon" href="icon.png"></head>',
+      ])
+    )
+    const result = await fetchMetadata('https://example.com')
+    expect(result.faviconUrl).toBe('https://example.com/favicon.ico')
+  })
+
   it('withSignal rejects as soon as the signal aborts, even if the wrapped promise never settles', async () => {
     // isDisallowedHost races dns.lookup() against fetchMetadata's shared deadline via this
     // helper, so a hanging DNS resolution can no longer stall past the deadline. Node's

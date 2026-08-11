@@ -137,4 +137,46 @@ describe('BookmarkList favicons', () => {
     expect(container.querySelector('img')).toBeNull()
     expect(container.querySelector('svg')).not.toBeNull()
   })
+
+  it('does not derive an origin favicon for an IPv4-mapped IPv6 loopback host (dotted form)', () => {
+    const mapped = [{ ...bookmarks[0], url: 'http://[::ffff:127.0.0.1]/' }]
+    const { container } = render(<BookmarkList bookmarks={mapped} />)
+
+    expect(container.querySelector('img')).toBeNull()
+    expect(container.querySelector('svg')).not.toBeNull()
+  })
+
+  it('does not derive an origin favicon for an IPv4-mapped IPv6 private host (dotted form)', () => {
+    const mapped = [{ ...bookmarks[0], url: 'http://[::ffff:192.168.1.1]/' }]
+    const { container } = render(<BookmarkList bookmarks={mapped} />)
+
+    expect(container.querySelector('img')).toBeNull()
+    expect(container.querySelector('svg')).not.toBeNull()
+  })
+
+  it('does not derive an origin favicon for an IPv4-mapped IPv6 loopback host (normalized hex form)', () => {
+    const mapped = [{ ...bookmarks[0], url: 'http://[::ffff:7f00:1]/' }]
+    const { container } = render(<BookmarkList bookmarks={mapped} />)
+
+    expect(container.querySelector('img')).toBeNull()
+    expect(container.querySelector('svg')).not.toBeNull()
+  })
+
+  it('does not derive an origin favicon for an IPv4-mapped IPv6 private host (normalized hex form)', () => {
+    const mapped = [{ ...bookmarks[0], url: 'http://[::ffff:c0a8:101]/' }]
+    const { container } = render(<BookmarkList bookmarks={mapped} />)
+
+    expect(container.querySelector('img')).toBeNull()
+    expect(container.querySelector('svg')).not.toBeNull()
+  })
+
+  it('still derives the origin favicon for an ordinary public IPv6 literal (guard against over-blocking)', () => {
+    const publicV6 = [{ ...bookmarks[0], url: 'http://[2606:2800:220:1:248:1893:25c8:1946]/' }]
+    const { container } = render(<BookmarkList bookmarks={publicV6} />)
+
+    expect(container.querySelector('img')).toHaveAttribute(
+      'src',
+      'http://[2606:2800:220:1:248:1893:25c8:1946]/favicon.ico'
+    )
+  })
 })

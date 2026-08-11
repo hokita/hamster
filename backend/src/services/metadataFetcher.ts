@@ -147,6 +147,22 @@ function resolveHttpUrl(href: string, baseUrl: string): string | null {
   }
 }
 
+const BASE_TAG_REGEX = /<base\b[^>]*>/i
+
+// Per the HTML spec, only the first <base href> in a document has effect, so this stops at the
+// first match rather than scanning further. Extracted from the masked text (the same masking
+// that strips <script>/<style>/comments before icon scanning) so a <base> tag written inside a
+// script string can't hijack resolution. The href itself may be relative (e.g. "/assets/"), so
+// it's resolved against the fetched page URL first; if there's no <base> tag, or its href is
+// missing/unparseable, this just falls back to the page URL, matching prior behavior.
+function extractBaseUrl(text: string, pageUrl: string): string {
+  const match = BASE_TAG_REGEX.exec(maskNonMarkup(text))
+  if (!match) return pageUrl
+  const attributes = parseAttributes(match[0])
+  if (!attributes.href) return pageUrl
+  return resolveHttpUrl(attributes.href, pageUrl) ?? pageUrl
+}
+
 function extractIconHref(text: string, baseUrl: string): string | null {
   // Mask <script>/<style> contents and HTML comments before scanning: inline script text
   // (e.g. a JS string literal holding an HTML template) or a commented-out <link> is not real
@@ -209,7 +225,10 @@ async function fetchMetadataInner(url: string, signal: AbortSignal): Promise<Pag
     // fetches it) — the browser resolves and loads the chosen URL independently later, so
     // DNS-rebinding between this check and the browser's own load isn't (and can't be) closed
     // here, same caveat as isDisallowedHost above.
-    const iconCandidate = extractIconHref(text, currentUrl)
+    // The document's <base href> (if any) governs relative *link* resolution, but never the
+    // origin default above: that's always derived from the fetched page URL itself.
+    const baseUrl = extractBaseUrl(text, currentUrl)
+    const iconCandidate = extractIconHref(text, baseUrl)
     let faviconUrl = originFavicon
     if (iconCandidate) {
       const iconHost = new URL(iconCandidate).hostname
