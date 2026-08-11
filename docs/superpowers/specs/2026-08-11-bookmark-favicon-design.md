@@ -61,7 +61,18 @@ The stored `faviconUrl` is fetched by the **user's browser**, not by the backend
 
 An earlier draft of this spec claimed the scheme allowlist (rule 3) was what stopped a hostile page from steering an `<img src>` somewhere dangerous. That was wrong, and an adversarial review caught it by execution: the allowlist rejects `javascript:` and `data:`, but a declared icon of `http://192.168.1.1/admin/reboot?confirm=1` is a plain `http:` URL that passes it cleanly. It was stored verbatim and re-issued by the browser on every list render — a state-changing GET against a LAN device, fired without a click. The `<img>` element gives an attacker no read access to the response, so this is not exfiltration; the exposure is the side effect of the request itself.
 
-Rule 3a closes it by validating the icon host at write time, so a disallowed host never reaches Firestore. The residual limitation is that write-time validation cannot bind the browser's later resolution of that hostname — the same DNS-rebinding gap documented in the auto-title spec, and weaker here since the browser resolves independently of the backend. Accepted on the same grounds: this endpoint is reachable only by the app's own authenticated owner.
+Rule 3a closes it by validating the icon host at write time, so a disallowed host never reaches Firestore.
+
+#### Accepted residual: write-time validation cannot bind render-time behavior
+
+Two known gaps remain, and they share one root cause — the host is validated when the bookmark is created, but the browser acts on that URL later, independently.
+
+1. **DNS rebinding.** The hostname validated at write time may resolve to a different address when the browser loads the icon. Weaker here than for the backend's own fetch, since the browser resolves independently.
+2. **Redirects.** An icon URL on an allowed public host may respond with a redirect to a private address, which the browser follows. Codex raised this on PR #6. Following and validating the full redirect chain at write time does not close it either: the remote host can begin redirecting at any point after validation.
+
+Both are accepted rather than fixed. Closing them properly requires either proxying icon bytes through the backend — reversing this spec's non-goal and turning a URL column into an image pipeline with fetching, caching, size caps, and content-type validation — or dropping third-party icons entirely, which removes most of the feature's value since CDN-hosted favicons are common.
+
+The grounds for accepting: `POST /api/bookmarks` is reachable only by the app's own authenticated owner; `<img>` gives an attacker no read access to the response, so neither gap is exfiltration; and the exposure — a GET issued by the owner's browser — is the general consequence of rendering any remote image, not something specific to this feature.
 
 ## Route change
 
