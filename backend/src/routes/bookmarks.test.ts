@@ -95,7 +95,9 @@ describe('POST /api/bookmarks', () => {
   })
 
   it('returns 400 when url is not a string', async () => {
-    const res = await request(app).post('/api/bookmarks').send({ url: { a: 1 } })
+    const res = await request(app)
+      .post('/api/bookmarks')
+      .send({ url: { a: 1 } })
     expect(res.status).toBe(400)
     expect(db.createBookmark).not.toHaveBeenCalled()
   })

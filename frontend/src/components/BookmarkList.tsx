@@ -62,9 +62,7 @@ export default function BookmarkList({ bookmarks }: BookmarkListProps) {
                     loading="lazy"
                     referrerPolicy="no-referrer"
                     className="w-4 h-4 object-contain"
-                    onError={() =>
-                      setFailedIcons((previous) => new Set(previous).add(bookmark.id))
-                    }
+                    onError={() => setFailedIcons((previous) => new Set(previous).add(bookmark.id))}
                   />
                 ) : (
                   <FontAwesomeIcon icon={faLink} size="xs" aria-hidden="true" />

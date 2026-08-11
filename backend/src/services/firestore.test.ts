@@ -50,7 +50,11 @@ describe('listBookmarks', () => {
 
 describe('createBookmark', () => {
   it('persists faviconUrl when one was resolved', async () => {
-    const result = await createBookmark('https://example.com', 'Example', 'https://example.com/f.ico')
+    const result = await createBookmark(
+      'https://example.com',
+      'Example',
+      'https://example.com/f.ico'
+    )
 
     expect(mockAdd).toHaveBeenCalledWith(
       expect.objectContaining({ faviconUrl: 'https://example.com/f.ico' })

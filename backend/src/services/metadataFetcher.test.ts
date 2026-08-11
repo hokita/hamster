@@ -348,9 +348,7 @@ describe('fetchMetadata', () => {
   })
 
   it('accepts a link tag with href before rel', async () => {
-    mockFetch.mockResolvedValue(
-      mockResponse(["<head><link href='/order.ico' rel='icon'></head>"])
-    )
+    mockFetch.mockResolvedValue(mockResponse(["<head><link href='/order.ico' rel='icon'></head>"]))
     const result = await fetchMetadata('https://example.com')
     expect(result.faviconUrl).toBe('https://example.com/order.ico')
   })
@@ -414,7 +412,7 @@ describe('fetchMetadata', () => {
   })
 
   it('withSignal rejects as soon as the signal aborts, even if the wrapped promise never settles', async () => {
-    // isDisallowedHost races dns.lookup() against fetchTitle's shared deadline via this
+    // isDisallowedHost races dns.lookup() against fetchMetadata's shared deadline via this
     // helper, so a hanging DNS resolution can no longer stall past the deadline. Node's
     // AbortSignal.timeout() isn't fake-timer-controllable, so this is tested directly
     // against an AbortController instead of waiting out a real 5s deadline end-to-end.

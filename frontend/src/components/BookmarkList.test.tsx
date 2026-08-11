@@ -72,20 +72,14 @@ describe('BookmarkList favicons', () => {
     const withIcon = [{ ...bookmarks[0], faviconUrl: 'https://cdn.example.net/f.ico' }]
     const { container } = render(<BookmarkList bookmarks={withIcon} />)
 
-    expect(container.querySelector('img')).toHaveAttribute(
-      'src',
-      'https://cdn.example.net/f.ico'
-    )
+    expect(container.querySelector('img')).toHaveAttribute('src', 'https://cdn.example.net/f.ico')
   })
 
   it('derives the origin favicon when the bookmark has no stored faviconUrl', () => {
     const legacy = [{ ...bookmarks[0], url: 'https://example.com/deep/page?q=1' }]
     const { container } = render(<BookmarkList bookmarks={legacy} />)
 
-    expect(container.querySelector('img')).toHaveAttribute(
-      'src',
-      'https://example.com/favicon.ico'
-    )
+    expect(container.querySelector('img')).toHaveAttribute('src', 'https://example.com/favicon.ico')
   })
 
   it('keeps the favicon out of the accessible name and out of the referrer', () => {
