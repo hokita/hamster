@@ -81,45 +81,59 @@ async function readBoundedBytes(response: Response): Promise<Uint8Array> {
   return Buffer.concat(chunks)
 }
 
-async function fetchTitleInner(url: string, signal: AbortSignal): Promise<string | null> {
+export interface PageMetadata {
+  title: string | null
+  faviconUrl: string | null
+}
+
+const EMPTY_METADATA: PageMetadata = { title: null, faviconUrl: null }
+
+function extractTitle(text: string): string | null {
+  const match = TITLE_REGEX.exec(text)
+  if (!match) return null
+  return decodeEntities(match[1]).replace(/\s+/g, ' ').trim() || null
+}
+
+async function fetchMetadataInner(url: string, signal: AbortSignal): Promise<PageMetadata> {
   let currentUrl = url
 
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     const parsed = new URL(currentUrl)
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null
-    if (await isDisallowedHost(parsed.hostname, signal)) return null
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return EMPTY_METADATA
+    if (await isDisallowedHost(parsed.hostname, signal)) return EMPTY_METADATA
 
     const response = await fetch(currentUrl, { redirect: 'manual', signal })
 
     if (response.status >= 300 && response.status < 400) {
-      if (hop === MAX_REDIRECTS) return null
+      if (hop === MAX_REDIRECTS) return EMPTY_METADATA
       const location = response.headers.get('location')
-      if (!location) return null
+      if (!location) return EMPTY_METADATA
       currentUrl = new URL(location, currentUrl).toString()
       continue
     }
 
+    // Past this point the final URL is known and its host passed the SSRF guard, so an
+    // origin favicon is always a usable answer even when the body is unparseable.
+    const originFavicon = new URL('/favicon.ico', currentUrl).toString()
+
     const contentType = response.headers.get('content-type') ?? ''
-    if (!HTML_CONTENT_TYPE.test(contentType)) return null
+    if (!HTML_CONTENT_TYPE.test(contentType)) return { title: null, faviconUrl: originFavicon }
 
     const bytes = await readBoundedBytes(response)
     const asciiSafeText = Buffer.from(bytes).toString('latin1')
     const charset = resolveCharset(contentType, asciiSafeText)
     const text = decodeWithCharset(bytes, charset)
-    const match = TITLE_REGEX.exec(text)
-    if (!match) return null
 
-    const title = decodeEntities(match[1]).replace(/\s+/g, ' ').trim()
-    return title || null
+    return { title: extractTitle(text), faviconUrl: originFavicon }
   }
 
-  return null
+  return EMPTY_METADATA
 }
 
-export async function fetchTitle(url: string): Promise<string | null> {
+export async function fetchMetadata(url: string): Promise<PageMetadata> {
   try {
-    return await fetchTitleInner(url, AbortSignal.timeout(FETCH_TIMEOUT_MS))
+    return await fetchMetadataInner(url, AbortSignal.timeout(FETCH_TIMEOUT_MS))
   } catch {
-    return null
+    return EMPTY_METADATA
   }
 }

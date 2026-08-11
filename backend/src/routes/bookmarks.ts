@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import type { Request, Response } from 'express'
 import * as db from '../services/firestore'
-import { fetchTitle } from '../services/titleFetcher'
+import { fetchMetadata } from '../services/metadataFetcher'
 
 export function createBookmarksRouter(): Router {
   const router = Router()
@@ -26,8 +26,8 @@ export function createBookmarksRouter(): Router {
       return
     }
     try {
-      const title = (await fetchTitle(url)) ?? url
-      const bookmark = await db.createBookmark(url, title)
+      const { title } = await fetchMetadata(url)
+      const bookmark = await db.createBookmark(url, title ?? url)
       res.status(201).json(bookmark)
     } catch {
       res.status(500).json({ error: 'Failed to create bookmark' })
