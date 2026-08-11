@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import { describe, it, expect } from 'vitest'
 import BookmarkList from './BookmarkList'
 
@@ -64,5 +64,59 @@ describe('BookmarkList', () => {
       render(<BookmarkList bookmarks={null as unknown as typeof bookmarks} />)
     ).not.toThrow()
     expect(screen.getByText('No bookmarks yet — paste a URL above to add one.')).toBeInTheDocument()
+  })
+})
+
+describe('BookmarkList favicons', () => {
+  it('uses the stored faviconUrl as the icon source', () => {
+    const withIcon = [{ ...bookmarks[0], faviconUrl: 'https://cdn.example.net/f.ico' }]
+    const { container } = render(<BookmarkList bookmarks={withIcon} />)
+
+    expect(container.querySelector('img')).toHaveAttribute(
+      'src',
+      'https://cdn.example.net/f.ico'
+    )
+  })
+
+  it('derives the origin favicon when the bookmark has no stored faviconUrl', () => {
+    const legacy = [{ ...bookmarks[0], url: 'https://example.com/deep/page?q=1' }]
+    const { container } = render(<BookmarkList bookmarks={legacy} />)
+
+    expect(container.querySelector('img')).toHaveAttribute(
+      'src',
+      'https://example.com/favicon.ico'
+    )
+  })
+
+  it('keeps the favicon out of the accessible name and out of the referrer', () => {
+    const withIcon = [{ ...bookmarks[0], faviconUrl: 'https://cdn.example.net/logo-name.ico' }]
+    const { container } = render(<BookmarkList bookmarks={withIcon} />)
+    const img = container.querySelector('img')
+
+    expect(img).toHaveAttribute('alt', '')
+    expect(img).toHaveAttribute('referrerpolicy', 'no-referrer')
+    expect(img).toHaveAttribute('loading', 'lazy')
+    expect(screen.getByRole('link', { name: /Example Site/ })).not.toHaveAccessibleName(
+      expect.stringContaining('logo-name')
+    )
+  })
+
+  it('falls back to the generic icon when the favicon fails to load', () => {
+    const { container } = render(<BookmarkList bookmarks={bookmarks} />)
+    const img = container.querySelector('img')
+    expect(img).not.toBeNull()
+
+    fireEvent.error(img!)
+
+    expect(container.querySelector('img')).toBeNull()
+    expect(container.querySelector('svg')).not.toBeNull()
+  })
+
+  it('renders the generic icon without throwing when the URL is unparseable', () => {
+    const malformed = [{ ...bookmarks[0], url: 'https://exa mple.com' }]
+    const { container } = render(<BookmarkList bookmarks={malformed} />)
+
+    expect(container.querySelector('img')).toBeNull()
+    expect(screen.getByRole('link', { name: /Example Site/ })).toBeInTheDocument()
   })
 })

@@ -4,6 +4,7 @@ export interface Bookmark {
   id: string
   url: string
   title: string
+  faviconUrl?: string
   createdAt: string
 }
 
