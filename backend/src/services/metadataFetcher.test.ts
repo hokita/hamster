@@ -300,6 +300,119 @@ describe('fetchMetadata', () => {
     expect(result).toEqual({ title: null, faviconUrl: null })
   })
 
+  it('finds an icon link that appears after the title', async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse([
+        '<html><head><title>T</title><link rel="icon" href="/i.png"></head><body></body></html>',
+      ])
+    )
+    const result = await fetchMetadata('https://example.com')
+    expect(result.title).toBe('T')
+    expect(result.faviconUrl).toBe('https://example.com/i.png')
+  })
+
+  it('finds an icon link split across chunks after the title', async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse([
+        '<html><head><title>T</title>',
+        '<link rel="icon" href="/late.png">',
+        '</head><body></body></html>',
+      ])
+    )
+    const result = await fetchMetadata('https://example.com')
+    expect(result.faviconUrl).toBe('https://example.com/late.png')
+  })
+
+  it('resolves a relative icon href against the page URL', async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse(['<head><link rel="icon" href="icons/fav.png"></head>'])
+    )
+    const result = await fetchMetadata('https://example.com/blog/post')
+    expect(result.faviconUrl).toBe('https://example.com/blog/icons/fav.png')
+  })
+
+  it('keeps an absolute icon href on another origin', async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse(['<head><link rel="icon" href="https://cdn.example.net/f.ico"></head>'])
+    )
+    const result = await fetchMetadata('https://example.com')
+    expect(result.faviconUrl).toBe('https://cdn.example.net/f.ico')
+  })
+
+  it('accepts rel="shortcut icon"', async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse(['<head><link rel="shortcut icon" href="/s.ico"></head>'])
+    )
+    const result = await fetchMetadata('https://example.com')
+    expect(result.faviconUrl).toBe('https://example.com/s.ico')
+  })
+
+  it('accepts a link tag with href before rel', async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse(["<head><link href='/order.ico' rel='icon'></head>"])
+    )
+    const result = await fetchMetadata('https://example.com')
+    expect(result.faviconUrl).toBe('https://example.com/order.ico')
+  })
+
+  it('falls back to apple-touch-icon when no icon link is declared', async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse(['<head><link rel="apple-touch-icon" href="/apple.png"></head>'])
+    )
+    const result = await fetchMetadata('https://example.com')
+    expect(result.faviconUrl).toBe('https://example.com/apple.png')
+  })
+
+  it('prefers a plain icon link over an apple-touch-icon declared earlier', async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse([
+        '<head><link rel="apple-touch-icon" href="/apple.png"><link rel="icon" href="/real.ico"></head>',
+      ])
+    )
+    const result = await fetchMetadata('https://example.com')
+    expect(result.faviconUrl).toBe('https://example.com/real.ico')
+  })
+
+  it('decodes HTML entities in the icon href', async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse(['<head><link rel="icon" href="/i.ico?a=1&amp;b=2"></head>'])
+    )
+    const result = await fetchMetadata('https://example.com')
+    expect(result.faviconUrl).toBe('https://example.com/i.ico?a=1&b=2')
+  })
+
+  it('ignores a javascript: icon href and uses the origin default', async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse(['<head><link rel="icon" href="javascript:alert(1)"></head>'])
+    )
+    const result = await fetchMetadata('https://example.com')
+    expect(result.faviconUrl).toBe('https://example.com/favicon.ico')
+  })
+
+  it('ignores a data: icon href and uses the origin default', async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse(['<head><link rel="icon" href="data:image/png;base64,AAAA"></head>'])
+    )
+    const result = await fetchMetadata('https://example.com')
+    expect(result.faviconUrl).toBe('https://example.com/favicon.ico')
+  })
+
+  it('ignores a stylesheet link and uses the origin default', async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse(['<head><link rel="stylesheet" href="/app.css"></head>'])
+    )
+    const result = await fetchMetadata('https://example.com')
+    expect(result.faviconUrl).toBe('https://example.com/favicon.ico')
+  })
+
+  it('uses the declared icon from the final page after a redirect', async () => {
+    mockFetch
+      .mockResolvedValueOnce(mockRedirect('https://final.example.org/page'))
+      .mockResolvedValueOnce(mockResponse(['<head><link rel="icon" href="/f.png"></head>']))
+    const result = await fetchMetadata('https://short.example.com/abc')
+    expect(result.faviconUrl).toBe('https://final.example.org/f.png')
+  })
+
   it('withSignal rejects as soon as the signal aborts, even if the wrapped promise never settles', async () => {
     // isDisallowedHost races dns.lookup() against fetchTitle's shared deadline via this
     // helper, so a hanging DNS resolution can no longer stall past the deadline. Node's

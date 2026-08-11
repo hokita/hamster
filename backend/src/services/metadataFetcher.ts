@@ -4,6 +4,7 @@ import { isDisallowedIp } from './ipGuard'
 
 const HTML_CONTENT_TYPE = /^(text\/html|application\/xhtml\+xml)/i
 const TITLE_REGEX = /<title[^>]*>([^<]*)<\/title>/i
+const HEAD_END_REGEX = /<\/head\s*>|<body\b/i
 const MAX_REDIRECTS = 3
 const MAX_BYTES = 100_000
 const FETCH_TIMEOUT_MS = 5000
@@ -71,11 +72,13 @@ async function readBoundedBytes(response: Response): Promise<Uint8Array> {
     const chunk = value.byteLength > remaining ? value.subarray(0, remaining) : value
     chunks.push(chunk)
     bytesRead += chunk.byteLength
-    // ASCII-range markup (a <title> tag) decodes identically under latin1 regardless of
-    // the page's real charset, so this is a safe way to check for an early exit without
-    // yet knowing — or mis-decoding non-ASCII bytes with the wrong guess for — the actual
-    // encoding, which isn't resolved until the whole (bounded) body has been read.
-    if (TITLE_REGEX.test(Buffer.concat(chunks).toString('latin1'))) break
+    // Stop at the end of <head> rather than at </title>: <link rel="icon"> commonly follows
+    // the title, so exiting at the title would truncate the icon away on most real pages.
+    // These markers are ASCII-range markup and decode identically under latin1 regardless of
+    // the page's real charset, so this is a safe early-exit check without yet knowing — or
+    // mis-decoding non-ASCII bytes with the wrong guess for — the actual encoding, which
+    // isn't resolved until the whole (bounded) body has been read.
+    if (HEAD_END_REGEX.test(Buffer.concat(chunks).toString('latin1'))) break
   }
   await reader.cancel().catch(() => {})
   return Buffer.concat(chunks)
@@ -92,6 +95,48 @@ function extractTitle(text: string): string | null {
   const match = TITLE_REGEX.exec(text)
   if (!match) return null
   return decodeEntities(match[1]).replace(/\s+/g, ' ').trim() || null
+}
+
+const LINK_TAG_REGEX = /<link\b[^>]*>/gi
+const ATTR_REGEX = /([a-zA-Z-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/g
+
+function parseAttributes(tag: string): Record<string, string> {
+  const attributes: Record<string, string> = {}
+  for (const match of tag.matchAll(ATTR_REGEX)) {
+    attributes[match[1].toLowerCase()] = match[2] ?? match[3] ?? match[4] ?? ''
+  }
+  return attributes
+}
+
+// The browser — not this server — loads whatever ends up here, so ipGuard never sees it.
+// Restricting to http(s) is what keeps a hostile page from steering an <img src> elsewhere.
+function resolveHttpUrl(href: string, baseUrl: string): string | null {
+  try {
+    const resolved = new URL(decodeEntities(href), baseUrl)
+    if (resolved.protocol !== 'http:' && resolved.protocol !== 'https:') return null
+    return resolved.toString()
+  } catch {
+    return null
+  }
+}
+
+function extractIconHref(text: string, baseUrl: string): string | null {
+  let appleTouchIcon: string | null = null
+
+  for (const match of text.matchAll(LINK_TAG_REGEX)) {
+    const attributes = parseAttributes(match[0])
+    if (!attributes.href) continue
+    const relTokens = (attributes.rel ?? '').toLowerCase().split(/\s+/)
+
+    if (relTokens.includes('icon')) {
+      const resolved = resolveHttpUrl(attributes.href, baseUrl)
+      if (resolved) return resolved
+    } else if (relTokens.includes('apple-touch-icon') && !appleTouchIcon) {
+      appleTouchIcon = resolveHttpUrl(attributes.href, baseUrl)
+    }
+  }
+
+  return appleTouchIcon
 }
 
 async function fetchMetadataInner(url: string, signal: AbortSignal): Promise<PageMetadata> {
@@ -124,7 +169,10 @@ async function fetchMetadataInner(url: string, signal: AbortSignal): Promise<Pag
     const charset = resolveCharset(contentType, asciiSafeText)
     const text = decodeWithCharset(bytes, charset)
 
-    return { title: extractTitle(text), faviconUrl: originFavicon }
+    return {
+      title: extractTitle(text),
+      faviconUrl: extractIconHref(text, currentUrl) ?? originFavicon,
+    }
   }
 
   return EMPTY_METADATA
