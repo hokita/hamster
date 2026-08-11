@@ -9,15 +9,17 @@ const MAX_REDIRECTS = 3
 const MAX_BYTES = 100_000
 const FETCH_TIMEOUT_MS = 5000
 
-// Regions whose text content must not be allowed to trigger the end-of-head check below:
-// a hostile or merely careless page can write "<body" or "</head>" as plain text inside a
-// <script>/<style> block (e.g. document.write("<body>")) or an HTML comment, which is not
-// real markup and must not truncate the head scan before the real </head>/<body>. Complete
-// blocks are masked first; a trailing "unterminated" variant handles a block whose closing
-// tag hasn't arrived yet in the accumulated buffer (masking to end-of-buffer is intentionally
-// conservative — it can only delay the early exit, never miss a real one, since MAX_BYTES
-// still bounds the read independently).
-const HEAD_END_MASKS: RegExp[] = [
+// Regions whose text content must not be scanned as real markup: a hostile or merely careless
+// page can write "<body", "</head>", or even a fake "<link rel=icon>" as plain text inside a
+// <script>/<style> block (e.g. document.write("<body>"), or a JS string literal containing an
+// HTML template) or an HTML comment. Used both to keep the end-of-head check below from firing on
+// non-markup text, and to keep extractIconHref from picking up a fake <link> that isn't real
+// markup. Complete blocks are masked first; a trailing "unterminated" variant handles a block
+// whose closing tag hasn't arrived yet in the accumulated buffer (masking to end-of-buffer is
+// intentionally conservative — it can only delay the head-end early exit or hide a not-yet-
+// complete icon candidate, never fabricate a match, since MAX_BYTES still bounds the read
+// independently).
+const NON_MARKUP_MASKS: RegExp[] = [
   /<!--[\s\S]*?-->/g,
   /<!--[\s\S]*$/,
   /<script\b[^>]*>[\s\S]*?<\/script\s*>/gi,
@@ -26,8 +28,8 @@ const HEAD_END_MASKS: RegExp[] = [
   /<style\b[^>]*>[\s\S]*$/i,
 ]
 
-function maskNonMarkupForHeadEndCheck(text: string): string {
-  return HEAD_END_MASKS.reduce(
+function maskNonMarkup(text: string): string {
+  return NON_MARKUP_MASKS.reduce(
     (masked, pattern) => masked.replace(pattern, (m) => ' '.repeat(m.length)),
     text
   )
@@ -103,7 +105,7 @@ async function readBoundedBytes(response: Response): Promise<Uint8Array> {
     // mis-decoding non-ASCII bytes with the wrong guess for — the actual encoding, which
     // isn't resolved until the whole (bounded) body has been read.
     const bufferedText = Buffer.concat(chunks).toString('latin1')
-    if (HEAD_END_REGEX.test(maskNonMarkupForHeadEndCheck(bufferedText))) break
+    if (HEAD_END_REGEX.test(maskNonMarkup(bufferedText))) break
   }
   await reader.cancel().catch(() => {})
   return Buffer.concat(chunks)
@@ -146,9 +148,13 @@ function resolveHttpUrl(href: string, baseUrl: string): string | null {
 }
 
 function extractIconHref(text: string, baseUrl: string): string | null {
+  // Mask <script>/<style> contents and HTML comments before scanning: inline script text
+  // (e.g. a JS string literal holding an HTML template) or a commented-out <link> is not real
+  // markup and must not be treated as a candidate icon — see NON_MARKUP_MASKS above.
+  const maskedText = maskNonMarkup(text)
   let appleTouchIcon: string | null = null
 
-  for (const match of text.matchAll(LINK_TAG_REGEX)) {
+  for (const match of maskedText.matchAll(LINK_TAG_REGEX)) {
     const attributes = parseAttributes(match[0])
     if (!attributes.href) continue
     const relTokens = (attributes.rel ?? '').toLowerCase().split(/\s+/)

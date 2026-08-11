@@ -16,8 +16,72 @@ function hostnameOf(url: string): string | null {
   }
 }
 
+// Mirrors the private/loopback/link-local IP-literal check in backend/src/services/ipGuard.ts.
+// Duplicated here (not imported) because frontend and backend are separate packages with no
+// shared module, and this check is small enough not to warrant one. Kept intentionally narrower
+// than the backend's: only the ranges called out for this guard, not the full SSRF range list
+// (e.g. documentation/benchmarking ranges are irrelevant to "don't auto-load an image").
+const IPV4_PRIVATE_RANGES: [string, number][] = [
+  ['0.0.0.0', 8],
+  ['10.0.0.0', 8],
+  ['127.0.0.0', 8],
+  ['169.254.0.0', 16],
+  ['172.16.0.0', 12],
+  ['192.168.0.0', 16],
+]
+
+function ipv4ToInt(ip: string): number {
+  return ip.split('.').reduce((acc, octet) => (acc << 8) + Number(octet), 0) >>> 0
+}
+
+function isIpv4Literal(host: string): boolean {
+  const parts = host.split('.')
+  return parts.length === 4 && parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255)
+}
+
+function isPrivateIpv4(host: string): boolean {
+  const ipInt = ipv4ToInt(host)
+  return IPV4_PRIVATE_RANGES.some(([base, bits]) => {
+    const mask = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0
+    return (ipInt & mask) === (ipv4ToInt(base) & mask)
+  })
+}
+
+// host here is the bracket-stripped IPv6 literal, e.g. "::1" or "fe80::1".
+function isPrivateIpv6(host: string): boolean {
+  const normalized = host.toLowerCase()
+  if (normalized === '::1' || normalized === '::') return true
+  if (normalized.startsWith('fc') || normalized.startsWith('fd')) return true // fc00::/7 unique local
+  if (normalized.startsWith('fe')) {
+    const third = normalized[2]
+    if (third === '8' || third === '9' || third === 'a' || third === 'b') return true // fe80::/10 link-local
+  }
+  return false
+}
+
+// Host-literal only: a hostname that merely *resolves* to a private IP (e.g. a LAN mDNS name
+// like "router.local") can't be caught here — the frontend has no DNS resolution available.
+// That residual gap is accepted; the backend's ipGuard still protects the metadata fetch itself.
+function isPrivateOrLocalHost(hostname: string): boolean {
+  if (hostname === 'localhost') return true
+
+  const literal =
+    hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname
+
+  if (isIpv4Literal(literal)) return isPrivateIpv4(literal)
+  if (literal.includes(':')) return isPrivateIpv6(literal)
+
+  return false
+}
+
 function originFaviconOf(url: string): string | null {
   try {
+    const parsed = new URL(url)
+    // Only derive a fallback favicon when the backend never got a chance to guard this host
+    // (no stored faviconUrl). If the bookmark's own hostname is a private/loopback/link-local
+    // literal, deriving one here would make the browser contact it automatically on every list
+    // render, bypassing the backend's ipGuard for URLs it never even saw.
+    if (isPrivateOrLocalHost(parsed.hostname)) return null
     return new URL('/favicon.ico', url).toString()
   } catch {
     return null

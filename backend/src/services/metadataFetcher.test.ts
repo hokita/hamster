@@ -483,6 +483,36 @@ describe('fetchMetadata', () => {
     expect(readCalls).toBe(1)
   })
 
+  it('does not let a fake <link rel="icon"> inside an inline script win over the real icon that follows', async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse([
+        '<head><script>var tpl = \'<link rel="icon" href="https://evil.example/beacon?id=1">\';</script>\n' +
+          '<link rel="icon" href="/real.png"></head>',
+      ])
+    )
+    const result = await fetchMetadata('https://example.com')
+    expect(result.faviconUrl).toBe('https://example.com/real.png')
+  })
+
+  it('does not let a <link rel="icon"> inside an HTML comment win over the real icon that follows', async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse([
+        '<head><!-- <link rel="icon" href="https://evil.example/beacon"> -->' +
+          '<link rel="icon" href="/real.png"></head>',
+      ])
+    )
+    const result = await fetchMetadata('https://example.com')
+    expect(result.faviconUrl).toBe('https://example.com/real.png')
+  })
+
+  it('still extracts a real, unmasked icon link on a normal page (guard against over-masking)', async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse(['<head><title>T</title><link rel="icon" href="/plain.ico"></head>'])
+    )
+    const result = await fetchMetadata('https://example.com')
+    expect(result.faviconUrl).toBe('https://example.com/plain.ico')
+  })
+
   it('withSignal rejects as soon as the signal aborts, even if the wrapped promise never settles', async () => {
     // isDisallowedHost races dns.lookup() against fetchMetadata's shared deadline via this
     // helper, so a hanging DNS resolution can no longer stall past the deadline. Node's

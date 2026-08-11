@@ -113,4 +113,28 @@ describe('BookmarkList favicons', () => {
     expect(container.querySelector('img')).toBeNull()
     expect(screen.getByRole('link', { name: /Example Site/ })).toBeInTheDocument()
   })
+
+  it('does not derive an origin favicon for a private IPv4 host with no stored faviconUrl', () => {
+    const privateHost = [{ ...bookmarks[0], url: 'https://192.168.1.1' }]
+    const { container } = render(<BookmarkList bookmarks={privateHost} />)
+
+    expect(container.querySelector('img')).toBeNull()
+    expect(container.querySelector('svg')).not.toBeNull()
+  })
+
+  it('does not derive an origin favicon for a loopback host with no stored faviconUrl', () => {
+    const loopback = [{ ...bookmarks[0], url: 'http://127.0.0.1:8080/' }]
+    const { container } = render(<BookmarkList bookmarks={loopback} />)
+
+    expect(container.querySelector('img')).toBeNull()
+    expect(container.querySelector('svg')).not.toBeNull()
+  })
+
+  it('does not derive an origin favicon for a bracketed IPv6 loopback host with no stored faviconUrl', () => {
+    const ipv6Loopback = [{ ...bookmarks[0], url: 'http://[::1]/' }]
+    const { container } = render(<BookmarkList bookmarks={ipv6Loopback} />)
+
+    expect(container.querySelector('img')).toBeNull()
+    expect(container.querySelector('svg')).not.toBeNull()
+  })
 })
