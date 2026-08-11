@@ -411,6 +411,78 @@ describe('fetchMetadata', () => {
     expect(result.faviconUrl).toBe('https://final.example.org/f.png')
   })
 
+  it('falls back to the origin favicon when the declared icon href resolves to a disallowed host', async () => {
+    vi.mocked(lookup)
+      .mockResolvedValueOnce({ address: '93.184.216.34', family: 4 } as never) // page host
+      .mockResolvedValueOnce({ address: '169.254.169.254', family: 4 } as never) // icon host
+    mockFetch.mockResolvedValue(
+      mockResponse(['<head><link rel="icon" href="http://internal.example/meta"></head>'])
+    )
+    const result = await fetchMetadata('https://example.com')
+    expect(result.faviconUrl).toBe('https://example.com/favicon.ico')
+  })
+
+  it('still uses a declared icon on a different but public host after the SSRF guard check', async () => {
+    vi.mocked(lookup)
+      .mockResolvedValueOnce({ address: '93.184.216.34', family: 4 } as never) // page host
+      .mockResolvedValueOnce({ address: '151.101.1.140', family: 4 } as never) // public CDN host
+    mockFetch.mockResolvedValue(
+      mockResponse(['<head><link rel="icon" href="https://cdn.example.net/f.ico"></head>'])
+    )
+    const result = await fetchMetadata('https://example.com')
+    expect(result.faviconUrl).toBe('https://cdn.example.net/f.ico')
+  })
+
+  it('does not treat <body> written inside a script string as the end of head, still finding the title and icon', async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse([
+        '<head>\n  <script>document.write("<body class=x>");</script>\n',
+        '  <title>Example Site</title>\n  <link rel="icon" href="/real-favicon.png">\n</head>',
+      ])
+    )
+    const result = await fetchMetadata('https://example.com')
+    expect(result.title).toBe('Example Site')
+    expect(result.faviconUrl).toBe('https://example.com/real-favicon.png')
+  })
+
+  it('does not treat </head> or <body inside an HTML comment as the end of head', async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse([
+        '<head><!-- </head> <body> fake --><title>T</title>',
+        '<link rel="icon" href="/x.ico"></head>',
+      ])
+    )
+    const result = await fetchMetadata('https://example.com')
+    expect(result.title).toBe('T')
+    expect(result.faviconUrl).toBe('https://example.com/x.ico')
+  })
+
+  it('still exits the read loop early at a real </head> without reading further chunks', async () => {
+    let readCalls = 0
+    const chunks = ['<head><title>T</title></head>', '<link rel="icon" href="/late.ico">']
+    const encoder = new TextEncoder()
+    mockFetch.mockResolvedValue({
+      status: 200,
+      headers: {
+        get: (name: string) => (name.toLowerCase() === 'content-type' ? 'text/html' : null),
+      },
+      body: {
+        getReader: () => ({
+          read: async () => {
+            readCalls += 1
+            if (readCalls > chunks.length) throw new Error('should not read past </head>')
+            const value = encoder.encode(chunks[readCalls - 1])
+            return { done: false, value }
+          },
+          cancel: async () => {},
+        }),
+      },
+    })
+    const result = await fetchMetadata('https://example.com')
+    expect(result.title).toBe('T')
+    expect(readCalls).toBe(1)
+  })
+
   it('withSignal rejects as soon as the signal aborts, even if the wrapped promise never settles', async () => {
     // isDisallowedHost races dns.lookup() against fetchMetadata's shared deadline via this
     // helper, so a hanging DNS resolution can no longer stall past the deadline. Node's

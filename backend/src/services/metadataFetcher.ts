@@ -9,6 +9,30 @@ const MAX_REDIRECTS = 3
 const MAX_BYTES = 100_000
 const FETCH_TIMEOUT_MS = 5000
 
+// Regions whose text content must not be allowed to trigger the end-of-head check below:
+// a hostile or merely careless page can write "<body" or "</head>" as plain text inside a
+// <script>/<style> block (e.g. document.write("<body>")) or an HTML comment, which is not
+// real markup and must not truncate the head scan before the real </head>/<body>. Complete
+// blocks are masked first; a trailing "unterminated" variant handles a block whose closing
+// tag hasn't arrived yet in the accumulated buffer (masking to end-of-buffer is intentionally
+// conservative — it can only delay the early exit, never miss a real one, since MAX_BYTES
+// still bounds the read independently).
+const HEAD_END_MASKS: RegExp[] = [
+  /<!--[\s\S]*?-->/g,
+  /<!--[\s\S]*$/,
+  /<script\b[^>]*>[\s\S]*?<\/script\s*>/gi,
+  /<script\b[^>]*>[\s\S]*$/i,
+  /<style\b[^>]*>[\s\S]*?<\/style\s*>/gi,
+  /<style\b[^>]*>[\s\S]*$/i,
+]
+
+function maskNonMarkupForHeadEndCheck(text: string): string {
+  return HEAD_END_MASKS.reduce(
+    (masked, pattern) => masked.replace(pattern, (m) => ' '.repeat(m.length)),
+    text
+  )
+}
+
 export function withSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) return Promise.reject(signal.reason)
   return new Promise((resolve, reject) => {
@@ -78,7 +102,8 @@ async function readBoundedBytes(response: Response): Promise<Uint8Array> {
     // the page's real charset, so this is a safe early-exit check without yet knowing — or
     // mis-decoding non-ASCII bytes with the wrong guess for — the actual encoding, which
     // isn't resolved until the whole (bounded) body has been read.
-    if (HEAD_END_REGEX.test(Buffer.concat(chunks).toString('latin1'))) break
+    const bufferedText = Buffer.concat(chunks).toString('latin1')
+    if (HEAD_END_REGEX.test(maskNonMarkupForHeadEndCheck(bufferedText))) break
   }
   await reader.cancel().catch(() => {})
   return Buffer.concat(chunks)
@@ -169,9 +194,27 @@ async function fetchMetadataInner(url: string, signal: AbortSignal): Promise<Pag
     const charset = resolveCharset(contentType, asciiSafeText)
     const text = decodeWithCharset(bytes, charset)
 
+    // extractIconHref already picks the single best candidate (icon over apple-touch-icon,
+    // first-icon-wins); only that final candidate's host is guard-checked here — if it's
+    // disallowed we fall back to the origin default rather than walking to another <link>.
+    // The origin default itself is never re-checked: its host already passed the guard at
+    // the top of this loop iteration, and a redundant DNS lookup would just be wasted work.
+    // Note: this only guards what this server does with the href server-side (it never
+    // fetches it) — the browser resolves and loads the chosen URL independently later, so
+    // DNS-rebinding between this check and the browser's own load isn't (and can't be) closed
+    // here, same caveat as isDisallowedHost above.
+    const iconCandidate = extractIconHref(text, currentUrl)
+    let faviconUrl = originFavicon
+    if (iconCandidate) {
+      const iconHost = new URL(iconCandidate).hostname
+      if (!(await isDisallowedHost(iconHost, signal))) {
+        faviconUrl = iconCandidate
+      }
+    }
+
     return {
       title: extractTitle(text),
-      faviconUrl: extractIconHref(text, currentUrl) ?? originFavicon,
+      faviconUrl,
     }
   }
 
