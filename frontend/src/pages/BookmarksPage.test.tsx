@@ -247,4 +247,30 @@ describe('BookmarksPage', () => {
     )
     expect(screen.getByRole('link', { name: /New Site/ })).toBeInTheDocument()
   })
+
+  it('clears the loading spinner even when an add fails before the initial fetch settles', async () => {
+    let resolveMountFetch!: (value: Awaited<ReturnType<typeof api.listBookmarks>>) => void
+    const mountFetchPromise = new Promise<Awaited<ReturnType<typeof api.listBookmarks>>>(
+      (resolve) => {
+        resolveMountFetch = resolve
+      }
+    )
+    vi.mocked(api.listBookmarks).mockReturnValueOnce(mountFetchPromise)
+    vi.mocked(api.createBookmark).mockRejectedValue(new Error('network error'))
+
+    render(<BookmarksPage />)
+    expect(screen.getByRole('status', { name: 'Loading bookmarks' })).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
+    await screen.findByText('Failed to add bookmark.')
+
+    // The initial fetch hasn't settled yet — the spinner should still be showing.
+    expect(screen.getByRole('status', { name: 'Loading bookmarks' })).toBeInTheDocument()
+
+    resolveMountFetch([])
+    await waitFor(() =>
+      expect(screen.queryByRole('status', { name: 'Loading bookmarks' })).not.toBeInTheDocument()
+    )
+  })
 })

@@ -20,9 +20,15 @@ export default function BookmarksPage() {
   // Shared across the mount effect and refresh() so a slow, superseded request can't
   // overwrite state a newer request already applied.
   const requestId = useRef(0)
+  // Tracks ownership of clearing isLoading, independently of requestId. requestId is
+  // also bumped by handleAdd's catch block (to invalidate stale bookmarks/error writes)
+  // even when no replacement fetch is started, which would otherwise permanently
+  // prevent isLoading from ever being cleared if it were the same counter.
+  const loadingId = useRef(0)
 
   const refresh = useCallback(async () => {
     const id = ++requestId.current
+    const lid = ++loadingId.current
     try {
       const result = await api.listBookmarks()
       if (id !== requestId.current) return
@@ -33,12 +39,13 @@ export default function BookmarksPage() {
       if (id !== requestId.current) return
       setError('Failed to load bookmarks.')
     } finally {
-      if (id === requestId.current) setIsLoading(false)
+      if (lid === loadingId.current) setIsLoading(false)
     }
   }, [])
 
   useEffect(() => {
     const id = ++requestId.current
+    const lid = ++loadingId.current
     let cancelled = false
     api
       .listBookmarks()
@@ -53,7 +60,7 @@ export default function BookmarksPage() {
         setError('Failed to load bookmarks.')
       })
       .finally(() => {
-        if (cancelled || id !== requestId.current) return
+        if (cancelled || lid !== loadingId.current) return
         setIsLoading(false)
       })
     return () => {
