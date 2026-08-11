@@ -35,7 +35,11 @@ async function readBoundedBytes(response: Response): Promise<Uint8Array> {
 // Deliberately not a readability engine: leftover nav and footer text costs a few tokens and the
 // model ignores it, which is a far better trade than taking on a content-extraction dependency.
 function extractText(html: string): string {
-  return decodeEntities(maskNonMarkup(html).replace(/<[^>]*>/g, ' '))
+  // Use a quote-aware regex to strip tags. A naive /<[^>]*>/g stops at the first > after <,
+  // even if that > is inside a quoted attribute value (e.g. title="5 > 3"), which is legal HTML
+  // and common in real pages. The quote-aware form matches <, then any run of (ordinary char |
+  // double-quoted string | single-quoted string), then >.
+  return decodeEntities(maskNonMarkup(html).replace(/<(?:[^>"']|"[^"]*"|'[^']*')*>/g, ' '))
     .replace(/\s+/g, ' ')
     .trim()
 }

@@ -91,4 +91,22 @@ describe('fetchArticleText', () => {
     vi.mocked(fetchAllowedUrl).mockRejectedValue(new Error('network down'))
     await expect(fetchArticleText('https://example.com')).resolves.toBeNull()
   })
+
+  it('handles > in double-quoted attribute values', async () => {
+    allow('<div title="5 > 3">Some text</div>')
+    await expect(fetchArticleText('https://example.com')).resolves.toBe('Some text')
+  })
+
+  it('handles > in single-quoted attribute values', async () => {
+    allow('<div title=\'a > b\'>Text</div>')
+    await expect(fetchArticleText('https://example.com')).resolves.toBe('Text')
+  })
+
+  it('handles unterminated quotes gracefully', async () => {
+    allow('<body><p>Normal</p><div title="unterminated>rest of page</div>')
+    const text = await fetchArticleText('https://example.com')
+    expect(text).toBeTruthy()
+    // Properly-formed closing tags are still stripped even when opening is malformed
+    expect(text).not.toContain('</div>')
+  })
 })
