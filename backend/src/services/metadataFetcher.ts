@@ -59,6 +59,29 @@ async function isDisallowedHost(hostname: string, signal: AbortSignal): Promise<
   }
 }
 
+// Decodes a numeric character reference's digits (already stripped of "&#"/"&#x" and any
+// trailing ';') into the character it names. Returns '' for anything out of the valid Unicode
+// range rather than throwing, so a malformed reference is just dropped instead of blowing up
+// the whole decode.
+function decodeNumericEntity(digits: string): string {
+  const isHex = digits[0] === 'x' || digits[0] === 'X'
+  const codePoint = parseInt(isHex ? digits.slice(1) : digits, isHex ? 16 : 10)
+  if (!Number.isFinite(codePoint) || codePoint < 0 || codePoint > 0x10ffff) return ''
+  try {
+    return String.fromCodePoint(codePoint)
+  } catch {
+    return ''
+  }
+}
+
+// Only the five most common named character references plus full numeric references (decimal
+// &#NN; and hex &#xNN;, with or without the trailing ';', matching what browsers accept) are
+// decoded here. Full HTML named-character-reference support is a table of ~2,200 entries and
+// would require either hand-rolling that table or pulling in an HTML-parsing dependency, which
+// this project's design explicitly avoids — so an uncommon named reference such as "&sol;" is
+// intentionally left undecoded. Numeric references cover the general escaping trick (e.g. an
+// attacker or CMS encoding "/" as "&#47;" to smuggle it past naive parsing) even though the named
+// table isn't exhaustive.
 function decodeEntities(text: string): string {
   return text
     .replace(/&amp;/g, '&')
@@ -66,6 +89,9 @@ function decodeEntities(text: string): string {
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
+    .replace(/&#(x[0-9a-fA-F]+|[0-9]+);?/gi, (_match, digits: string) =>
+      decodeNumericEntity(digits)
+    )
 }
 
 // A charset extracted from the HTTP Content-Type header always wins over an in-document
@@ -331,11 +357,18 @@ function scanForHeadEnd(text: string, state: HeadScanState): boolean {
         if (isWordChar(ch)) {
           state.name += ch.toLowerCase()
           state.pos++
-        } else if (state.name === state.rawtextTag) {
+        } else if (
+          state.name === state.rawtextTag &&
+          (isAsciiWhitespace(ch) || ch === '/' || ch === '>')
+        ) {
+          // Per the HTML spec, an "appropriate end tag token" requires the tag name to be
+          // immediately followed by whitespace, '/', or '>' — anything else (e.g. the '-' in
+          // "</script-x>") means this wasn't a real end tag after all, just more raw text that
+          // happens to start with the element's name.
           state.rawtextTag = null
           state.mode = 'tag' // let 'tag' consume the rest of the closing tag up to '>'
         } else {
-          state.mode = 'rawtext' // not the matching close tag — just more content
+          state.mode = 'rawtext' // not a valid end tag (wrong name or bad delimiter) — just more content
         }
         break
     }
@@ -408,20 +441,24 @@ function resolveHttpUrl(href: string, baseUrl: string): string | null {
   }
 }
 
-const BASE_TAG_REGEX = /<base\b[^>]*>/i
+const BASE_TAG_REGEX = /<base\b[^>]*>/gi
 
-// Per the HTML spec, only the first <base href> in a document has effect, so this stops at the
-// first match rather than scanning further. Extracted from the masked text (the same masking
-// that strips <script>/<style>/comments before icon scanning) so a <base> tag written inside a
-// script string can't hijack resolution. The href itself may be relative (e.g. "/assets/"), so
-// it's resolved against the fetched page URL first; if there's no <base> tag, or its href is
-// missing/unparseable, this just falls back to the page URL, matching prior behavior.
+// Per the HTML spec, the effective base is the first <base> element that actually carries an
+// href — a <base> without one (e.g. one used only for its `target` attribute) is skipped rather
+// than stopping the search. Extracted from the masked text (the same masking that strips
+// <script>/<style>/comments before icon scanning) so a <base> tag written inside a script string
+// can't hijack resolution. The href itself may be relative (e.g. "/assets/"), so it's resolved
+// against the fetched page URL first; if there's no <base> tag with an href, or it's
+// unparseable, this just falls back to the page URL, matching prior behavior.
 function extractBaseUrl(text: string, pageUrl: string): string {
-  const match = BASE_TAG_REGEX.exec(maskNonMarkup(text))
-  if (!match) return pageUrl
-  const attributes = parseAttributes(match[0])
-  if (!attributes.href) return pageUrl
-  return resolveHttpUrl(attributes.href, pageUrl) ?? pageUrl
+  const maskedText = maskNonMarkup(text)
+  for (const match of maskedText.matchAll(BASE_TAG_REGEX)) {
+    const attributes = parseAttributes(match[0])
+    if (attributes.href) {
+      return resolveHttpUrl(attributes.href, pageUrl) ?? pageUrl
+    }
+  }
+  return pageUrl
 }
 
 function extractIconHref(text: string, baseUrl: string): string | null {

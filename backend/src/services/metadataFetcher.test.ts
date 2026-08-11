@@ -379,6 +379,32 @@ describe('fetchMetadata', () => {
     expect(result.faviconUrl).toBe('https://example.com/i.ico?a=1&b=2')
   })
 
+  it('decodes a decimal numeric character reference in the icon href', async () => {
+    // Regression (Codex round 4, Finding B): "&#47;" must decode to "/" like a browser would,
+    // otherwise new URL() misparses the literal "&" and "#" as query/fragment syntax.
+    mockFetch.mockResolvedValue(
+      mockResponse(['<head><link rel="icon" href="&#47;favicon-num.ico"></head>'])
+    )
+    const result = await fetchMetadata('https://example.com')
+    expect(result.faviconUrl).toBe('https://example.com/favicon-num.ico')
+  })
+
+  it('decodes a hexadecimal numeric character reference in the icon href', async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse(['<head><link rel="icon" href="&#x2F;favicon-hex.ico"></head>'])
+    )
+    const result = await fetchMetadata('https://example.com')
+    expect(result.faviconUrl).toBe('https://example.com/favicon-hex.ico')
+  })
+
+  it('decodes a numeric character reference in the icon href even without a trailing semicolon', async () => {
+    mockFetch.mockResolvedValue(
+      mockResponse(['<head><link rel="icon" href="&#47icon-no-semi.ico"></head>'])
+    )
+    const result = await fetchMetadata('https://example.com')
+    expect(result.faviconUrl).toBe('https://example.com/icon-no-semi.ico')
+  })
+
   it('ignores a javascript: icon href and uses the origin default', async () => {
     mockFetch.mockResolvedValue(
       mockResponse(['<head><link rel="icon" href="javascript:alert(1)"></head>'])
@@ -481,6 +507,23 @@ describe('fetchMetadata', () => {
     const result = await fetchMetadata('https://example.com')
     expect(result.title).toBe('T')
     expect(readCalls).toBe(1)
+  })
+
+  it('does not treat "</script-x>" as closing the script element, still finding a later title and icon', async () => {
+    // Regression (Codex round 4, Finding A): only whitespace, '/', or '>' may delimit a raw-text
+    // end tag per the HTML spec. A '-' (or any other non-word character) must NOT be accepted as a
+    // delimiter, so this literal "</script-x><body>" text inside the script element's content must
+    // not be mistaken for the element's real close tag. The real </title>/<link> arrive in the next
+    // chunk, after the genuine </script>; if the scanner wrongly exits early, they're never read.
+    mockFetch.mockResolvedValue(
+      mockResponse([
+        '<head><script>var x = "</script-x><body>";',
+        '</script><title>Real Title</title><link rel="icon" href="/real-favicon.png"></head>',
+      ])
+    )
+    const result = await fetchMetadata('https://example.com')
+    expect(result.title).toBe('Real Title')
+    expect(result.faviconUrl).toBe('https://example.com/real-favicon.png')
   })
 
   it('does not let a fake <link rel="icon"> inside an inline script win over the real icon that follows', async () => {
@@ -596,6 +639,19 @@ describe('fetchMetadata', () => {
     )
     const result = await fetchMetadata('https://example.com')
     expect(result.faviconUrl).toBe('https://first.example/icon.png')
+  })
+
+  it('skips a <base> element without an href and uses the next one that has one', async () => {
+    // Regression (Codex round 4, Finding C): per spec the effective base is the first <base>
+    // element that HAS an href, not simply the first <base> element.
+    mockFetch.mockResolvedValue(
+      mockResponse([
+        '<head><base target="_blank"><base href="https://cdn.example/assets/">' +
+          '<link rel="icon" href="icon.png"></head>',
+      ])
+    )
+    const result = await fetchMetadata('https://example.com')
+    expect(result.faviconUrl).toBe('https://cdn.example/assets/icon.png')
   })
 
   it('does not let a <base href> written inside a script string affect icon resolution', async () => {
