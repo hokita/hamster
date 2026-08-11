@@ -51,12 +51,17 @@ The exit condition changes to the end of the head (`</head>`, or the start of `<
 1. **Candidate scan.** Scan every `<link>` tag in the decoded head and parse its attributes, rather than assuming `rel` precedes `href` — attribute order varies in the wild. Select on a whitespace-separated `rel` token of `icon` (which covers `shortcut icon`), falling back to `apple-touch-icon` when no `icon` link exists. First match wins.
 2. **Resolution base.** Resolve a relative `href` against the **final** URL after redirects, so a shortlink yields the destination's icon rather than the shortener's.
 3. **Scheme allowlist.** Discard anything that doesn't resolve to `http:` or `https:`, falling through to the origin default. This excludes `javascript:` and unbounded `data:` URIs from both Firestore and the eventual `<img src>`.
+3a. **Host guard.** Run the chosen icon URL's host through the same `ipGuard` check the bookmarked URL gets, falling through to the origin default when it is disallowed. Only the finally-chosen candidate is checked; a rejected candidate does not cause a walk to the next `<link>` tag. The origin default itself is not re-checked — its host passed the guard at the top of the fetch loop.
 4. **Origin default.** When no usable declared icon is found — no `<link>`, a rejected scheme, a non-HTML content type, or an unparseable body — return `origin + "/favicon.ico"` derived from the final URL. The favicon therefore does not depend on the page being parseable HTML, unlike the title.
 5. **Hard failures.** If the *bookmarked* URL's host fails the existing `ipGuard` SSRF check, its own scheme isn't http(s), the redirect cap is exceeded, or the fetch throws or times out, `faviconUrl` is `null` — the same conditions that already yield a `null` title. (Distinct from rule 3, which rejects only the declared `href` and still falls through to the origin default.)
 
 ### Security note
 
-The stored `faviconUrl` is fetched by the **user's browser**, not by the backend, so `ipGuard` never inspects it. The scheme allowlist in rule 3 is what prevents a hostile page from steering an `<img src>` somewhere dangerous. The DNS-rebinding limitation documented in the auto-title spec is unchanged by this work.
+The stored `faviconUrl` is fetched by the **user's browser**, not by the backend, so the browser's own request is never subject to `ipGuard` at fetch time.
+
+An earlier draft of this spec claimed the scheme allowlist (rule 3) was what stopped a hostile page from steering an `<img src>` somewhere dangerous. That was wrong, and an adversarial review caught it by execution: the allowlist rejects `javascript:` and `data:`, but a declared icon of `http://192.168.1.1/admin/reboot?confirm=1` is a plain `http:` URL that passes it cleanly. It was stored verbatim and re-issued by the browser on every list render — a state-changing GET against a LAN device, fired without a click. The `<img>` element gives an attacker no read access to the response, so this is not exfiltration; the exposure is the side effect of the request itself.
+
+Rule 3a closes it by validating the icon host at write time, so a disallowed host never reaches Firestore. The residual limitation is that write-time validation cannot bind the browser's later resolution of that hostname — the same DNS-rebinding gap documented in the auto-title spec, and weaker here since the browser resolves independently of the backend. Accepted on the same grounds: this endpoint is reachable only by the app's own authenticated owner.
 
 ## Route change
 
