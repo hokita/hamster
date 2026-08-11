@@ -20,47 +20,50 @@ export default function BookmarksPage() {
   // Shared across the mount effect and refresh() so a slow, superseded request can't
   // overwrite state a newer request already applied.
   const requestId = useRef(0)
-  // Tracks ownership of clearing isLoading, independently of requestId. requestId is
-  // also bumped by handleAdd's catch block (to invalidate stale bookmarks/error writes)
-  // even when no replacement fetch is started, which would otherwise permanently
-  // prevent isLoading from ever being cleared if it were the same counter.
-  const loadingId = useRef(0)
+  // Tracks ownership of applying a fetch's result (bookmarks, hasLoadedOnce, isLoading),
+  // independent of requestId. requestId is also bumped by handleAdd's catch block (to
+  // protect the add-failure error from being silently cleared) even when no replacement
+  // fetch is started — that bump must not also discard a genuinely successful, still-
+  // in-flight fetch's data, which is why this is a separate counter.
+  const fetchId = useRef(0)
 
   const refresh = useCallback(async () => {
     const id = ++requestId.current
-    const lid = ++loadingId.current
+    const fid = ++fetchId.current
     try {
       const result = await api.listBookmarks()
-      if (id !== requestId.current) return
-      setBookmarks(result)
-      setError(null)
-      setHasLoadedOnce(true)
+      if (fid === fetchId.current) {
+        setBookmarks(result)
+        setHasLoadedOnce(true)
+      }
+      if (id === requestId.current) setError(null)
     } catch {
-      if (id !== requestId.current) return
-      setError('Failed to load bookmarks.')
+      if (id === requestId.current) setError('Failed to load bookmarks.')
     } finally {
-      if (lid === loadingId.current) setIsLoading(false)
+      if (fid === fetchId.current) setIsLoading(false)
     }
   }, [])
 
   useEffect(() => {
     const id = ++requestId.current
-    const lid = ++loadingId.current
+    const fid = ++fetchId.current
     let cancelled = false
     api
       .listBookmarks()
       .then((result) => {
-        if (cancelled || id !== requestId.current) return
-        setBookmarks(result)
-        setError(null)
-        setHasLoadedOnce(true)
+        if (cancelled) return
+        if (fid === fetchId.current) {
+          setBookmarks(result)
+          setHasLoadedOnce(true)
+        }
+        if (id === requestId.current) setError(null)
       })
       .catch(() => {
         if (cancelled || id !== requestId.current) return
         setError('Failed to load bookmarks.')
       })
       .finally(() => {
-        if (cancelled || lid !== loadingId.current) return
+        if (cancelled || fid !== fetchId.current) return
         setIsLoading(false)
       })
     return () => {

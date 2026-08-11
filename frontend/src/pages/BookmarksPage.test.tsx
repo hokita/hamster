@@ -273,4 +273,32 @@ describe('BookmarksPage', () => {
       expect(screen.queryByRole('status', { name: 'Loading bookmarks' })).not.toBeInTheDocument()
     )
   })
+
+  it('still applies the initial list even when an earlier add failed before it settled', async () => {
+    let resolveMountFetch!: (value: Awaited<ReturnType<typeof api.listBookmarks>>) => void
+    const mountFetchPromise = new Promise<Awaited<ReturnType<typeof api.listBookmarks>>>(
+      (resolve) => {
+        resolveMountFetch = resolve
+      }
+    )
+    vi.mocked(api.listBookmarks).mockReturnValueOnce(mountFetchPromise)
+    vi.mocked(api.createBookmark).mockRejectedValue(new Error('network error'))
+
+    render(<BookmarksPage />)
+    fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
+    await screen.findByText('Failed to add bookmark.')
+
+    resolveMountFetch([
+      {
+        id: '1',
+        url: 'https://example.com',
+        title: 'Example Site',
+        createdAt: '2024-01-01T00:00:00.000Z',
+      },
+    ])
+
+    expect(await screen.findByRole('link', { name: /Example Site/ })).toBeInTheDocument()
+    expect(screen.getByText('Failed to add bookmark.')).toBeInTheDocument()
+  })
 })
