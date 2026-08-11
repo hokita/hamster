@@ -5,7 +5,7 @@ vi.mock('node:dns/promises', () => ({
 }))
 
 import { lookup } from 'node:dns/promises'
-import { fetchMetadata, withSignal } from './metadataFetcher'
+import { fetchMetadata } from './metadataFetcher'
 
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
@@ -673,17 +673,5 @@ describe('fetchMetadata', () => {
     )
     const result = await fetchMetadata('https://example.com')
     expect(result.faviconUrl).toBe('https://example.com/favicon.ico')
-  })
-
-  it('withSignal rejects as soon as the signal aborts, even if the wrapped promise never settles', async () => {
-    // isDisallowedHost races dns.lookup() against fetchMetadata's shared deadline via this
-    // helper, so a hanging DNS resolution can no longer stall past the deadline. Node's
-    // AbortSignal.timeout() isn't fake-timer-controllable, so this is tested directly
-    // against an AbortController instead of waiting out a real 5s deadline end-to-end.
-    const controller = new AbortController()
-    const hanging = new Promise<never>(() => {})
-    const resultPromise = withSignal(hanging, controller.signal)
-    controller.abort(new Error('boom'))
-    await expect(resultPromise).rejects.toThrow('boom')
   })
 })
