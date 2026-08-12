@@ -32,6 +32,15 @@ async function readBoundedBytes(response: Response): Promise<Uint8Array> {
   return Buffer.concat(chunks)
 }
 
+// Per the HTML tokenizer, a '<' only opens a tag when followed by an ASCII letter (<p>), a slash
+// (</p>), a bang (<!-- -->, <!DOCTYPE>), or a question mark. Anything else — most importantly a
+// space or a digit — is ordinary text, which is how a page can contain "x < y" and still render
+// it. Treating every '<' as a tag start deleted everything up to the next '>'.
+function opensTag(html: string, index: number): boolean {
+  const next = html[index + 1]
+  return next !== undefined && (/[a-zA-Z]/.test(next) || next === '/' || next === '!' || next === '?')
+}
+
 // quoteAware=false ends every tag at its first '>', ignoring quotes entirely. Both modes visit each
 // character at most once, so both are O(n) — see extractText for why the second mode exists.
 // abortedAt is the index of the '<' that began an unterminated tag, or null on a clean finish.
@@ -45,7 +54,17 @@ function stripTags(html: string, quoteAware: boolean): { text: string; abortedAt
   let out = ''
   let index = 0
   while (index < html.length) {
-    const tagStart = html.indexOf('<', index)
+    let searchFrom = index
+    let tagStart = -1
+    while (searchFrom < html.length) {
+      const candidate = html.indexOf('<', searchFrom)
+      if (candidate === -1) break
+      if (opensTag(html, candidate)) {
+        tagStart = candidate
+        break
+      }
+      searchFrom = candidate + 1
+    }
     if (tagStart === -1) {
       out += html.slice(index)
       return { text: out, abortedAt: null }

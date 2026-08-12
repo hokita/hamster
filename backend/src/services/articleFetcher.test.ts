@@ -170,10 +170,48 @@ describe('fetchArticleText', () => {
     expect(text).toBe('Normal rest of page')
   })
 
+  it('keeps a literal < in prose that is followed by a space and a real comparison', async () => {
+    // A bare '<' in visible text (not the start of a tag) must survive as ordinary text, exactly
+    // as a browser renders it. Only a '<' immediately followed by a letter, '/', '!' or '?' opens
+    // a tag per the HTML tokenizer's tag-open state.
+    allow('<p>x < y and z > q</p>')
+    await expect(fetchArticleText('https://example.com')).resolves.toBe('x < y and z > q')
+  })
+
+  it('treats < followed by a space or a digit as text, not a tag', async () => {
+    allow('<p>under <5 minutes</p>')
+    await expect(fetchArticleText('https://example.com')).resolves.toBe('under <5 minutes')
+    allow('<p>a < b</p>')
+    await expect(fetchArticleText('https://example.com')).resolves.toBe('a < b')
+  })
+
+  it('treats a trailing bare < at end of input as text', async () => {
+    allow('<p>trailing <')
+    await expect(fetchArticleText('https://example.com')).resolves.toBe('trailing <')
+  })
+
+  it('still strips real tags: elements, comments, doctype and uppercase tags', async () => {
+    allow('<!DOCTYPE html><!-- comment --><P>Hello</P>')
+    await expect(fetchArticleText('https://example.com')).resolves.toBe('Hello')
+  })
+
   it('tag stripping is linear time, not quadratic', async () => {
     // Build 300KB of pathological input: unterminated quotes cause O(n^2) in regex engines.
     // A linear scanner should process this in well under 2 seconds even on slow hardware.
     const malicious = '<a b="'.repeat(50000)
+    allow(`<body><p>Before</p>${malicious}<p>After</p></body>`)
+    const start = performance.now()
+    const text = await fetchArticleText('https://example.com')
+    const elapsed = performance.now() - start
+    expect(text).toContain('Before')
+    expect(elapsed).toBeLessThan(2000)
+  })
+
+  it('handles 300KB of bare < characters in linear time, not quadratic', async () => {
+    // Bare '<' characters that never open a tag are exactly what could make the new
+    // skip-past-false-starts loop quadratic if it rescanned from the same position instead of
+    // advancing monotonically. Each '<' is followed by a space, so none of them open a tag.
+    const malicious = '< '.repeat(150000)
     allow(`<body><p>Before</p>${malicious}<p>After</p></body>`)
     const start = performance.now()
     const text = await fetchArticleText('https://example.com')
