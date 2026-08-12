@@ -519,8 +519,30 @@ async function readBoundedBytes(response: Response): Promise<Uint8Array> {
 
 // Deliberately not a readability engine: leftover nav and footer text costs a few tokens and the
 // model ignores it, which is a far better trade than taking on a content-extraction dependency.
+//
+// NOTE: this went through four revisions during implementation. Regex tag stripping is not viable
+// here and must not be reintroduced. See the shipped implementation in articleFetcher.ts for the
+// final design; the reasoning, in order:
+//   1. A naive /<[^>]*>/g stops at the first '>', including one inside a quoted attribute value —
+//      legal HTML (title="Home > Products") — leaking residue like `3">` into the prompt.
+//   2. Making it quote-aware (/<(?:[^>"']|"[^"]*"|'[^']*')*>/g) fixes that but backtracks: it is
+//      O(n^2) when a quote never closes. Measured ~19s on a 300KB hostile page, synchronously, on
+//      the event loop. The naive version is quadratic too (~6.7s) — neither is acceptable.
+//   3. A linear single-pass scanner fixes the complexity, but aborting at an unterminated tag
+//      drops the whole document remainder, so one stray quote reduces an article to its first
+//      paragraph.
+//   4. Shipped: `stripTags(html, quoteAware)` returning `{ text, abortedAt }`. The quote-aware pass
+//      runs first; if it aborts, the quote-blind pass reprocesses ONLY `masked.slice(abortedAt)`,
+//      so the correct prefix parse survives (a page truncated at MAX_BYTES always aborts).
+//      Two linear passes, worst case 2n.
 function extractText(html: string): string {
-  return decodeEntities(maskNonMarkup(html).replace(/<[^>]*>/g, ' '))
+  const masked = maskNonMarkup(html)
+  const first = stripTags(masked, true)
+  const text =
+    first.abortedAt === null
+      ? first.text
+      : first.text + stripTags(masked.slice(first.abortedAt), false).text
+  return decodeEntities(text)
     .replace(/\s+/g, ' ')
     .trim()
 }
