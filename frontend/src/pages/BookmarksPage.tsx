@@ -28,8 +28,13 @@ export default function BookmarksPage() {
   // in-flight fetch's data, which is why this is a separate counter.
   const fetchId = useRef(0)
 
-  const refresh = useCallback(async () => {
-    const id = ++requestId.current
+  const refresh = useCallback(async (options?: { background?: boolean }) => {
+    // A background refresh (the one that follows a summary landing) must not touch error state:
+    // it can settle seconds after it was launched, long after an unrelated action has produced an
+    // error the user is still reading. It stays out of requestId entirely — it has nothing to say
+    // about whether the user's most recent action succeeded — and participates only in fetchId,
+    // which orders list data.
+    const id = options?.background ? null : ++requestId.current
     const fid = ++fetchId.current
     try {
       const result = await api.listBookmarks()
@@ -37,9 +42,9 @@ export default function BookmarksPage() {
         setBookmarks(result)
         setHasLoadedOnce(true)
       }
-      if (id === requestId.current) setError(null)
+      if (id !== null && id === requestId.current) setError(null)
     } catch {
-      if (id === requestId.current) setError('Failed to load bookmarks.')
+      if (id !== null && id === requestId.current) setError('Failed to load bookmarks.')
     } finally {
       if (fid === fetchId.current) setIsLoading(false)
     }
@@ -93,7 +98,7 @@ export default function BookmarksPage() {
     setSummarizingIds((previous) => new Set(previous).add(id))
     try {
       await api.generateSummary(id)
-      await refresh()
+      await refresh({ background: true })
     } catch {
       // Intentionally ignored — see handleAdd.
     } finally {

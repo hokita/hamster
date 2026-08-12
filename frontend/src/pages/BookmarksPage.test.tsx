@@ -347,7 +347,7 @@ describe('BookmarksPage', () => {
     await waitFor(() => expect(api.generateSummary).toHaveBeenCalledWith('42'))
   })
 
-  it('refreshes the list once the summary lands', async () => {
+  it('refreshes the list once the summary lands, and the refreshed data is what renders', async () => {
     vi.mocked(api.createBookmark).mockResolvedValue({
       id: '42',
       url: 'https://example.com',
@@ -357,11 +357,106 @@ describe('BookmarksPage', () => {
     renderPage()
     await waitFor(() => expect(api.listBookmarks).toHaveBeenCalledTimes(1))
 
+    // Second call: the refresh right after create.
+    vi.mocked(api.listBookmarks).mockResolvedValueOnce([
+      {
+        id: '42',
+        url: 'https://example.com',
+        title: 'New Site',
+        createdAt: '2024-01-01T00:00:00.000Z',
+      },
+    ])
+    // Third call: the background refresh once generateSummary settles. Distinct title so an
+    // assertion on it can only pass if this call's data — not the second call's — is what
+    // actually reaches the rendered list.
+    vi.mocked(api.listBookmarks).mockResolvedValueOnce([
+      {
+        id: '42',
+        url: 'https://example.com',
+        title: 'New Site (summarized)',
+        createdAt: '2024-01-01T00:00:00.000Z',
+      },
+    ])
+
     fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://example.com' } })
     fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
 
-    // once on mount, once right after the create, once after generation settles
+    expect(
+      await screen.findByRole('link', { name: /New Site \(summarized\)/ })
+    ).toBeInTheDocument()
     await waitFor(() => expect(api.listBookmarks).toHaveBeenCalledTimes(3))
+  })
+
+  it('shows "Summarizing…" for the newly added bookmark while its summary is generating', async () => {
+    let resolveGenerateSummary!: (value: { summary: string }) => void
+    const generateSummaryPromise = new Promise<{ summary: string }>((resolve) => {
+      resolveGenerateSummary = resolve
+    })
+    vi.mocked(api.generateSummary).mockReturnValueOnce(generateSummaryPromise)
+    vi.mocked(api.createBookmark).mockResolvedValue({
+      id: '42',
+      url: 'https://example.com',
+      title: 'New Site',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    })
+    renderPage()
+    await waitFor(() => expect(api.listBookmarks).toHaveBeenCalledTimes(1))
+
+    vi.mocked(api.listBookmarks).mockResolvedValue([
+      {
+        id: '42',
+        url: 'https://example.com',
+        title: 'New Site',
+        createdAt: '2024-01-01T00:00:00.000Z',
+      },
+    ])
+
+    fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
+
+    expect(await screen.findByText('Summarizing…')).toBeInTheDocument()
+
+    resolveGenerateSummary({ summary: 'A summary.' })
+    await waitFor(() => expect(screen.queryByText('Summarizing…')).not.toBeInTheDocument())
+  })
+
+  it('does not clear an unrelated, newer add-failure error when a background summary refresh lands late', async () => {
+    // A's generateSummary is held open so we can control exactly when its background
+    // refresh lands, relative to B's failure.
+    let resolveGenerateSummaryA!: (value: { summary: string }) => void
+    const generateSummaryAPromise = new Promise<{ summary: string }>((resolve) => {
+      resolveGenerateSummaryA = resolve
+    })
+    vi.mocked(api.generateSummary).mockReturnValueOnce(generateSummaryAPromise)
+
+    vi.mocked(api.createBookmark)
+      .mockResolvedValueOnce({
+        id: 'A',
+        url: 'https://example.com/a',
+        title: 'Site A',
+        createdAt: '2024-01-01T00:00:00.000Z',
+      })
+      .mockRejectedValueOnce(new Error('network error'))
+
+    renderPage()
+    await waitFor(() => expect(api.listBookmarks).toHaveBeenCalledTimes(1))
+
+    // Add A: succeeds. Its summary generation starts but does not resolve yet.
+    fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://example.com/a' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
+    await waitFor(() => expect(api.generateSummary).toHaveBeenCalledWith('A'))
+
+    // Add B: fails, while A's generation is still in flight. The user is now looking at a
+    // correct, up-to-date error about B.
+    fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://example.com/b' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
+    expect(await screen.findByText('Failed to add bookmark.')).toBeInTheDocument()
+
+    // A's generation now lands, seconds later, and its background refresh runs. It has
+    // nothing to do with B's failure and must not silently clear it.
+    resolveGenerateSummaryA({ summary: 'A summary.' })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(screen.getByText('Failed to add bookmark.')).toBeInTheDocument()
   })
 
   it('does not surface an error when summary generation fails', async () => {
