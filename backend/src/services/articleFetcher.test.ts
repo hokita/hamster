@@ -105,8 +105,19 @@ describe('fetchArticleText', () => {
   it('handles unterminated quotes gracefully', async () => {
     allow('<body><p>Normal</p><div title="unterminated>rest of page</div>')
     const text = await fetchArticleText('https://example.com')
-    expect(text).toBeTruthy()
-    // Properly-formed closing tags are still stripped even when opening is malformed
-    expect(text).not.toContain('</div>')
+    // Unterminated tag is dropped; only the well-formed text remains
+    await expect(Promise.resolve(text)).resolves.toBe('Normal')
+  })
+
+  it('tag stripping is linear time, not quadratic', async () => {
+    // Build 300KB of pathological input: unterminated quotes cause O(n^2) in regex engines.
+    // A linear scanner should process this in well under 2 seconds even on slow hardware.
+    const malicious = '<a b="'.repeat(50000)
+    allow(`<body><p>Before</p>${malicious}<p>After</p></body>`)
+    const start = performance.now()
+    const text = await fetchArticleText('https://example.com')
+    const elapsed = performance.now() - start
+    expect(text).toContain('Before')
+    expect(elapsed).toBeLessThan(2000)
   })
 })

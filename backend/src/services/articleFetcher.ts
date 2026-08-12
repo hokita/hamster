@@ -32,14 +32,47 @@ async function readBoundedBytes(response: Response): Promise<Uint8Array> {
   return Buffer.concat(chunks)
 }
 
+// Tag stripping is a single left-to-right pass rather than a regex. A regex that is quote-aware
+// (so a '>' inside title="a > b" doesn't end the tag early) necessarily backtracks when a quote or
+// a '>' never arrives, which is O(n^2) over the up-to-300KB of untrusted HTML this reads — a
+// hostile page could stall the event loop for seconds. This visits each character once instead.
+function stripTags(html: string): string {
+  let out = ''
+  let index = 0
+  while (index < html.length) {
+    const tagStart = html.indexOf('<', index)
+    if (tagStart === -1) {
+      out += html.slice(index)
+      break
+    }
+    out += html.slice(index, tagStart)
+    out += ' '
+
+    let scan = tagStart + 1
+    let quote: string | null = null
+    while (scan < html.length) {
+      const char = html[scan]
+      if (quote) {
+        if (char === quote) quote = null
+      } else if (char === '"' || char === "'") {
+        quote = char
+      } else if (char === '>') {
+        break
+      }
+      scan++
+    }
+    // An unterminated tag can only be the tail of a page truncated at MAX_BYTES (or a malformed
+    // one); there is no complete markup left to extract, so the remainder is dropped.
+    if (scan >= html.length) break
+    index = scan + 1
+  }
+  return out
+}
+
 // Deliberately not a readability engine: leftover nav and footer text costs a few tokens and the
 // model ignores it, which is a far better trade than taking on a content-extraction dependency.
 function extractText(html: string): string {
-  // Use a quote-aware regex to strip tags. A naive /<[^>]*>/g stops at the first > after <,
-  // even if that > is inside a quoted attribute value (e.g. title="5 > 3"), which is legal HTML
-  // and common in real pages. The quote-aware form matches <, then any run of (ordinary char |
-  // double-quoted string | single-quoted string), then >.
-  return decodeEntities(maskNonMarkup(html).replace(/<(?:[^>"']|"[^"]*"|'[^']*')*>/g, ' '))
+  return decodeEntities(stripTags(maskNonMarkup(html)))
     .replace(/\s+/g, ' ')
     .trim()
 }
