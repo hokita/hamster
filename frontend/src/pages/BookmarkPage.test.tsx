@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { MemoryRouter, Routes, Route, Link } from 'react-router-dom'
 
@@ -138,5 +138,73 @@ describe('BookmarkPage', () => {
 
     resolveSecond({ ...bookmark, id: '2', title: 'Second Article' })
     expect(await screen.findByText('Second Article')).toBeInTheDocument()
+  })
+
+  it("does not show bookmark 1's in-flight generation state on bookmark 2", async () => {
+    vi.mocked(api.getBookmark).mockResolvedValueOnce(bookmark)
+    render(
+      <MemoryRouter initialEntries={['/bookmarks/1']}>
+        <Link to="/bookmarks/2">Bookmark 2</Link>
+        <Routes>
+          <Route path="/bookmarks/:id" element={<BookmarkPage />} />
+        </Routes>
+      </MemoryRouter>
+    )
+    expect(await screen.findByRole('button', { name: 'Generate summary' })).toBeInTheDocument()
+
+    vi.mocked(api.generateSummary).mockReturnValue(new Promise(() => {}))
+    fireEvent.click(screen.getByRole('button', { name: 'Generate summary' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /Generating/ })).toBeDisabled())
+
+    vi.mocked(api.getBookmark).mockResolvedValueOnce({
+      ...bookmark,
+      id: '2',
+      title: 'Second Article',
+    })
+    fireEvent.click(screen.getByRole('link', { name: 'Bookmark 2' }))
+
+    expect(await screen.findByText('Second Article')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Generate summary' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: /Generating/ })).not.toBeInTheDocument()
+  })
+
+  it("does not write bookmark 1's late-arriving summary onto bookmark 2", async () => {
+    vi.mocked(api.getBookmark).mockResolvedValueOnce(bookmark)
+    render(
+      <MemoryRouter initialEntries={['/bookmarks/1']}>
+        <Link to="/bookmarks/2">Bookmark 2</Link>
+        <Routes>
+          <Route path="/bookmarks/:id" element={<BookmarkPage />} />
+        </Routes>
+      </MemoryRouter>
+    )
+    expect(await screen.findByRole('button', { name: 'Generate summary' })).toBeInTheDocument()
+
+    let resolveGenerate: (value: { summary: string }) => void = () => {}
+    const pendingGenerate = new Promise<{ summary: string }>((resolve) => {
+      resolveGenerate = resolve
+    })
+    vi.mocked(api.generateSummary).mockReturnValue(pendingGenerate)
+    fireEvent.click(screen.getByRole('button', { name: 'Generate summary' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /Generating/ })).toBeDisabled())
+
+    vi.mocked(api.getBookmark).mockResolvedValueOnce({
+      ...bookmark,
+      id: '2',
+      title: 'Second Article',
+      summary: 'Second summary already here.',
+    })
+    fireEvent.click(screen.getByRole('link', { name: 'Bookmark 2' }))
+    expect(await screen.findByText('Second summary already here.')).toBeInTheDocument()
+
+    await act(async () => {
+      resolveGenerate({ summary: 'Stale summary from bookmark 1.' })
+      await pendingGenerate
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.queryByText('Stale summary from bookmark 1.')).not.toBeInTheDocument()
+    expect(screen.getByText('Second summary already here.')).toBeInTheDocument()
   })
 })

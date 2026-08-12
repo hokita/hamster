@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
@@ -78,7 +78,16 @@ export default function BookmarkPage() {
     setBookmark(null)
     setLoadError(false)
     setGenerateFailed(false)
+    setIsGenerating(false)
   }
+
+  // Tracks the id the route is currently on, so a generation request kicked off for a bookmark
+  // that's since been navigated away from can detect it's stale and avoid writing its result
+  // (summary, failure state, or clearing isGenerating) onto whatever bookmark is now displayed.
+  const latestId = useRef(id)
+  useEffect(() => {
+    latestId.current = id
+  }, [id])
 
   useEffect(() => {
     if (!id) return
@@ -101,15 +110,18 @@ export default function BookmarkPage() {
 
   async function handleGenerate() {
     if (!id) return
+    const requestedId = id
     setIsGenerating(true)
     setGenerateFailed(false)
     try {
-      const { summary } = await api.generateSummary(id)
+      const { summary } = await api.generateSummary(requestedId)
+      if (requestedId !== latestId.current) return
       setBookmark((previous) => (previous ? { ...previous, summary } : previous))
     } catch {
+      if (requestedId !== latestId.current) return
       setGenerateFailed(true)
     } finally {
-      setIsGenerating(false)
+      if (requestedId === latestId.current) setIsGenerating(false)
     }
   }
 
