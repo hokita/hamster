@@ -5,6 +5,7 @@ export interface Bookmark {
   url: string
   title: string
   faviconUrl?: string
+  summary?: string
   createdAt: string
 }
 
@@ -31,4 +32,7 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(bookmark),
     }),
+  getBookmark: (id: string) => request<Bookmark>(`/api/bookmarks/${id}`),
+  generateSummary: (id: string) =>
+    request<{ summary: string }>(`/api/bookmarks/${id}/summary`, { method: 'POST' }),
 }
