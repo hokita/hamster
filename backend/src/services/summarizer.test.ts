@@ -41,14 +41,38 @@ describe('summarize', () => {
     )
   })
 
-  it('asks for English output and three bullets, and includes the article', async () => {
+  it('puts the trusted rules in systemInstruction, asking for English output and three bullets', async () => {
     mockGenerateContent.mockResolvedValue({ text: 'ok' })
     await summarize('My Title', 'The article body text')
-    const prompt = mockGenerateContent.mock.calls[0][0].contents as string
-    expect(prompt).toContain('English')
-    expect(prompt).toContain('three')
-    expect(prompt).toContain('My Title')
-    expect(prompt).toContain('The article body text')
+    const call = mockGenerateContent.mock.calls[0][0]
+    const systemInstruction = call.config.systemInstruction as string
+    expect(systemInstruction).toContain('English')
+    expect(systemInstruction).toContain('three')
+  })
+
+  it('keeps the rules out of contents, which carries only the untrusted title and body', async () => {
+    mockGenerateContent.mockResolvedValue({ text: 'ok' })
+    await summarize('My Title', 'The article body text')
+    const contents = mockGenerateContent.mock.calls[0][0].contents as string
+    expect(contents).toContain('My Title')
+    expect(contents).toContain('The article body text')
+    expect(contents).not.toContain('Rules:')
+    expect(contents).not.toContain('Write in English')
+  })
+
+  it('fences the title the same way as the body, instead of leaving it bare', async () => {
+    mockGenerateContent.mockResolvedValue({ text: 'ok' })
+    await summarize('My Title', 'The article body text')
+    const contents = mockGenerateContent.mock.calls[0][0].contents as string
+    expect(contents).not.toContain('Page title: My Title')
+    expect(contents).toMatch(/"""\s*My Title\s*"""/)
+  })
+
+  it('passes an AbortSignal via config.abortSignal so the SDK actually cancels the request', async () => {
+    mockGenerateContent.mockResolvedValue({ text: 'ok' })
+    await summarize('Title', 'Body')
+    const config = mockGenerateContent.mock.calls[0][0].config
+    expect(config.abortSignal).toBeInstanceOf(AbortSignal)
   })
 
   it('throws SummarizerUnavailableError when the API key is not configured', async () => {
