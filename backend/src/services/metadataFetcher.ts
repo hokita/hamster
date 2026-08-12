@@ -54,16 +54,31 @@ function decodeNumericEntity(digits: string): string {
 // intentionally left undecoded. Numeric references cover the general escaping trick (e.g. an
 // attacker or CMS encoding "/" as "&#47;" to smuggle it past naive parsing) even though the named
 // table isn't exhaustive.
+//
+// This must decode in a single regex pass rather than a chain of sequential .replace() calls.
+// A chained decode re-scans its own output: "&amp;" -> "&" runs first, so source text
+// "&amp;lt;" (what a browser displays as the literal "&lt;") would have its freshly-produced "&"
+// picked up by the later &lt; pass and collapse all the way to "<" — silently changing text a
+// reader would see as escaped markup into live markup. Matching every supported reference in one
+// pass means a decoded "&" is never re-examined by a later alternative.
+// No top-level 'i' flag: the five named references must stay case-sensitive exactly as the old
+// sequential .replace() calls were (none of them had an 'i' flag). Only the hex numeric prefix
+// ("x" or "X") needs case-insensitivity, so that's spelled out explicitly as [xX] instead.
+const ENTITY_REGEX = /&amp;|&lt;|&gt;|&quot;|&#39;|&#([xX][0-9a-fA-F]+|[0-9]+);?/g
+
+const NAMED_ENTITIES: Record<string, string> = {
+  '&amp;': '&',
+  '&lt;': '<',
+  '&gt;': '>',
+  '&quot;': '"',
+  '&#39;': "'",
+}
+
 export function decodeEntities(text: string): string {
-  return text
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#(x[0-9a-fA-F]+|[0-9]+);?/gi, (_match, digits: string) =>
-      decodeNumericEntity(digits)
-    )
+  return text.replace(ENTITY_REGEX, (match, digits: string | undefined) => {
+    if (digits !== undefined) return decodeNumericEntity(digits)
+    return NAMED_ENTITIES[match]
+  })
 }
 
 // A charset extracted from the HTTP Content-Type header always wins over an in-document

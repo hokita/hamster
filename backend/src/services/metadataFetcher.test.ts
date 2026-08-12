@@ -5,7 +5,7 @@ vi.mock('node:dns/promises', () => ({
 }))
 
 import { lookup } from 'node:dns/promises'
-import { fetchMetadata } from './metadataFetcher'
+import { fetchMetadata, decodeEntities } from './metadataFetcher'
 
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
@@ -673,5 +673,45 @@ describe('fetchMetadata', () => {
     )
     const result = await fetchMetadata('https://example.com')
     expect(result.faviconUrl).toBe('https://example.com/favicon.ico')
+  })
+})
+
+describe('decodeEntities', () => {
+  it('does not re-decode its own output (Codex round-4 regression)', () => {
+    // Source text "&amp;lt;script&amp;gt;" is what a browser displays as the literal text
+    // "&lt;script&gt;" — a naive multi-pass decode turns the already-escaped "&amp;" into "&"
+    // first, then decodes the resulting "&lt;"/"&gt;" a second time into "<"/">" .
+    expect(decodeEntities('&amp;lt;script&amp;gt;')).toBe('&lt;script&gt;')
+  })
+
+  it('decodes &amp;amp; to &amp;, not &', () => {
+    expect(decodeEntities('&amp;amp;')).toBe('&amp;')
+  })
+
+  it('decodes each of the five named references once', () => {
+    expect(decodeEntities('&amp;')).toBe('&')
+    expect(decodeEntities('&lt;')).toBe('<')
+    expect(decodeEntities('&gt;')).toBe('>')
+    expect(decodeEntities('&quot;')).toBe('"')
+    expect(decodeEntities('&#39;')).toBe("'")
+  })
+
+  it('decodes decimal and hex numeric references', () => {
+    expect(decodeEntities('&#47;')).toBe('/')
+    expect(decodeEntities('&#x2F;')).toBe('/')
+  })
+
+  it('requires the trailing semicolon for named references', () => {
+    expect(decodeEntities('&amp')).toBe('&amp')
+    expect(decodeEntities('&lt')).toBe('&lt')
+  })
+
+  it('treats the trailing semicolon as optional for numeric references', () => {
+    expect(decodeEntities('&#47icon.ico')).toBe('/icon.ico')
+    expect(decodeEntities('&#x2Ficon.ico')).toBe('/icon.ico')
+  })
+
+  it('leaves an unrecognised named reference untouched', () => {
+    expect(decodeEntities('&sol;')).toBe('&sol;')
   })
 })
