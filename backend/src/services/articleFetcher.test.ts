@@ -103,21 +103,28 @@ describe('fetchArticleText', () => {
   })
 
   it('recovers from unterminated quotes with content after', async () => {
-    allow('<body><p>Normal</p><div title="oops>middle text<p>More article content here</p></div><p>Final para</p></body>')
+    allow(
+      '<body><p>Normal</p><div title="oops>middle text<p>More article content here</p></div><p>Final para</p></body>'
+    )
     const text = await fetchArticleText('https://example.com')
-    // Two-pass strip: first pass (quote-aware) aborts, fallback to quote-blind.
-    // Content after malformed attribute is preserved.
-    expect(text).toContain('More article content here')
-    expect(text).toContain('Final para')
+    // Two-pass strip: quote-aware pass aborts on the unterminated attribute; the quote-blind
+    // fallback recovers everything from that tag onward, including the well-formed content after it.
+    expect(text).toBe('Normal middle text More article content here Final para')
+  })
+
+  it('keeps the quote-aware prefix parse when a page is truncated mid-tag', async () => {
+    // Simulates the ordinary MAX_BYTES truncation case: a well-formed quoted '>' earlier in the
+    // document, followed by a tag cut off entirely by the byte cap. The quote-aware parse of the
+    // prefix must survive — only the truncated tail is reprocessed quote-blind.
+    allow('<p title="5 > 3">Hello world</p><div class="trunc')
+    const text = await fetchArticleText('https://example.com')
+    expect(text).toBe('Hello world')
   })
 
   it('handles unterminated quotes gracefully', async () => {
     allow('<body><p>Normal</p><div title="unterminated>rest of page</div>')
     const text = await fetchArticleText('https://example.com')
-    // With two-pass strip: first pass aborts, fallback recovers "rest of page" text.
-    // Note: fallback is quote-blind, so it may include attribute fragments.
-    expect(text).toContain('Normal')
-    expect(text).toContain('rest of page')
+    expect(text).toBe('Normal rest of page')
   })
 
   it('tag stripping is linear time, not quadratic', async () => {

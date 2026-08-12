@@ -34,14 +34,15 @@ async function readBoundedBytes(response: Response): Promise<Uint8Array> {
 
 // quoteAware=false ends every tag at its first '>', ignoring quotes entirely. Both modes visit each
 // character at most once, so both are O(n) — see extractText for why the second mode exists.
-function stripTags(html: string, quoteAware: boolean): { text: string; aborted: boolean } {
+// abortedAt is the index of the '<' that began an unterminated tag, or null on a clean finish.
+function stripTags(html: string, quoteAware: boolean): { text: string; abortedAt: number | null } {
   let out = ''
   let index = 0
   while (index < html.length) {
     const tagStart = html.indexOf('<', index)
     if (tagStart === -1) {
       out += html.slice(index)
-      return { text: out, aborted: false }
+      return { text: out, abortedAt: null }
     }
     out += html.slice(index, tagStart)
     out += ' '
@@ -59,23 +60,27 @@ function stripTags(html: string, quoteAware: boolean): { text: string; aborted: 
       }
       scan++
     }
-    if (scan >= html.length) return { text: out, aborted: true }
+    if (scan >= html.length) return { text: out, abortedAt: tagStart }
     index = scan + 1
   }
-  return { text: out, aborted: false }
+  return { text: out, abortedAt: null }
 }
 
 // Deliberately not a readability engine: leftover nav and footer text costs a few tokens and the
 // model ignores it, which is a far better trade than taking on a content-extraction dependency.
 function extractText(html: string): string {
   const masked = maskNonMarkup(html)
-  // A tag whose quoted attribute value never closes swallows everything after it — exactly what the
-  // HTML spec's tokenizer does, but not what we want: an article with one unescaped quote in an ad
-  // tag would summarize down to its first paragraph. Retry quote-blind, which ends each tag at its
-  // first '>'. That can leak an attribute fragment on a malformed page; losing the article is worse.
-  let stripped = stripTags(masked, true)
-  if (stripped.aborted) stripped = stripTags(masked, false)
-  return decodeEntities(stripped.text)
+  const first = stripTags(masked, true)
+  // A tag whose quoted attribute value never closes swallows everything after it — what the HTML
+  // spec's tokenizer does, but not what we want: an article with one unescaped quote would summarize
+  // down to its first paragraph. Recover the tail with a quote-blind pass, which ends each tag at its
+  // first '>'. Only the tail is reprocessed: the quote-aware parse before the abort point is correct
+  // and must not be thrown away, or a page merely truncated at MAX_BYTES would lose it.
+  const text =
+    first.abortedAt === null
+      ? first.text
+      : first.text + stripTags(masked.slice(first.abortedAt), false).text
+  return decodeEntities(text)
     .replace(/\s+/g, ' ')
     .trim()
 }
