@@ -70,6 +70,14 @@ export async function summarize(title: string, text: string): Promise<string> {
     signal
   )
 
+  // The prompt asks for one short paragraph plus three bullets — roughly 150 tokens — so hitting the
+  // 1024-token cap means the model went badly off-script, not that it needed the room. A response
+  // truncated there ends mid-sentence with no indication; storing and rendering it as if it were the
+  // whole summary would silently mislead. Surfacing that as a retryable failure is better.
+  if (response.candidates?.[0]?.finishReason === 'MAX_TOKENS') {
+    throw new Error('gemini response was truncated at the token limit')
+  }
+
   const summary = response.text?.trim()
   if (!summary) throw new Error('gemini returned an empty summary')
   return summary

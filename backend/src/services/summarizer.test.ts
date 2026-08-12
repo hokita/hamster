@@ -90,4 +90,29 @@ describe('summarize', () => {
     mockGenerateContent.mockResolvedValue({ text: '   ' })
     await expect(summarize('Title', 'Body')).rejects.toThrow()
   })
+
+  it('throws when generation stopped early because it hit the token cap', async () => {
+    // A response cut off at MAX_OUTPUT_TOKENS ends mid-sentence with no indication. The prompt
+    // asks for ~150 tokens of output, so hitting the 1024 cap means the model went badly
+    // off-script — surfacing that as a retryable failure beats storing half a summary.
+    mockGenerateContent.mockResolvedValue({
+      text: 'A summary that stops abruptly halfway through',
+      candidates: [{ finishReason: 'MAX_TOKENS' }],
+    })
+    await expect(summarize('Title', 'Body')).rejects.toThrow()
+  })
+
+  it('returns normally when finishReason is STOP', async () => {
+    mockGenerateContent.mockResolvedValue({
+      text: 'A complete summary.',
+      candidates: [{ finishReason: 'STOP' }],
+    })
+    await expect(summarize('Title', 'Body')).resolves.toBe('A complete summary.')
+  })
+
+  it('returns normally when the response has no candidates array at all', async () => {
+    // A shape the SDK legitimately produces; the finishReason check must not throw on its absence.
+    mockGenerateContent.mockResolvedValue({ text: 'A complete summary.' })
+    await expect(summarize('Title', 'Body')).resolves.toBe('A complete summary.')
+  })
 })
