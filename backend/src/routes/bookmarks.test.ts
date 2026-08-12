@@ -255,3 +255,126 @@ describe('POST /api/bookmarks/:id/summary', () => {
     expect(res.status).toBe(500)
   })
 })
+
+// A generation calls the paid Gemini API. Adding a bookmark starts a generation in the background,
+// and the page for that bookmark opens with an enabled "Generate summary" button that knows nothing
+// about it — so two concurrent, separately billed requests for the same bookmark are easy to trigger
+// by accident. These tests cover the dedup that prevents that.
+describe('POST /api/bookmarks/:id/summary — concurrent dedup', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(db.updateSummary).mockResolvedValue(undefined)
+  })
+
+  function deferred<T>() {
+    let resolve!: (value: T) => void
+    let reject!: (reason?: unknown) => void
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res
+      reject = rej
+    })
+    return { promise, resolve, reject }
+  }
+
+  const bookmark2 = {
+    id: '2',
+    url: 'https://example.org',
+    title: 'Example Two',
+    createdAt: '2024-01-01T00:00:00.000Z',
+  }
+
+  it('joins concurrent requests for the same id into a single summarize call', async () => {
+    vi.mocked(db.getBookmark).mockResolvedValue(bookmark)
+    vi.mocked(fetchArticleText).mockResolvedValue('Article body')
+    const gen = deferred<string>()
+    vi.mocked(summarize).mockReturnValue(gen.promise)
+
+    // supertest/superagent requests don't dispatch until `.then`/`.end` is called, so kick both off
+    // immediately by chaining `.then` rather than merely assigning the (lazy) request objects.
+    const req1 = request(app).post('/api/bookmarks/1/summary').then((r) => r)
+    const req2 = request(app).post('/api/bookmarks/1/summary').then((r) => r)
+
+    // Give both requests a chance to reach the summarize call before it resolves.
+    await new Promise((r) => setTimeout(r, 20))
+    expect(summarize).toHaveBeenCalledTimes(1)
+
+    gen.resolve('The shared summary.')
+    const [res1, res2] = await Promise.all([req1, req2])
+
+    expect(res1.status).toBe(200)
+    expect(res2.status).toBe(200)
+    expect(res1.body).toEqual({ summary: 'The shared summary.' })
+    expect(res2.body).toEqual({ summary: 'The shared summary.' })
+    expect(summarize).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not cross-talk between concurrent requests for different ids', async () => {
+    vi.mocked(db.getBookmark).mockImplementation(async (id: string) =>
+      id === '1' ? bookmark : bookmark2
+    )
+    vi.mocked(fetchArticleText).mockImplementation(async (url: string) =>
+      url === bookmark.url ? 'Article one body' : 'Article two body'
+    )
+    vi.mocked(summarize).mockImplementation(async (title: string) => `Summary for ${title}`)
+
+    const [res1, res2] = await Promise.all([
+      request(app).post('/api/bookmarks/1/summary'),
+      request(app).post('/api/bookmarks/2/summary'),
+    ])
+
+    expect(res1.status).toBe(200)
+    expect(res2.status).toBe(200)
+    expect(res1.body).toEqual({ summary: 'Summary for Example' })
+    expect(res2.body).toEqual({ summary: 'Summary for Example Two' })
+    expect(summarize).toHaveBeenCalledTimes(2)
+    expect(summarize).toHaveBeenCalledWith('Example', 'Article one body')
+    expect(summarize).toHaveBeenCalledWith('Example Two', 'Article two body')
+  })
+
+  it('generates again on a sequential second request after the first settles', async () => {
+    vi.mocked(db.getBookmark).mockResolvedValue(bookmark)
+    vi.mocked(fetchArticleText).mockResolvedValue('Article body')
+    vi.mocked(summarize).mockResolvedValue('A summary.')
+
+    const res1 = await request(app).post('/api/bookmarks/1/summary')
+    expect(res1.status).toBe(200)
+    const res2 = await request(app).post('/api/bookmarks/1/summary')
+    expect(res2.status).toBe(200)
+
+    expect(summarize).toHaveBeenCalledTimes(2)
+  })
+
+  it('gives every concurrent waiter 503 when the shared generation is unconfigured', async () => {
+    vi.mocked(db.getBookmark).mockResolvedValue(bookmark)
+    vi.mocked(fetchArticleText).mockResolvedValue('Article body')
+    const gen = deferred<string>()
+    vi.mocked(summarize).mockReturnValue(gen.promise)
+
+    const req1 = request(app).post('/api/bookmarks/1/summary').then((r) => r)
+    const req2 = request(app).post('/api/bookmarks/1/summary').then((r) => r)
+
+    await new Promise((r) => setTimeout(r, 20))
+    gen.reject(new SummarizerUnavailableError())
+
+    const [res1, res2] = await Promise.all([req1, req2])
+    expect(res1.status).toBe(503)
+    expect(res2.status).toBe(503)
+  })
+
+  it('gives every concurrent waiter 502 when the shared generation fails for another reason', async () => {
+    vi.mocked(db.getBookmark).mockResolvedValue(bookmark)
+    vi.mocked(fetchArticleText).mockResolvedValue('Article body')
+    const gen = deferred<string>()
+    vi.mocked(summarize).mockReturnValue(gen.promise)
+
+    const req1 = request(app).post('/api/bookmarks/1/summary').then((r) => r)
+    const req2 = request(app).post('/api/bookmarks/1/summary').then((r) => r)
+
+    await new Promise((r) => setTimeout(r, 20))
+    gen.reject(new Error('429 rate limited'))
+
+    const [res1, res2] = await Promise.all([req1, req2])
+    expect(res1.status).toBe(502)
+    expect(res2.status).toBe(502)
+  })
+})
