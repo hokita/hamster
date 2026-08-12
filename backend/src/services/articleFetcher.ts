@@ -32,18 +32,16 @@ async function readBoundedBytes(response: Response): Promise<Uint8Array> {
   return Buffer.concat(chunks)
 }
 
-// Tag stripping is a single left-to-right pass rather than a regex. A regex that is quote-aware
-// (so a '>' inside title="a > b" doesn't end the tag early) necessarily backtracks when a quote or
-// a '>' never arrives, which is O(n^2) over the up-to-300KB of untrusted HTML this reads — a
-// hostile page could stall the event loop for seconds. This visits each character once instead.
-function stripTags(html: string): string {
+// quoteAware=false ends every tag at its first '>', ignoring quotes entirely. Both modes visit each
+// character at most once, so both are O(n) — see extractText for why the second mode exists.
+function stripTags(html: string, quoteAware: boolean): { text: string; aborted: boolean } {
   let out = ''
   let index = 0
   while (index < html.length) {
     const tagStart = html.indexOf('<', index)
     if (tagStart === -1) {
       out += html.slice(index)
-      break
+      return { text: out, aborted: false }
     }
     out += html.slice(index, tagStart)
     out += ' '
@@ -52,27 +50,32 @@ function stripTags(html: string): string {
     let quote: string | null = null
     while (scan < html.length) {
       const char = html[scan]
-      if (quote) {
+      if (quoteAware && quote) {
         if (char === quote) quote = null
-      } else if (char === '"' || char === "'") {
+      } else if (quoteAware && (char === '"' || char === "'")) {
         quote = char
       } else if (char === '>') {
         break
       }
       scan++
     }
-    // An unterminated tag can only be the tail of a page truncated at MAX_BYTES (or a malformed
-    // one); there is no complete markup left to extract, so the remainder is dropped.
-    if (scan >= html.length) break
+    if (scan >= html.length) return { text: out, aborted: true }
     index = scan + 1
   }
-  return out
+  return { text: out, aborted: false }
 }
 
 // Deliberately not a readability engine: leftover nav and footer text costs a few tokens and the
 // model ignores it, which is a far better trade than taking on a content-extraction dependency.
 function extractText(html: string): string {
-  return decodeEntities(stripTags(maskNonMarkup(html)))
+  const masked = maskNonMarkup(html)
+  // A tag whose quoted attribute value never closes swallows everything after it — exactly what the
+  // HTML spec's tokenizer does, but not what we want: an article with one unescaped quote in an ad
+  // tag would summarize down to its first paragraph. Retry quote-blind, which ends each tag at its
+  // first '>'. That can leak an attribute fragment on a malformed page; losing the article is worse.
+  let stripped = stripTags(masked, true)
+  if (stripped.aborted) stripped = stripTags(masked, false)
+  return decodeEntities(stripped.text)
     .replace(/\s+/g, ' ')
     .trim()
 }

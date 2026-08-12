@@ -102,11 +102,22 @@ describe('fetchArticleText', () => {
     await expect(fetchArticleText('https://example.com')).resolves.toBe('Text')
   })
 
+  it('recovers from unterminated quotes with content after', async () => {
+    allow('<body><p>Normal</p><div title="oops>middle text<p>More article content here</p></div><p>Final para</p></body>')
+    const text = await fetchArticleText('https://example.com')
+    // Two-pass strip: first pass (quote-aware) aborts, fallback to quote-blind.
+    // Content after malformed attribute is preserved.
+    expect(text).toContain('More article content here')
+    expect(text).toContain('Final para')
+  })
+
   it('handles unterminated quotes gracefully', async () => {
     allow('<body><p>Normal</p><div title="unterminated>rest of page</div>')
     const text = await fetchArticleText('https://example.com')
-    // Unterminated tag is dropped; only the well-formed text remains
-    await expect(Promise.resolve(text)).resolves.toBe('Normal')
+    // With two-pass strip: first pass aborts, fallback recovers "rest of page" text.
+    // Note: fallback is quote-blind, so it may include attribute fragments.
+    expect(text).toContain('Normal')
+    expect(text).toContain('rest of page')
   })
 
   it('tag stripping is linear time, not quadratic', async () => {
