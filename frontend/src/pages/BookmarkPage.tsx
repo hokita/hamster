@@ -66,6 +66,19 @@ export default function BookmarkPage() {
   const [loadError, setLoadError] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
   const [generateFailed, setGenerateFailed] = useState(false)
+  // React Router reuses this component instance across `/bookmarks/:id` navigations, so state
+  // from the previous bookmark would otherwise leak into the next one. Resetting it here (during
+  // render, gated on the id actually changing) is React's documented pattern for this — it avoids
+  // ever painting bookmark 1's stale title/summary for a frame while bookmark 2 loads, which a
+  // reset inside the effect body cannot fully avoid.
+  const [loadedId, setLoadedId] = useState(id)
+  if (loadedId !== id) {
+    setLoadedId(id)
+    setIsLoading(true)
+    setBookmark(null)
+    setLoadError(false)
+    setGenerateFailed(false)
+  }
 
   useEffect(() => {
     if (!id) return
@@ -168,7 +181,7 @@ export default function BookmarkPage() {
           <button
             onClick={handleGenerate}
             disabled={isGenerating}
-            className="inline-flex items-center gap-2 rounded-md bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+            className="inline-flex items-center gap-2 rounded-md bg-amber-700 px-3 py-2 text-sm font-medium text-white hover:bg-amber-800 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
           >
             <FontAwesomeIcon
               icon={isGenerating ? faSpinner : faWandMagicSparkles}

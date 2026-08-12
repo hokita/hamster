@@ -1,6 +1,6 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { MemoryRouter, Routes, Route } from 'react-router-dom'
+import { MemoryRouter, Routes, Route, Link } from 'react-router-dom'
 
 vi.mock('../api', () => ({
   api: {
@@ -111,5 +111,32 @@ describe('BookmarkPage', () => {
     renderPage()
     expect(await screen.findByText('Failed to load this bookmark.')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /Back/ })).toHaveAttribute('href', '/')
+  })
+
+  it("resets loading and stale state when the route's id changes", async () => {
+    vi.mocked(api.getBookmark).mockResolvedValueOnce(bookmark)
+    render(
+      <MemoryRouter initialEntries={['/bookmarks/1']}>
+        <Link to="/bookmarks/2">Bookmark 2</Link>
+        <Routes>
+          <Route path="/bookmarks/:id" element={<BookmarkPage />} />
+        </Routes>
+      </MemoryRouter>
+    )
+    expect(await screen.findByText('Example Article')).toBeInTheDocument()
+
+    let resolveSecond: (value: typeof bookmark) => void = () => {}
+    vi.mocked(api.getBookmark).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSecond = resolve
+      })
+    )
+    fireEvent.click(screen.getByRole('link', { name: 'Bookmark 2' }))
+
+    expect(screen.getByRole('status', { name: 'Loading bookmark' })).toBeInTheDocument()
+    expect(screen.queryByText('Example Article')).not.toBeInTheDocument()
+
+    resolveSecond({ ...bookmark, id: '2', title: 'Second Article' })
+    expect(await screen.findByText('Second Article')).toBeInTheDocument()
   })
 })
