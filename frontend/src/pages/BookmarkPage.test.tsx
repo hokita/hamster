@@ -208,3 +208,113 @@ describe('BookmarkPage', () => {
     expect(screen.getByText('Second summary already here.')).toBeInTheDocument()
   })
 })
+
+describe('BookmarkPage summary polling', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(api.getBookmark).mockResolvedValue(bookmark)
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  async function flush() {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+  }
+
+  it('picks up a summary that arrives from a later poll', async () => {
+    vi.mocked(api.getBookmark)
+      .mockResolvedValueOnce(bookmark)
+      .mockResolvedValueOnce({ ...bookmark, summary: 'Polled summary.' })
+    renderPage()
+    await flush()
+    expect(screen.getByText('No summary yet.')).toBeInTheDocument()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+
+    expect(screen.getByText('Polled summary.')).toBeInTheDocument()
+    expect(api.getBookmark).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not poll when a summary is already present', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValueOnce({
+      ...bookmark,
+      summary: 'Existing summary.',
+    })
+    renderPage()
+    await flush()
+    expect(screen.getByText('Existing summary.')).toBeInTheDocument()
+    expect(api.getBookmark).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(40000)
+    })
+
+    expect(api.getBookmark).toHaveBeenCalledTimes(1)
+  })
+
+  it('stops polling once the budget is exhausted', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue(bookmark)
+    renderPage()
+    await flush()
+    expect(api.getBookmark).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30000)
+    })
+    const countAtBudget = vi.mocked(api.getBookmark).mock.calls.length
+    expect(countAtBudget).toBe(16) // 1 initial load + 15 polls
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10000)
+    })
+    expect(api.getBookmark).toHaveBeenCalledTimes(countAtBudget)
+    expect(screen.getByText('No summary yet.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Generate summary' })).toBeInTheDocument()
+  })
+
+  it('cancels polling on unmount', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue(bookmark)
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { unmount } = renderPage()
+    await flush()
+    expect(api.getBookmark).toHaveBeenCalledTimes(1)
+
+    unmount()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(40000)
+    })
+
+    expect(api.getBookmark).toHaveBeenCalledTimes(1)
+    expect(consoleError).not.toHaveBeenCalled()
+    consoleError.mockRestore()
+  })
+
+  it('swallows a failed poll without surfacing an error, keeping the remaining budget', async () => {
+    vi.mocked(api.getBookmark)
+      .mockResolvedValueOnce(bookmark)
+      .mockRejectedValueOnce(new Error('API error: 500'))
+      .mockResolvedValueOnce({ ...bookmark, summary: 'Recovered summary.' })
+    renderPage()
+    await flush()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+    expect(screen.queryByText('Failed to load this bookmark.')).not.toBeInTheDocument()
+    expect(screen.getByText('No summary yet.')).toBeInTheDocument()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+    expect(screen.getByText('Recovered summary.')).toBeInTheDocument()
+    expect(api.getBookmark).toHaveBeenCalledTimes(3)
+  })
+})

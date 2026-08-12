@@ -12,6 +12,14 @@ import { api } from '../api'
 import type { Bookmark } from '../api'
 import { formatRelativeTime } from '../relativeTime'
 
+// Summary generation typically takes 10-25 seconds in the background (article fetch + Gemini
+// call). Polling every 2 seconds for up to 30 seconds (15 attempts) covers the normal case
+// without polling indefinitely; once the budget is spent the existing Generate button remains
+// as the fallback. The endpoint this polls is a cheap Firestore read, not a Gemini call, so
+// polling costs nothing but a handful of extra reads.
+const POLL_INTERVAL_MS = 2000
+const MAX_POLL_ATTEMPTS = 15
+
 function hostnameOf(url: string): string | null {
   try {
     return new URL(url).hostname
@@ -107,6 +115,42 @@ export default function BookmarkPage() {
       cancelled = true
     }
   }, [id])
+
+  // Adding a bookmark kicks off summary generation in the background from the list page; if the
+  // user clicks into it immediately, this page's own fetch above usually wins the race and loads
+  // before the summary is written. Poll for it while it's missing, bounded by the budget above.
+  // Skipped while a manual generation is in flight (that request will deliver the summary itself,
+  // and a concurrent poll would race it) and stopped for good once a summary is present. Reruns
+  // whenever `bookmark` changes, which naturally restarts once the initial load completes and
+  // stops once a summary lands — see the constants above for why a fresh budget on resume is fine.
+  useEffect(() => {
+    if (!id) return
+    if (!bookmark) return
+    if (bookmark.summary) return
+    if (isGenerating) return
+
+    let cancelled = false
+    let attempts = 0
+    const intervalId = setInterval(() => {
+      attempts += 1
+      if (attempts >= MAX_POLL_ATTEMPTS) clearInterval(intervalId)
+      api
+        .getBookmark(id)
+        .then((result) => {
+          if (cancelled || id !== latestId.current) return
+          if (result.summary) setBookmark(result)
+        })
+        .catch(() => {
+          // Opportunistic background polling: swallow failures and keep the remaining budget.
+          // The Generate button stays available as the fallback if nothing ever arrives.
+        })
+    }, POLL_INTERVAL_MS)
+
+    return () => {
+      cancelled = true
+      clearInterval(intervalId)
+    }
+  }, [id, bookmark, isGenerating])
 
   async function handleGenerate() {
     if (!id) return
