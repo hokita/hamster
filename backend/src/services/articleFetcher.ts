@@ -35,6 +35,12 @@ async function readBoundedBytes(response: Response): Promise<Uint8Array> {
 // quoteAware=false ends every tag at its first '>', ignoring quotes entirely. Both modes visit each
 // character at most once, so both are O(n) — see extractText for why the second mode exists.
 // abortedAt is the index of the '<' that began an unterminated tag, or null on a clean finish.
+//
+// Per the HTML spec, a quote character only opens an attribute value when it is the first
+// non-whitespace character after '='. Treating every quote in a tag as an opener — no matter where
+// it appears — is wrong: an unescaped apostrophe inside a single-quoted value (e.g. title='it's a
+// test') would then get "closed" by the next unrelated apostrophe in the page's real prose, and
+// everything in between is swallowed as tag content.
 function stripTags(html: string, quoteAware: boolean): { text: string; abortedAt: number | null } {
   let out = ''
   let index = 0
@@ -49,14 +55,20 @@ function stripTags(html: string, quoteAware: boolean): { text: string; abortedAt
 
     let scan = tagStart + 1
     let quote: string | null = null
+    let afterEquals = false
     while (scan < html.length) {
       const char = html[scan]
-      if (quoteAware && quote) {
+      if (quote) {
         if (char === quote) quote = null
-      } else if (quoteAware && (char === '"' || char === "'")) {
-        quote = char
       } else if (char === '>') {
         break
+      } else if (quoteAware && afterEquals && (char === '"' || char === "'")) {
+        quote = char
+        afterEquals = false
+      } else if (char === '=') {
+        afterEquals = true
+      } else if (!/\s/.test(char)) {
+        afterEquals = false
       }
       scan++
     }

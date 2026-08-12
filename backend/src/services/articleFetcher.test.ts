@@ -123,6 +123,28 @@ describe('fetchArticleText', () => {
     await expect(fetchArticleText('https://example.com')).resolves.toBe('Text')
   })
 
+  it('does not let an apostrophe in later prose close a single-quoted attribute early', async () => {
+    // A quote only opens an attribute value when it is the first non-whitespace character after
+    // '='. The unescaped apostrophe in "it's a test" must not be treated as an attribute-value
+    // opener, or the next apostrophe in "don't" would wrongly close it and swallow the sentence.
+    allow(
+      "<div title='it's a test'>IMPORTANT TEXT HERE, don't miss this</div><p>foo</p>"
+    )
+    await expect(fetchArticleText('https://example.com')).resolves.toBe(
+      "IMPORTANT TEXT HERE, don't miss this foo"
+    )
+  })
+
+  it('allows whitespace around = before a quoted attribute value', async () => {
+    allow('<a href = "x">text</a>')
+    await expect(fetchArticleText('https://example.com')).resolves.toBe('text')
+  })
+
+  it('handles an unquoted attribute value', async () => {
+    allow('<img src=foo.jpg>text')
+    await expect(fetchArticleText('https://example.com')).resolves.toBe('text')
+  })
+
   it('recovers from unterminated quotes with content after', async () => {
     allow(
       '<body><p>Normal</p><div title="oops>middle text<p>More article content here</p></div><p>Final para</p></body>'
