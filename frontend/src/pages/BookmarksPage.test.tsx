@@ -6,6 +6,7 @@ vi.mock('../api', () => ({
   api: {
     listBookmarks: vi.fn(),
     createBookmark: vi.fn(),
+    generateSummary: vi.fn(),
   },
 }))
 vi.mock('../firebase', () => ({ auth: {} }))
@@ -30,6 +31,7 @@ describe('BookmarksPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(api.listBookmarks).mockResolvedValue([])
+    vi.mocked(api.generateSummary).mockResolvedValue({ summary: 'A summary.' })
   })
 
   it('loads and shows bookmarks on mount', async () => {
@@ -67,7 +69,8 @@ describe('BookmarksPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
 
     expect(await screen.findByRole('link', { name: /New Site/ })).toBeInTheDocument()
-    expect(api.listBookmarks).toHaveBeenCalledTimes(2)
+    // once on mount, once right after the create, once after generation settles
+    await waitFor(() => expect(api.listBookmarks).toHaveBeenCalledTimes(3))
   })
 
   it('shows an error message when loading bookmarks fails', async () => {
@@ -118,7 +121,10 @@ describe('BookmarksPage', () => {
     renderPage()
     await waitFor(() => expect(api.listBookmarks).toHaveBeenCalledTimes(1))
 
-    vi.mocked(api.listBookmarks).mockResolvedValueOnce([
+    // mockResolvedValue (not Once): the add triggers two refreshes now — one right after
+    // create, one after the generateSummary call it kicks off settles — and both should
+    // see the post-add list.
+    vi.mocked(api.listBookmarks).mockResolvedValue([
       {
         id: '2',
         url: 'https://example.com',
@@ -130,6 +136,7 @@ describe('BookmarksPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
 
     expect(await screen.findByRole('link', { name: /New Site/ })).toBeInTheDocument()
+    await waitFor(() => expect(api.generateSummary).toHaveBeenCalled())
 
     // The stale mount-time fetch finally resolves with the pre-add (empty) list — it must
     // not clobber the newer state that the add-triggered refresh already applied.
@@ -224,6 +231,16 @@ describe('BookmarksPage', () => {
       }
     )
     vi.mocked(api.listBookmarks).mockReturnValueOnce(refreshFetchPromise)
+    // The add also kicks off generateSummary, which triggers a third refresh once it
+    // settles. Queue it up front so it resolves with the post-add list, same as the second.
+    vi.mocked(api.listBookmarks).mockResolvedValueOnce([
+      {
+        id: '2',
+        url: 'https://example.com',
+        title: 'New Site',
+        createdAt: '2024-01-01T00:00:00.000Z',
+      },
+    ])
 
     vi.mocked(api.createBookmark).mockResolvedValue({
       id: '2',
@@ -312,5 +329,56 @@ describe('BookmarksPage', () => {
 
     expect(await screen.findByRole('link', { name: /Example Site/ })).toBeInTheDocument()
     expect(screen.getByText('Failed to add bookmark.')).toBeInTheDocument()
+  })
+
+  it('generates a summary for the bookmark it just created', async () => {
+    vi.mocked(api.createBookmark).mockResolvedValue({
+      id: '42',
+      url: 'https://example.com',
+      title: 'New Site',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    })
+    renderPage()
+    await waitFor(() => expect(api.listBookmarks).toHaveBeenCalledTimes(1))
+
+    fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
+
+    await waitFor(() => expect(api.generateSummary).toHaveBeenCalledWith('42'))
+  })
+
+  it('refreshes the list once the summary lands', async () => {
+    vi.mocked(api.createBookmark).mockResolvedValue({
+      id: '42',
+      url: 'https://example.com',
+      title: 'New Site',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    })
+    renderPage()
+    await waitFor(() => expect(api.listBookmarks).toHaveBeenCalledTimes(1))
+
+    fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
+
+    // once on mount, once right after the create, once after generation settles
+    await waitFor(() => expect(api.listBookmarks).toHaveBeenCalledTimes(3))
+  })
+
+  it('does not surface an error when summary generation fails', async () => {
+    vi.mocked(api.createBookmark).mockResolvedValue({
+      id: '42',
+      url: 'https://example.com',
+      title: 'New Site',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    })
+    vi.mocked(api.generateSummary).mockRejectedValue(new Error('API error: 502'))
+    renderPage()
+    await waitFor(() => expect(api.listBookmarks).toHaveBeenCalledTimes(1))
+
+    fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
+
+    await waitFor(() => expect(api.generateSummary).toHaveBeenCalled())
+    expect(screen.queryByText('Failed to add bookmark.')).not.toBeInTheDocument()
   })
 })

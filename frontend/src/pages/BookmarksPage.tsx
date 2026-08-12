@@ -17,6 +17,7 @@ export default function BookmarksPage() {
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false)
+  const [summarizingIds, setSummarizingIds] = useState<ReadonlySet<string>>(new Set())
   // Shared across the mount effect and refresh() so a slow, superseded request can't
   // overwrite state a newer request already applied.
   const requestId = useRef(0)
@@ -72,8 +73,9 @@ export default function BookmarksPage() {
   }, [])
 
   async function handleAdd(bookmark: { url: string }) {
+    let created
     try {
-      await api.createBookmark(bookmark)
+      created = await api.createBookmark(bookmark)
       await refresh()
     } catch {
       // Invalidate any in-flight load (mount fetch or refresh) so its eventual
@@ -81,6 +83,25 @@ export default function BookmarksPage() {
       requestId.current++
       setError('Failed to add bookmark.')
       throw new Error('Failed to add bookmark.')
+    }
+    // Deliberately not awaited: the save is already done, and the summary takes several seconds.
+    // A failure here is silent on this page — the bookmark's own page owns the retry.
+    void generateSummaryFor(created.id)
+  }
+
+  async function generateSummaryFor(id: string) {
+    setSummarizingIds((previous) => new Set(previous).add(id))
+    try {
+      await api.generateSummary(id)
+      await refresh()
+    } catch {
+      // Intentionally ignored — see handleAdd.
+    } finally {
+      setSummarizingIds((previous) => {
+        const next = new Set(previous)
+        next.delete(id)
+        return next
+      })
     }
   }
 
@@ -112,7 +133,9 @@ export default function BookmarksPage() {
           <FontAwesomeIcon icon={faSpinner} spin size="lg" aria-hidden="true" />
         </div>
       ) : (
-        !(error && !hasLoadedOnce) && <BookmarkList bookmarks={bookmarks} />
+        !(error && !hasLoadedOnce) && (
+          <BookmarkList bookmarks={bookmarks} summarizingIds={summarizingIds} />
+        )
       )}
     </div>
   )
