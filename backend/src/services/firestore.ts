@@ -5,6 +5,7 @@ export interface BookmarkDoc {
   url: string
   title: string
   faviconUrl?: string
+  summary?: string
   createdAt: string
 }
 
@@ -21,33 +22,55 @@ export async function createBookmark(
   return { id: ref.id, url, title, ...favicon, createdAt: now.toDate().toISOString() }
 }
 
+// Shared by listBookmarks and getBookmark. Returns null for any document that doesn't carry the
+// fields the app requires, so one malformed document can't break a whole listing.
+function toBookmark(id: string, data: unknown): BookmarkDoc | null {
+  const doc = data as {
+    url?: unknown
+    title?: unknown
+    faviconUrl?: unknown
+    summary?: unknown
+    createdAt?: { toDate?: () => Date }
+  }
+  if (
+    typeof doc.url !== 'string' ||
+    typeof doc.title !== 'string' ||
+    typeof doc.createdAt?.toDate !== 'function'
+  ) {
+    return null
+  }
+  // faviconUrl and summary are deliberately absent from the validation above: every document
+  // written before those fields existed lacks them, and gating on them would drop the entire
+  // back catalogue.
+  return {
+    id,
+    url: doc.url,
+    title: doc.title,
+    ...(typeof doc.faviconUrl === 'string' ? { faviconUrl: doc.faviconUrl } : {}),
+    ...(typeof doc.summary === 'string' ? { summary: doc.summary } : {}),
+    createdAt: doc.createdAt.toDate().toISOString(),
+  }
+}
+
+export async function getBookmark(id: string): Promise<BookmarkDoc | null> {
+  const db = getFirestore()
+  const snap = await db.collection('bookmarks').doc(id).get()
+  if (!snap.exists) return null
+  return toBookmark(snap.id, snap.data())
+}
+
+export async function updateSummary(id: string, summary: string): Promise<void> {
+  const db = getFirestore()
+  await db.collection('bookmarks').doc(id).update({ summary })
+}
+
 export async function listBookmarks(): Promise<BookmarkDoc[]> {
   const db = getFirestore()
   const snap = await db.collection('bookmarks').orderBy('createdAt', 'desc').get()
   const bookmarks: BookmarkDoc[] = []
   for (const doc of snap.docs) {
-    const data = doc.data() as {
-      url?: unknown
-      title?: unknown
-      faviconUrl?: unknown
-      createdAt?: { toDate?: () => Date }
-    }
-    if (
-      typeof data.url !== 'string' ||
-      typeof data.title !== 'string' ||
-      typeof data.createdAt?.toDate !== 'function'
-    ) {
-      continue
-    }
-    // faviconUrl is deliberately absent from the validation above: every document written
-    // before this field existed lacks it, and gating on it would drop the entire back catalogue.
-    bookmarks.push({
-      id: doc.id,
-      url: data.url,
-      title: data.title,
-      ...(typeof data.faviconUrl === 'string' ? { faviconUrl: data.faviconUrl } : {}),
-      createdAt: data.createdAt.toDate().toISOString(),
-    })
+    const bookmark = toBookmark(doc.id, doc.data())
+    if (bookmark) bookmarks.push(bookmark)
   }
   return bookmarks
 }
