@@ -8,10 +8,11 @@ vi.mock('./safeFetch', async () => {
 import { fetchAllowedUrl } from './safeFetch'
 import { fetchArticleText } from './articleFetcher'
 
-function htmlResponse(html: string, contentType = 'text/html; charset=utf-8') {
+function htmlResponse(html: string, contentType = 'text/html; charset=utf-8', status = 200) {
   const bytes = new TextEncoder().encode(html)
   let sent = false
   return {
+    status,
     headers: {
       get: (name: string) => (name.toLowerCase() === 'content-type' ? contentType : null),
     },
@@ -28,9 +29,9 @@ function htmlResponse(html: string, contentType = 'text/html; charset=utf-8') {
   }
 }
 
-function allow(html: string, contentType?: string) {
+function allow(html: string, contentType?: string, status?: number) {
   vi.mocked(fetchAllowedUrl).mockResolvedValue({
-    response: htmlResponse(html, contentType) as unknown as Response,
+    response: htmlResponse(html, contentType, status) as unknown as Response,
     finalUrl: 'https://example.com',
   })
 }
@@ -79,6 +80,26 @@ describe('fetchArticleText', () => {
 
   it('returns null when the page has no visible text', async () => {
     allow('<body>   <script>x()</script>  </body>')
+    await expect(fetchArticleText('https://example.com')).resolves.toBeNull()
+  })
+
+  it('returns null when the response status is a 404 error page', async () => {
+    allow('<html><body><h1>404 Not Found</h1></body></html>', undefined, 404)
+    await expect(fetchArticleText('https://example.com')).resolves.toBeNull()
+  })
+
+  it('returns null when the response status is a 500 error page', async () => {
+    allow('<html><body>Internal Server Error</body></html>', undefined, 500)
+    await expect(fetchArticleText('https://example.com')).resolves.toBeNull()
+  })
+
+  it('returns the text when the response status is 200', async () => {
+    allow('<body><p>Hello</p></body>', undefined, 200)
+    await expect(fetchArticleText('https://example.com')).resolves.toBe('Hello')
+  })
+
+  it('returns null, not throws, for a 2xx response with no body', async () => {
+    allow('', undefined, 204)
     await expect(fetchArticleText('https://example.com')).resolves.toBeNull()
   })
 
