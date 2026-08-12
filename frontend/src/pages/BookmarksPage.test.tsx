@@ -459,6 +459,176 @@ describe('BookmarksPage', () => {
     expect(screen.getByText('Failed to add bookmark.')).toBeInTheDocument()
   })
 
+  it('applies a foreground refresh that resolves after a background refresh has already failed', async () => {
+    renderPage()
+    await waitFor(() => expect(api.listBookmarks).toHaveBeenCalledTimes(1))
+
+    // Add "Earlier": its own foreground refresh resolves promptly. Its summary generation is
+    // held open so we can control exactly when its background refresh fires, relative to the
+    // "New" bookmark's foreground refresh below.
+    let resolveSummaryEarlier!: (value: { summary: string }) => void
+    const summaryEarlierPromise = new Promise<{ summary: string }>((resolve) => {
+      resolveSummaryEarlier = resolve
+    })
+    vi.mocked(api.generateSummary).mockReturnValueOnce(summaryEarlierPromise)
+    vi.mocked(api.createBookmark).mockResolvedValueOnce({
+      id: 'earlier',
+      url: 'https://example.com/earlier',
+      title: 'Earlier',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    })
+    // call #2: Earlier's foreground refresh.
+    vi.mocked(api.listBookmarks).mockResolvedValueOnce([
+      {
+        id: 'earlier',
+        url: 'https://example.com/earlier',
+        title: 'Earlier',
+        createdAt: '2024-01-01T00:00:00.000Z',
+      },
+    ])
+
+    fireEvent.change(screen.getByLabelText('URL'), {
+      target: { value: 'https://example.com/earlier' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
+    await waitFor(() => expect(api.generateSummary).toHaveBeenCalledWith('earlier'))
+
+    // Add "New": its foreground refresh (call #3) is held open under our control, so we can
+    // resolve it after a newer background refresh has already been issued (and failed).
+    let resolveForegroundFetch!: (value: Awaited<ReturnType<typeof api.listBookmarks>>) => void
+    const foregroundFetchPromise = new Promise<Awaited<ReturnType<typeof api.listBookmarks>>>(
+      (resolve) => {
+        resolveForegroundFetch = resolve
+      }
+    )
+    vi.mocked(api.listBookmarks).mockReturnValueOnce(foregroundFetchPromise)
+    vi.mocked(api.createBookmark).mockResolvedValueOnce({
+      id: 'new',
+      url: 'https://example.com/new',
+      title: 'New Site',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    })
+    // New's own summary generation is held open indefinitely so it never triggers a fifth
+    // listBookmarks call during this test.
+    vi.mocked(api.generateSummary).mockReturnValueOnce(new Promise(() => {}))
+
+    // call #4: Earlier's background refresh (fired once its summary settles below), held open
+    // under our control so it can be made to reject.
+    let rejectBackgroundFetch!: (error: Error) => void
+    const backgroundFetchPromise = new Promise<Awaited<ReturnType<typeof api.listBookmarks>>>(
+      (_resolve, reject) => {
+        rejectBackgroundFetch = reject
+      }
+    )
+    vi.mocked(api.listBookmarks).mockReturnValueOnce(backgroundFetchPromise)
+
+    fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://example.com/new' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
+    // handleAdd is awaiting refresh() (call #3) here, so New's own generateSummary has not
+    // been invoked yet.
+    await waitFor(() => expect(api.listBookmarks).toHaveBeenCalledTimes(3))
+
+    // Earlier's summary lands now, while New's foreground refresh is still in flight. This
+    // issues Earlier's background refresh (call #4) — a newer fetch than New's foreground one.
+    resolveSummaryEarlier({ summary: 'A summary.' })
+    await waitFor(() => expect(api.listBookmarks).toHaveBeenCalledTimes(4))
+
+    // That newer background refresh fails outright and is silently swallowed (background
+    // refreshes never touch error state).
+    rejectBackgroundFetch(new Error('network error'))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    // New's foreground refresh — older, but still in flight — now resolves successfully. Its
+    // result must still be applied even though a newer request was issued (and failed) first.
+    resolveForegroundFetch([
+      {
+        id: 'earlier',
+        url: 'https://example.com/earlier',
+        title: 'Earlier',
+        createdAt: '2024-01-01T00:00:00.000Z',
+      },
+      {
+        id: 'new',
+        url: 'https://example.com/new',
+        title: 'New Site',
+        createdAt: '2024-01-01T00:00:00.000Z',
+      },
+    ])
+
+    expect(await screen.findByRole('link', { name: /New Site/ })).toBeInTheDocument()
+    expect(screen.queryByText('Failed to load bookmarks.')).not.toBeInTheDocument()
+    expect(screen.queryByText('Failed to add bookmark.')).not.toBeInTheDocument()
+  })
+
+  it('does not let a slow older refresh response overwrite a newer one already applied', async () => {
+    renderPage()
+    await waitFor(() => expect(api.listBookmarks).toHaveBeenCalledTimes(1))
+
+    // Add "Old": its own foreground refresh resolves promptly. Its summary generation is held
+    // open so we control exactly when its (older) background refresh is issued.
+    let resolveSummaryOld!: (value: { summary: string }) => void
+    const summaryOldPromise = new Promise<{ summary: string }>((resolve) => {
+      resolveSummaryOld = resolve
+    })
+    vi.mocked(api.generateSummary).mockReturnValueOnce(summaryOldPromise)
+    vi.mocked(api.createBookmark).mockResolvedValueOnce({
+      id: 'old',
+      url: 'https://example.com/old',
+      title: 'Old Site',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    })
+    // call #2: Old's foreground refresh.
+    vi.mocked(api.listBookmarks).mockResolvedValueOnce([
+      { id: 'old', url: 'https://example.com/old', title: 'Old Site', createdAt: '2024-01-01T00:00:00.000Z' },
+    ])
+
+    fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://example.com/old' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
+    await waitFor(() => expect(api.generateSummary).toHaveBeenCalledWith('old'))
+
+    // call #3: Old's background refresh (issued once its summary settles below), held open so
+    // it can be resolved last, with stale data, after a newer refresh has already applied.
+    let resolveOldBackgroundFetch!: (value: Awaited<ReturnType<typeof api.listBookmarks>>) => void
+    const oldBackgroundFetchPromise = new Promise<Awaited<ReturnType<typeof api.listBookmarks>>>(
+      (resolve) => {
+        resolveOldBackgroundFetch = resolve
+      }
+    )
+    vi.mocked(api.listBookmarks).mockReturnValueOnce(oldBackgroundFetchPromise)
+
+    resolveSummaryOld({ summary: 'A summary.' })
+    await waitFor(() => expect(api.listBookmarks).toHaveBeenCalledTimes(3))
+
+    // Add "New": its foreground refresh (call #4) is newer than Old's still-pending background
+    // refresh, and resolves right away.
+    vi.mocked(api.createBookmark).mockResolvedValueOnce({
+      id: 'new',
+      url: 'https://example.com/new',
+      title: 'New Site',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    })
+    vi.mocked(api.listBookmarks).mockResolvedValueOnce([
+      { id: 'old', url: 'https://example.com/old', title: 'Old Site', createdAt: '2024-01-01T00:00:00.000Z' },
+      { id: 'new', url: 'https://example.com/new', title: 'New Site', createdAt: '2024-01-01T00:00:00.000Z' },
+    ])
+    // New's own summary generation is held open indefinitely so it never triggers a further
+    // listBookmarks call during this test.
+    vi.mocked(api.generateSummary).mockReturnValueOnce(new Promise(() => {}))
+
+    fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://example.com/new' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
+
+    expect(await screen.findByRole('link', { name: /New Site/ })).toBeInTheDocument()
+
+    // Old's background refresh — issued earlier, but still in flight — now resolves last, with
+    // stale data that doesn't include New. It must not overwrite the newer, already-applied state.
+    resolveOldBackgroundFetch([
+      { id: 'old', url: 'https://example.com/old', title: 'Old Site', createdAt: '2024-01-01T00:00:00.000Z' },
+    ])
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(screen.getByRole('link', { name: /New Site/ })).toBeInTheDocument()
+  })
+
   it('does not surface an error when summary generation fails', async () => {
     vi.mocked(api.createBookmark).mockResolvedValue({
       id: '42',

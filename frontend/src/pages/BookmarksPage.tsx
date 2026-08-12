@@ -25,8 +25,19 @@ export default function BookmarksPage() {
   // independent of requestId. requestId is also bumped by handleAdd's catch block (to
   // protect the add-failure error from being silently cleared) even when no replacement
   // fetch is started — that bump must not also discard a genuinely successful, still-
-  // in-flight fetch's data, which is why this is a separate counter.
+  // in-flight fetch's data, which is why this is a separate counter. fetchId orders when
+  // fetches are ISSUED: each refresh (or the mount fetch) takes the next value when it starts.
   const fetchId = useRef(0)
+  // Tracks the fetchId of the last fetch whose result was actually APPLIED to bookmarks/
+  // hasLoadedOnce, as opposed to fetchId.current, which tracks the last fetch ISSUED. A
+  // result is applied when its fetchId is newer than appliedFetchId — i.e. newer than what's
+  // currently displayed — not when it's the newest fetch in flight. Those differ whenever a
+  // newer fetch is issued but never delivers data (e.g. it rejects): gating on "newest issued"
+  // would let that failed newer request permanently suppress an older one that succeeded,
+  // leaving the list silently stale even though a good response arrived. Gating on "newer than
+  // applied" still discards a genuinely stale response (one older than what's already on
+  // screen), which is the property the original guard existed for.
+  const appliedFetchId = useRef(0)
 
   const refresh = useCallback(async (options?: { background?: boolean }) => {
     // A background refresh (the one that follows a summary landing) must not touch error state:
@@ -38,7 +49,8 @@ export default function BookmarksPage() {
     const fid = ++fetchId.current
     try {
       const result = await api.listBookmarks()
-      if (fid === fetchId.current) {
+      if (fid > appliedFetchId.current) {
+        appliedFetchId.current = fid
         setBookmarks(result)
         setHasLoadedOnce(true)
       }
