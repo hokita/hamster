@@ -66,6 +66,7 @@ Open http://localhost:5173 and sign in — locally, sign-in goes through the Aut
 | `FIREBASE_PROJECT_ID` | Firebase project ID (`demo-hamster` for local dev — no real GCP project needed) |
 | `FRONTEND_URL` | Frontend origin for CORS |
 | `PORT` | Port the backend listens on |
+| `GEMINI_API_KEY` | Gemini API key used to generate bookmark summaries (summarization is disabled when unset) |
 | `FIRESTORE_EMULATOR_HOST` | Host:port of the Firestore emulator (routes the Admin SDK to it instead of production) |
 | `FIREBASE_AUTH_EMULATOR_HOST` | Host:port of the Auth emulator (routes the Admin SDK to it instead of production) |
 

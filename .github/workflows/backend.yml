@@ -72,4 +72,4 @@ jobs:
             --min-instances 0 \
             --max-instances 2 \
             --set-env-vars "FIREBASE_PROJECT_ID=hamster-52b093,FRONTEND_URL=https://hamster-52b093.web.app" \
-            --set-secrets "ALLOWED_EMAILS=ALLOWED_EMAILS:latest"
+            --set-secrets "ALLOWED_EMAILS=ALLOWED_EMAILS:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest"

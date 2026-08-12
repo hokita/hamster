@@ -14,6 +14,7 @@
     "format:check": "prettier --check ."
   },
   "dependencies": {
+    "@google/genai": "^2.16.0",
     "cors": "^2.8.5",
     "express": "^4.18.0",
     "firebase-admin": "^12.0.0"
