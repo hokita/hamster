@@ -1,5 +1,6 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { MemoryRouter } from 'react-router-dom'
 
 vi.mock('../api', () => ({
   api: {
@@ -13,6 +14,17 @@ vi.mock('firebase/auth', () => ({ signOut: vi.fn() }))
 import { signOut } from 'firebase/auth'
 import { api } from '../api'
 import BookmarksPage from './BookmarksPage'
+
+// BookmarksPage renders BookmarkList, whose rows are now react-router <Link>s, so every
+// render here needs a router in the tree. This file otherwise belongs to a later task
+// (the summary page's own routing); this wrapper is the minimum needed to keep it green.
+function renderPage() {
+  return render(
+    <MemoryRouter>
+      <BookmarksPage />
+    </MemoryRouter>
+  )
+}
 
 describe('BookmarksPage', () => {
   beforeEach(() => {
@@ -29,7 +41,7 @@ describe('BookmarksPage', () => {
         createdAt: '2024-01-01T00:00:00.000Z',
       },
     ])
-    render(<BookmarksPage />)
+    renderPage()
     expect(await screen.findByRole('link', { name: /Example Site/ })).toBeInTheDocument()
   })
 
@@ -40,7 +52,7 @@ describe('BookmarksPage', () => {
       title: 'New Site',
       createdAt: '2024-01-01T00:00:00.000Z',
     })
-    render(<BookmarksPage />)
+    renderPage()
     await waitFor(() => expect(api.listBookmarks).toHaveBeenCalledTimes(1))
 
     vi.mocked(api.listBookmarks).mockResolvedValue([
@@ -60,13 +72,13 @@ describe('BookmarksPage', () => {
 
   it('shows an error message when loading bookmarks fails', async () => {
     vi.mocked(api.listBookmarks).mockRejectedValue(new Error('network error'))
-    render(<BookmarksPage />)
+    renderPage()
     expect(await screen.findByText('Failed to load bookmarks.')).toBeInTheDocument()
   })
 
   it('does not show the empty-state message when the initial load fails', async () => {
     vi.mocked(api.listBookmarks).mockRejectedValue(new Error('network error'))
-    render(<BookmarksPage />)
+    renderPage()
     expect(await screen.findByText('Failed to load bookmarks.')).toBeInTheDocument()
     expect(
       screen.queryByText('No bookmarks yet — paste a URL above to add one.')
@@ -75,7 +87,7 @@ describe('BookmarksPage', () => {
 
   it('still shows the empty-state message alongside the error when adding fails on an already-verified-empty list', async () => {
     vi.mocked(api.listBookmarks).mockResolvedValue([])
-    render(<BookmarksPage />)
+    renderPage()
     expect(
       await screen.findByText('No bookmarks yet — paste a URL above to add one.')
     ).toBeInTheDocument()
@@ -103,7 +115,7 @@ describe('BookmarksPage', () => {
       createdAt: '2024-01-01T00:00:00.000Z',
     })
 
-    render(<BookmarksPage />)
+    renderPage()
     await waitFor(() => expect(api.listBookmarks).toHaveBeenCalledTimes(1))
 
     vi.mocked(api.listBookmarks).mockResolvedValueOnce([
@@ -136,7 +148,7 @@ describe('BookmarksPage', () => {
     vi.mocked(api.listBookmarks).mockReturnValueOnce(mountFetchPromise)
     vi.mocked(api.createBookmark).mockRejectedValue(new Error('network error'))
 
-    render(<BookmarksPage />)
+    renderPage()
     await waitFor(() => expect(api.listBookmarks).toHaveBeenCalledTimes(1))
 
     fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://example.com' } })
@@ -152,7 +164,7 @@ describe('BookmarksPage', () => {
   })
 
   it('signs out when the sign out button is clicked', async () => {
-    render(<BookmarksPage />)
+    renderPage()
     await waitFor(() => expect(api.listBookmarks).toHaveBeenCalledTimes(1))
 
     fireEvent.click(screen.getByRole('button', { name: 'Sign out' }))
@@ -162,7 +174,7 @@ describe('BookmarksPage', () => {
 
   it('shows an error message when adding a bookmark fails', async () => {
     vi.mocked(api.createBookmark).mockRejectedValue(new Error('network error'))
-    render(<BookmarksPage />)
+    renderPage()
     await waitFor(() => expect(api.listBookmarks).toHaveBeenCalledTimes(1))
 
     fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://example.com' } })
@@ -180,7 +192,7 @@ describe('BookmarksPage', () => {
     )
     vi.mocked(api.listBookmarks).mockReturnValueOnce(mountFetchPromise)
 
-    render(<BookmarksPage />)
+    renderPage()
     expect(screen.getByRole('status', { name: 'Loading bookmarks' })).toBeInTheDocument()
 
     resolveMountFetch([])
@@ -191,7 +203,7 @@ describe('BookmarksPage', () => {
 
   it('hides the loading indicator even when the initial fetch fails', async () => {
     vi.mocked(api.listBookmarks).mockRejectedValueOnce(new Error('network error'))
-    render(<BookmarksPage />)
+    renderPage()
     await screen.findByText('Failed to load bookmarks.')
     expect(screen.queryByRole('status', { name: 'Loading bookmarks' })).not.toBeInTheDocument()
   })
@@ -220,7 +232,7 @@ describe('BookmarksPage', () => {
       createdAt: '2024-01-01T00:00:00.000Z',
     })
 
-    render(<BookmarksPage />)
+    renderPage()
     expect(screen.getByRole('status', { name: 'Loading bookmarks' })).toBeInTheDocument()
     await waitFor(() => expect(api.listBookmarks).toHaveBeenCalledTimes(1))
 
@@ -258,7 +270,7 @@ describe('BookmarksPage', () => {
     vi.mocked(api.listBookmarks).mockReturnValueOnce(mountFetchPromise)
     vi.mocked(api.createBookmark).mockRejectedValue(new Error('network error'))
 
-    render(<BookmarksPage />)
+    renderPage()
     expect(screen.getByRole('status', { name: 'Loading bookmarks' })).toBeInTheDocument()
 
     fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://example.com' } })
@@ -284,7 +296,7 @@ describe('BookmarksPage', () => {
     vi.mocked(api.listBookmarks).mockReturnValueOnce(mountFetchPromise)
     vi.mocked(api.createBookmark).mockRejectedValue(new Error('network error'))
 
-    render(<BookmarksPage />)
+    renderPage()
     fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://example.com' } })
     fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
     await screen.findByText('Failed to add bookmark.')
