@@ -15,6 +15,14 @@ export class SummarizerUnavailableError extends Error {
   }
 }
 
+// Lets callers check configuration up front, before doing other work (like fetching the article)
+// that would only be wasted when summarize() is bound to reject anyway. summarize() itself keeps
+// throwing SummarizerUnavailableError regardless of whether a caller checks this first — that stays
+// the authoritative guard; this predicate is only an early-exit optimisation, not a replacement.
+export function isSummarizerConfigured(): boolean {
+  return Boolean(process.env.GEMINI_API_KEY)
+}
+
 // Trusted instructions live here, in the model's system-instruction channel, which the SDK keeps
 // separate from — and higher priority than — the user-turn content below. This is a mitigation, not
 // a guarantee: it raises the bar for a hostile page to override these rules, it does not eliminate

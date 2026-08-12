@@ -17,14 +17,18 @@ vi.mock('../services/articleFetcher', () => ({
 vi.mock('../services/summarizer', async () => {
   const actual =
     await vi.importActual<typeof import('../services/summarizer')>('../services/summarizer')
-  return { summarize: vi.fn(), SummarizerUnavailableError: actual.SummarizerUnavailableError }
+  return {
+    summarize: vi.fn(),
+    isSummarizerConfigured: vi.fn(),
+    SummarizerUnavailableError: actual.SummarizerUnavailableError,
+  }
 })
 
 import { createBookmarksRouter } from './bookmarks'
 import * as db from '../services/firestore'
 import { fetchMetadata } from '../services/metadataFetcher'
 import { fetchArticleText } from '../services/articleFetcher'
-import { summarize, SummarizerUnavailableError } from '../services/summarizer'
+import { summarize, isSummarizerConfigured, SummarizerUnavailableError } from '../services/summarizer'
 
 const app = express()
 app.use(express.json())
@@ -185,7 +189,10 @@ describe('GET /api/bookmarks/:id', () => {
 })
 
 describe('POST /api/bookmarks/:id/summary', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(isSummarizerConfigured).mockReturnValue(true)
+  })
 
   it('generates, stores, and returns the summary', async () => {
     vi.mocked(db.getBookmark).mockResolvedValue(bookmark)
@@ -254,6 +261,31 @@ describe('POST /api/bookmarks/:id/summary', () => {
     const res = await request(app).post('/api/bookmarks/1/summary')
     expect(res.status).toBe(500)
   })
+
+  // Codex identified that checking configuration only inside summarize() meant an unconfigured
+  // deployment still paid for fetchArticleText (up to 8s) before failing, and — worse — that a
+  // fetch failure on top of being unconfigured produced a misleading 502 instead of the
+  // deterministic 503 callers should always get when there is no key. These two tests cover the
+  // fix: the configuration check happens before any network work.
+  it('returns 503 without fetching the article when the summarizer is not configured', async () => {
+    vi.mocked(db.getBookmark).mockResolvedValue(bookmark)
+    vi.mocked(isSummarizerConfigured).mockReturnValue(false)
+
+    const res = await request(app).post('/api/bookmarks/1/summary')
+
+    expect(res.status).toBe(503)
+    expect(fetchArticleText).not.toHaveBeenCalled()
+  })
+
+  it('returns 503, not 502, when unconfigured even though the page would be unreadable', async () => {
+    vi.mocked(db.getBookmark).mockResolvedValue(bookmark)
+    vi.mocked(isSummarizerConfigured).mockReturnValue(false)
+    vi.mocked(fetchArticleText).mockResolvedValue(null)
+
+    const res = await request(app).post('/api/bookmarks/1/summary')
+
+    expect(res.status).toBe(503)
+  })
 })
 
 // A generation calls the paid Gemini API. Adding a bookmark starts a generation in the background,
@@ -264,6 +296,7 @@ describe('POST /api/bookmarks/:id/summary — concurrent dedup', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(db.updateSummary).mockResolvedValue(undefined)
+    vi.mocked(isSummarizerConfigured).mockReturnValue(true)
   })
 
   function deferred<T>() {

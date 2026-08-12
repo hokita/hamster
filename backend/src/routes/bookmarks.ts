@@ -4,7 +4,7 @@ import * as db from '../services/firestore'
 import type { BookmarkDoc } from '../services/firestore'
 import { fetchMetadata } from '../services/metadataFetcher'
 import { fetchArticleText } from '../services/articleFetcher'
-import { summarize, SummarizerUnavailableError } from '../services/summarizer'
+import { summarize, isSummarizerConfigured, SummarizerUnavailableError } from '../services/summarizer'
 
 // Thrown when the linked page could not be read (blocked, non-HTML, 404/500, network failure, ...).
 // A sentinel rather than a plain Error so the shared in-flight promise's rejection can still be
@@ -33,10 +33,25 @@ export function createBookmarksRouter(): Router {
   // nothing about it. This map lets a request for an id that's already generating join the
   // in-flight promise instead of starting (and paying for) a second one. It lives inside the
   // factory, not at module scope, so each router — and each test — gets its own map.
+  //
+  // This dedup is per-process, in-memory state, so it does not span Cloud Run instances: it cannot
+  // see or join a generation already running on a different instance. That is an intentional gap,
+  // not an oversight. The case this exists for — the automatic generation kicked off on add and a
+  // manual retry landing seconds apart — in practice lands on the same warm instance, because Cloud
+  // Run only scales out under sustained concurrency, not a couple of requests seconds apart. A
+  // Firestore-backed lease would close the cross-instance gap, but that trades this in-memory map
+  // for a distributed lock with its own failure modes (stale leases, lease-holder crashes) — real
+  // cost for a single-user app where the occasional duplicate Gemini call is cheap to tolerate.
   const inFlight = new Map<string, Promise<string>>()
 
   function generateSummary(bookmark: BookmarkDoc): Promise<string> {
     const generation = (async () => {
+      // Check configuration before doing any network work. Without a key the request can never
+      // succeed, so fetching the article first only burns up to 8 seconds and bandwidth on a
+      // request that was always going to fail — and, worse, it turns a deterministic 503 into a
+      // misleading 502 whenever the page also happens to be unreachable, blocked, or non-HTML.
+      if (!isSummarizerConfigured()) throw new SummarizerUnavailableError()
+
       const text = await fetchArticleText(bookmark.url)
       if (!text) throw new ArticleUnreadableError()
 
