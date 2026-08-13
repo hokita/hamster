@@ -337,6 +337,46 @@ describe('BookmarkPage summary polling', () => {
     expect(screen.queryByText(/Couldn't regenerate the summary/)).not.toBeInTheDocument()
   })
 
+  // The backend keeps generating after the client goes away, so a regeneration whose request died
+  // can still land — the one immediate re-read in the failure path is only the first sample.
+  it('keeps watching for a regeneration that lands after its request failed', async () => {
+    vi.mocked(api.getBookmark)
+      .mockResolvedValueOnce({ ...bookmark, summary: 'First take.' })
+      .mockResolvedValueOnce({ ...bookmark, summary: 'First take.' })
+      .mockResolvedValueOnce({ ...bookmark, summary: 'Landed after the request died.' })
+    vi.mocked(api.generateSummary).mockRejectedValue(new Error('API error: 502'))
+    renderPage()
+    await flush()
+    fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }))
+    await flush()
+    expect(screen.getByText(/Couldn't regenerate the summary/)).toBeInTheDocument()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+
+    expect(screen.getByText('Landed after the request died.')).toBeInTheDocument()
+    expect(screen.queryByText(/Couldn't regenerate the summary/)).not.toBeInTheDocument()
+  })
+
+  it('stops watching a superseded summary once the budget is spent', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue({ ...bookmark, summary: 'First take.' })
+    vi.mocked(api.generateSummary).mockRejectedValue(new Error('API error: 502'))
+    renderPage()
+    await flush()
+    fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }))
+    await flush()
+    const countAfterFailure = vi.mocked(api.getBookmark).mock.calls.length
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60000)
+    })
+
+    expect(vi.mocked(api.getBookmark).mock.calls.length).toBe(countAfterFailure + 15) // poll budget
+    expect(screen.getByText('First take.')).toBeInTheDocument()
+    expect(screen.getByText(/Couldn't regenerate the summary/)).toBeInTheDocument()
+  })
+
   it('does not poll when a summary is already present', async () => {
     vi.mocked(api.getBookmark).mockResolvedValueOnce({
       ...bookmark,

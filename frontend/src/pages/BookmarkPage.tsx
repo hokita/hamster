@@ -96,6 +96,13 @@ export default function BookmarkPage() {
   const [loadError, setLoadError] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
   const [generateFailed, setGenerateFailed] = useState(false)
+  // The summary on screen when a generation request failed without proving the write never
+  // happened. Express does not abort a handler when the client goes away, so the backend keeps
+  // generating and may persist a summary seconds after the request died. Holding the old text here
+  // tells the polling effect below to keep watching for it to change; without that the page would
+  // sit on a superseded summary until a manual reload, because polling otherwise stops the moment
+  // any summary is present. Cleared as soon as something replaces it.
+  const [supersededSummary, setSupersededSummary] = useState<string | null>(null)
   // React Router reuses this component instance across `/bookmarks/:id` navigations, so state
   // from the previous bookmark would otherwise leak into the next one. Resetting it here (during
   // render, gated on the id actually changing) is React's documented pattern for this — it avoids
@@ -109,6 +116,7 @@ export default function BookmarkPage() {
     setLoadError(false)
     setGenerateFailed(false)
     setIsGenerating(false)
+    setSupersededSummary(null)
   }
 
   // Tracks the id the route is currently on, so a generation request kicked off for a bookmark
@@ -148,7 +156,9 @@ export default function BookmarkPage() {
   useEffect(() => {
     if (!id) return
     if (!bookmark) return
-    if (bookmark.summary) return
+    // Two things are worth waiting for: a first summary, and a replacement for one whose
+    // regeneration request died mid-flight. Anything else is already up to date.
+    if (bookmark.summary && bookmark.summary !== supersededSummary) return
     if (isGenerating) return
 
     let cancelled = false
@@ -161,12 +171,15 @@ export default function BookmarkPage() {
         .then((result) => {
           if (cancelled || id !== latestId.current) return
           if (!result.summary) return
+          if (result.summary === supersededSummary) return
           setBookmark(result)
           // A summary arriving here settles any earlier failure: the user's own request may have
-          // failed while the generation kicked off on the add page was still running. Leaving the
-          // flag set would caption a summary that just appeared with a regeneration error the user
-          // never triggered, because the summary-present branch below renders `generateFailed`.
+          // failed while the generation kicked off on the add page was still running, or while the
+          // regeneration it started went on to finish server-side. Leaving the flag set would
+          // caption the summary that just appeared with an error that no longer describes it,
+          // because the summary-present branch below renders `generateFailed`.
           setGenerateFailed(false)
+          setSupersededSummary(null)
         })
         .catch(() => {
           // Opportunistic background polling: swallow failures and keep the remaining budget.
@@ -178,7 +191,7 @@ export default function BookmarkPage() {
       cancelled = true
       clearInterval(intervalId)
     }
-  }, [id, bookmark, isGenerating])
+  }, [id, bookmark, isGenerating, supersededSummary])
 
   // Drives both the empty state's "Generate summary" button and the "Regenerate" button shown
   // under an existing summary: POST /:id/summary always runs a fresh generation and overwrites
@@ -191,6 +204,7 @@ export default function BookmarkPage() {
     const summaryBefore = bookmark?.summary
     setIsGenerating(true)
     setGenerateFailed(false)
+    setSupersededSummary(null)
     try {
       const { summary } = await api.generateSummary(requestedId)
       if (requestedId !== latestId.current) return
@@ -216,6 +230,12 @@ export default function BookmarkPage() {
       }
       if (requestedId !== latestId.current) return
       setGenerateFailed(true)
+      // The re-read above is a single snapshot, and the losing request may simply have died before
+      // the backend finished — it keeps generating regardless, so the write can still be seconds
+      // out. Hand the text to the poll above to watch, rather than settling for "unchanged" on one
+      // sample. Only meaningful when a summary was already displayed; from the empty state the
+      // poll resumes on its own.
+      if (summaryBefore) setSupersededSummary(summaryBefore)
     } finally {
       if (requestedId === latestId.current) setIsGenerating(false)
     }
