@@ -142,6 +142,11 @@ export function createBookmarksRouter(): Router {
       const summary = await generation
       res.json({ summary })
     } catch (error) {
+      // Every response body below is deliberately vague — the client has no use for the internals
+      // and they must not leak to it. That left a failed summary with no trace anywhere but a bare
+      // status code in the Cloud Run request log. Log the real cause here, tagged with the bookmark
+      // id, so the next failure is one log query rather than a bisect across revisions.
+      console.error(`summary generation failed for bookmark ${bookmark.id}:`, error)
       if (error instanceof SummarizerUnavailableError) {
         res.status(503).json({ error: 'Summarization is not configured' })
       } else if (error instanceof SummaryStorageError) {
