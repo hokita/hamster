@@ -28,7 +28,8 @@ article — an overview paragraph, four to six bullet points, and a closing take
 generated with the Gemini API. English and Japanese articles are summarized in their own
 language; anything else is summarized in English. Generation runs automatically just after
 a bookmark is saved; if it fails — or if the bookmark predates this feature — the page
-offers a **Generate summary** button.
+offers a **Generate summary** button. Once a summary exists, a **Regenerate** button under
+it runs a fresh generation; if that fails, the existing summary is left as it was.
 
 Summarization needs `GEMINI_API_KEY`. Without it the app works normally and every
 bookmark page simply shows its empty state.

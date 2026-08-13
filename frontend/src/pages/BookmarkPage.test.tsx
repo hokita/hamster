@@ -65,6 +65,57 @@ describe('BookmarkPage', () => {
     ])
   })
 
+  it('offers to regenerate an existing summary', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue({ ...bookmark, summary: 'First take.' })
+    vi.mocked(api.generateSummary).mockResolvedValue({ summary: 'Second take.' })
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: 'Regenerate' }))
+    expect(api.generateSummary).toHaveBeenCalledWith('1')
+    expect(await screen.findByText('Second take.')).toBeInTheDocument()
+    expect(screen.queryByText('First take.')).not.toBeInTheDocument()
+  })
+
+  it('keeps the summary visible and disables the button while regenerating', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue({ ...bookmark, summary: 'First take.' })
+    vi.mocked(api.generateSummary).mockReturnValue(new Promise(() => {}))
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: 'Regenerate' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /Regenerating/ })).toBeDisabled())
+    expect(screen.getByText('First take.')).toBeInTheDocument()
+  })
+
+  it('keeps the existing summary when regeneration fails', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue({ ...bookmark, summary: 'First take.' })
+    vi.mocked(api.generateSummary).mockRejectedValue(new Error('API error: 502'))
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: 'Regenerate' }))
+    expect(await screen.findByText(/Couldn't regenerate the summary/)).toBeInTheDocument()
+    expect(screen.getByText('First take.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Regenerate' })).toBeEnabled()
+  })
+
+  it('adopts a summary the failed request had already persisted', async () => {
+    vi.mocked(api.getBookmark)
+      .mockResolvedValueOnce({ ...bookmark, summary: 'First take.' })
+      .mockResolvedValueOnce({ ...bookmark, summary: 'Written before the connection dropped.' })
+    vi.mocked(api.generateSummary).mockRejectedValue(new Error('API error: 502'))
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: 'Regenerate' }))
+    expect(await screen.findByText('Written before the connection dropped.')).toBeInTheDocument()
+    expect(screen.queryByText(/Couldn't regenerate the summary/)).not.toBeInTheDocument()
+  })
+
+  it('reports failure when the re-read after a failed regeneration also fails', async () => {
+    vi.mocked(api.getBookmark)
+      .mockResolvedValueOnce({ ...bookmark, summary: 'First take.' })
+      .mockRejectedValueOnce(new Error('API error: 500'))
+    vi.mocked(api.generateSummary).mockRejectedValue(new Error('API error: 502'))
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: 'Regenerate' }))
+    expect(await screen.findByText(/Couldn't regenerate the summary/)).toBeInTheDocument()
+    expect(screen.getByText('First take.')).toBeInTheDocument()
+  })
+
   // index.html declares lang="en" for the document, so a Japanese summary needs its own lang or a
   // screen reader announces it with English pronunciation rules.
   it('marks a Japanese summary as Japanese', async () => {
@@ -264,6 +315,66 @@ describe('BookmarkPage summary polling', () => {
 
     expect(screen.getByText('Polled summary.')).toBeInTheDocument()
     expect(api.getBookmark).toHaveBeenCalledTimes(2)
+  })
+
+  it('clears an earlier failure when polling installs a summary', async () => {
+    vi.mocked(api.getBookmark)
+      .mockResolvedValueOnce(bookmark)
+      .mockResolvedValueOnce(bookmark)
+      .mockResolvedValueOnce({ ...bookmark, summary: 'Summary from the background run.' })
+    vi.mocked(api.generateSummary).mockRejectedValue(new Error('API error: 502'))
+    renderPage()
+    await flush()
+    fireEvent.click(screen.getByRole('button', { name: 'Generate summary' }))
+    await flush()
+    expect(screen.getByText("Couldn't generate a summary.")).toBeInTheDocument()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+
+    expect(screen.getByText('Summary from the background run.')).toBeInTheDocument()
+    expect(screen.queryByText(/Couldn't regenerate the summary/)).not.toBeInTheDocument()
+  })
+
+  // The backend keeps generating after the client goes away, so a regeneration whose request died
+  // can still land — the one immediate re-read in the failure path is only the first sample.
+  it('keeps watching for a regeneration that lands after its request failed', async () => {
+    vi.mocked(api.getBookmark)
+      .mockResolvedValueOnce({ ...bookmark, summary: 'First take.' })
+      .mockResolvedValueOnce({ ...bookmark, summary: 'First take.' })
+      .mockResolvedValueOnce({ ...bookmark, summary: 'Landed after the request died.' })
+    vi.mocked(api.generateSummary).mockRejectedValue(new Error('API error: 502'))
+    renderPage()
+    await flush()
+    fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }))
+    await flush()
+    expect(screen.getByText(/Couldn't regenerate the summary/)).toBeInTheDocument()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+
+    expect(screen.getByText('Landed after the request died.')).toBeInTheDocument()
+    expect(screen.queryByText(/Couldn't regenerate the summary/)).not.toBeInTheDocument()
+  })
+
+  it('stops watching a superseded summary once the budget is spent', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue({ ...bookmark, summary: 'First take.' })
+    vi.mocked(api.generateSummary).mockRejectedValue(new Error('API error: 502'))
+    renderPage()
+    await flush()
+    fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }))
+    await flush()
+    const countAfterFailure = vi.mocked(api.getBookmark).mock.calls.length
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60000)
+    })
+
+    expect(vi.mocked(api.getBookmark).mock.calls.length).toBe(countAfterFailure + 15) // poll budget
+    expect(screen.getByText('First take.')).toBeInTheDocument()
+    expect(screen.getByText(/Couldn't regenerate the summary/)).toBeInTheDocument()
   })
 
   it('does not poll when a summary is already present', async () => {

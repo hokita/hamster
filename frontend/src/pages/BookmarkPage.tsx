@@ -4,6 +4,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faArrowLeft,
   faArrowUpRightFromSquare,
+  faRotate,
   faSpinner,
   faTriangleExclamation,
   faWandMagicSparkles,
@@ -95,6 +96,13 @@ export default function BookmarkPage() {
   const [loadError, setLoadError] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
   const [generateFailed, setGenerateFailed] = useState(false)
+  // The summary on screen when a generation request failed without proving the write never
+  // happened. Express does not abort a handler when the client goes away, so the backend keeps
+  // generating and may persist a summary seconds after the request died. Holding the old text here
+  // tells the polling effect below to keep watching for it to change; without that the page would
+  // sit on a superseded summary until a manual reload, because polling otherwise stops the moment
+  // any summary is present. Cleared as soon as something replaces it.
+  const [supersededSummary, setSupersededSummary] = useState<string | null>(null)
   // React Router reuses this component instance across `/bookmarks/:id` navigations, so state
   // from the previous bookmark would otherwise leak into the next one. Resetting it here (during
   // render, gated on the id actually changing) is React's documented pattern for this — it avoids
@@ -108,6 +116,7 @@ export default function BookmarkPage() {
     setLoadError(false)
     setGenerateFailed(false)
     setIsGenerating(false)
+    setSupersededSummary(null)
   }
 
   // Tracks the id the route is currently on, so a generation request kicked off for a bookmark
@@ -147,7 +156,9 @@ export default function BookmarkPage() {
   useEffect(() => {
     if (!id) return
     if (!bookmark) return
-    if (bookmark.summary) return
+    // Two things are worth waiting for: a first summary, and a replacement for one whose
+    // regeneration request died mid-flight. Anything else is already up to date.
+    if (bookmark.summary && bookmark.summary !== supersededSummary) return
     if (isGenerating) return
 
     let cancelled = false
@@ -159,7 +170,16 @@ export default function BookmarkPage() {
         .getBookmark(id)
         .then((result) => {
           if (cancelled || id !== latestId.current) return
-          if (result.summary) setBookmark(result)
+          if (!result.summary) return
+          if (result.summary === supersededSummary) return
+          setBookmark(result)
+          // A summary arriving here settles any earlier failure: the user's own request may have
+          // failed while the generation kicked off on the add page was still running, or while the
+          // regeneration it started went on to finish server-side. Leaving the flag set would
+          // caption the summary that just appeared with an error that no longer describes it,
+          // because the summary-present branch below renders `generateFailed`.
+          setGenerateFailed(false)
+          setSupersededSummary(null)
         })
         .catch(() => {
           // Opportunistic background polling: swallow failures and keep the remaining budget.
@@ -171,20 +191,51 @@ export default function BookmarkPage() {
       cancelled = true
       clearInterval(intervalId)
     }
-  }, [id, bookmark, isGenerating])
+  }, [id, bookmark, isGenerating, supersededSummary])
 
+  // Drives both the empty state's "Generate summary" button and the "Regenerate" button shown
+  // under an existing summary: POST /:id/summary always runs a fresh generation and overwrites
+  // whatever is stored, so one handler covers both. A regeneration that fails before the write
+  // leaves the stored summary untouched, which is why the current one stays on screen when
+  // `generateFailed` flips — see the catch block for the case where the write did land.
   async function handleGenerate() {
     if (!id) return
     const requestedId = id
+    const summaryBefore = bookmark?.summary
     setIsGenerating(true)
     setGenerateFailed(false)
+    setSupersededSummary(null)
     try {
       const { summary } = await api.generateSummary(requestedId)
       if (requestedId !== latestId.current) return
       setBookmark((previous) => (previous ? { ...previous, summary } : previous))
     } catch {
       if (requestedId !== latestId.current) return
+      // A failed request does not prove nothing was written: the summary is persisted before the
+      // response is sent, so a connection dropped in between leaves a fresh summary in Firestore
+      // that this page knows nothing about. Re-read the bookmark before reporting failure —
+      // otherwise the page shows the old text under a message claiming it is unchanged, and the
+      // polling effect cannot repair it because that only runs while there is no summary at all.
+      // Retrying blind would also pay for a second generation to reproduce what already exists.
+      try {
+        const refreshed = await api.getBookmark(requestedId)
+        if (requestedId !== latestId.current) return
+        if (refreshed.summary && refreshed.summary !== summaryBefore) {
+          setBookmark(refreshed)
+          return
+        }
+      } catch {
+        // The re-read failed too, so nothing was learned: fall through to the failure state,
+        // which still describes what the user can see.
+      }
+      if (requestedId !== latestId.current) return
       setGenerateFailed(true)
+      // The re-read above is a single snapshot, and the losing request may simply have died before
+      // the backend finished — it keeps generating regardless, so the write can still be seconds
+      // out. Hand the text to the poll above to watch, rather than settling for "unchanged" on one
+      // sample. Only meaningful when a summary was already displayed; from the empty state the
+      // poll resumes on its own.
+      if (summaryBefore) setSupersededSummary(summaryBefore)
     } finally {
       if (requestedId === latestId.current) setIsGenerating(false)
     }
@@ -249,7 +300,34 @@ export default function BookmarkPage() {
       </h2>
 
       {bookmark.summary ? (
-        <SummaryBody summary={bookmark.summary} />
+        <div className="flex flex-col items-start gap-4">
+          {/* Dimmed while a regeneration is in flight: the text on screen is about to be replaced,
+              and the button's spinner alone is easy to miss below a long summary. */}
+          <div
+            aria-busy={isGenerating}
+            className={`transition-opacity ${isGenerating ? 'opacity-50' : ''}`}
+          >
+            <SummaryBody summary={bookmark.summary} />
+          </div>
+          {generateFailed && (
+            <p className="m-0 flex items-center gap-2 text-sm text-red-700">
+              <FontAwesomeIcon icon={faTriangleExclamation} aria-hidden="true" />
+              Couldn&apos;t regenerate the summary — the one above is unchanged.
+            </p>
+          )}
+          <button
+            onClick={handleGenerate}
+            disabled={isGenerating}
+            className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-800 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+          >
+            <FontAwesomeIcon
+              icon={isGenerating ? faSpinner : faRotate}
+              spin={isGenerating}
+              aria-hidden="true"
+            />
+            {isGenerating ? 'Regenerating…' : 'Regenerate'}
+          </button>
+        </div>
       ) : (
         <div className="flex flex-col items-start gap-3">
           <p className="m-0 text-gray-500">
