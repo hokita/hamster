@@ -19,8 +19,16 @@ class ArticleUnreadableError extends Error {
 // distinct from a generation failure because it maps to 500, not 502 — the expensive part (calling
 // Gemini) already succeeded, only the write did not.
 class SummaryStorageError extends Error {
-  constructor() {
+  // Declared explicitly rather than passed to super() as an ErrorOptions `cause`, which needs the
+  // ES2022 lib; this project targets ES2020. Node still reports an own `cause` when the error is
+  // logged, underlying stack included, so the diagnostic value is the same.
+  readonly cause: unknown
+
+  constructor(cause: unknown) {
     super('Failed to save the summary')
+    // Without this the original Firestore error is discarded, and the failure log can only say
+    // "Failed to save the summary" — it cannot tell a permissions problem from an outage.
+    this.cause = cause
   }
 }
 
@@ -59,8 +67,8 @@ export function createBookmarksRouter(): Router {
 
       try {
         await db.updateSummary(bookmark.id, summary)
-      } catch {
-        throw new SummaryStorageError()
+      } catch (error) {
+        throw new SummaryStorageError(error)
       }
       return summary
     })()

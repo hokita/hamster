@@ -285,6 +285,22 @@ describe('POST /api/bookmarks/:id/summary', () => {
     expect(res.status).toBe(500)
   })
 
+  it('keeps the underlying write failure as the cause, so the log names it', async () => {
+    // Codex caught that SummaryStorageError replaced the Firestore exception outright, so the
+    // failure log said only "Failed to save the summary" — it could not distinguish a permission
+    // problem from an outage from a bad document, which is the whole point of logging it.
+    vi.mocked(db.getBookmark).mockResolvedValue(bookmark)
+    vi.mocked(fetchArticleText).mockResolvedValue('Article body')
+    vi.mocked(summarize).mockResolvedValue('A summary.')
+    vi.mocked(db.updateSummary).mockRejectedValue(new Error('7 PERMISSION_DENIED'))
+
+    const res = await request(app).post('/api/bookmarks/1/summary')
+
+    expect(res.status).toBe(500)
+    const logged = consoleError.mock.calls[0][1] as { cause?: unknown }
+    expect((logged.cause as Error | undefined)?.message).toBe('7 PERMISSION_DENIED')
+  })
+
   // Codex identified that checking configuration only inside summarize() meant an unconfigured
   // deployment still paid for fetchArticleText (up to 8s) before failing, and — worse — that a
   // fetch failure on top of being unconfigured produced a misleading 502 instead of the
