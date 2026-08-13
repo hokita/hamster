@@ -57,13 +57,41 @@ describe('summarize', () => {
     expect(config.thinkingConfig).toEqual({ thinkingLevel: 'MINIMAL' })
   })
 
-  it('puts the trusted rules in systemInstruction, asking for English output and three bullets', async () => {
+  it('puts the trusted rules in systemInstruction', async () => {
     mockGenerateContent.mockResolvedValue({ text: 'ok' })
     await summarize('My Title', 'The article body text')
     const call = mockGenerateContent.mock.calls[0][0]
     const systemInstruction = call.config.systemInstruction as string
-    expect(systemInstruction).toContain('English')
-    expect(systemInstruction).toContain('three')
+    expect(systemInstruction).toContain('Rules:')
+    expect(systemInstruction).toContain('Do not speculate')
+  })
+
+  it('asks for the summary in the article language, falling back to English', async () => {
+    // A Japanese article deserves a Japanese summary, and vice versa; anything else is summarized
+    // in English rather than in a language the reader most likely cannot read.
+    mockGenerateContent.mockResolvedValue({ text: 'ok' })
+    await summarize('My Title', 'The article body text')
+    const systemInstruction = mockGenerateContent.mock.calls[0][0].config
+      .systemInstruction as string
+    expect(systemInstruction).toContain('the language the article itself is written in')
+    expect(systemInstruction).toContain('English or')
+    expect(systemInstruction).toContain('Japanese')
+    expect(systemInstruction).toContain('any other language, write the summary in English')
+    // The old rule forced English on every article, whatever it was written in.
+    expect(systemInstruction).not.toContain('Write in English, even when')
+  })
+
+  it('asks for a summary long enough to be worth reading', async () => {
+    // The first version asked for three sentences and three bullets, which read as a teaser rather
+    // than a summary. Two paragraphs around four to six substantive bullets is the shape now.
+    mockGenerateContent.mockResolvedValue({ text: 'ok' })
+    await summarize('My Title', 'The article body text')
+    const systemInstruction = mockGenerateContent.mock.calls[0][0].config
+      .systemInstruction as string
+    expect(systemInstruction).toContain('three to five sentences')
+    expect(systemInstruction).toContain('four to six bullet points')
+    expect(systemInstruction).toContain('two or three sentences')
+    expect(systemInstruction).not.toContain('exactly three bullet points')
   })
 
   it('keeps the rules out of contents, which carries only the untrusted title and body', async () => {
@@ -73,7 +101,7 @@ describe('summarize', () => {
     expect(contents).toContain('My Title')
     expect(contents).toContain('The article body text')
     expect(contents).not.toContain('Rules:')
-    expect(contents).not.toContain('Write in English')
+    expect(contents).not.toContain('Do not speculate')
   })
 
   it('fences the title the same way as the body, instead of leaving it bare', async () => {

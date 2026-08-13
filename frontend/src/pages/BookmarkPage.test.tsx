@@ -65,6 +65,30 @@ describe('BookmarkPage', () => {
     ])
   })
 
+  // index.html declares lang="en" for the document, so a Japanese summary needs its own lang or a
+  // screen reader announces it with English pronunciation rules.
+  it('marks a Japanese summary as Japanese', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...bookmark,
+      summary:
+        'この記事はウィジェットの仕組みを説明しています。\n- 最初の要点\n- 二つ目の要点\n- 三つ目の要点',
+    })
+    renderPage()
+    const paragraph = await screen.findByText('この記事はウィジェットの仕組みを説明しています。')
+    expect(paragraph.closest('[lang]')).toHaveAttribute('lang', 'ja')
+  })
+
+  it('leaves an English summary in English, even when it quotes a Japanese term', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...bookmark,
+      summary:
+        'The article explains the widget process, which it calls "改善", in detail for newcomers.',
+    })
+    renderPage()
+    const paragraph = await screen.findByText(/The article explains the widget process/)
+    expect(paragraph.closest('[lang]')).toHaveAttribute('lang', 'en')
+  })
+
   it('offers to generate a summary when the bookmark has none', async () => {
     renderPage()
     expect(await screen.findByText('No summary yet.')).toBeInTheDocument()
