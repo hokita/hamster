@@ -28,6 +28,24 @@ function hostnameOf(url: string): string | null {
   }
 }
 
+// The summary follows the article's own language when that language is Japanese, but index.html
+// declares the document lang="en" — so without an override a screen reader reads Japanese text with
+// English pronunciation rules and, often, an English voice. The backend does not record which
+// language the model picked, so derive it here: the prompt only ever produces English or Japanese,
+// and the two are far apart by script. A Japanese summary is nearly all kana and kanji, while an
+// English one carries at most a quoted term or a name, so a share test separates them without
+// taking on a language-detection dependency.
+// Hiragana and katakana, CJK ideographs (kanji) and their extension A, and halfwidth katakana.
+const JAPANESE_SCRIPT = /[぀-ヿ㐀-䶿一-鿿ｦ-ﾟ]/g
+const JAPANESE_SHARE = 0.2
+
+function summaryLanguage(summary: string): 'ja' | 'en' {
+  const characters = summary.replace(/\s/g, '')
+  if (!characters) return 'en'
+  const japanese = characters.match(JAPANESE_SCRIPT)?.length ?? 0
+  return japanese / characters.length >= JAPANESE_SHARE ? 'ja' : 'en'
+}
+
 // The prompt asks for an overview paragraph, "- " bullets, then a closing paragraph, so this is all
 // the structure the text can have — a markdown dependency would be dead weight. Anything unexpected
 // degrades to paragraphs, which is a safe worst case.
@@ -49,7 +67,10 @@ function SummaryBody({ summary }: { summary: string }) {
   }
 
   return (
-    <div className="flex flex-col gap-3 text-gray-700 leading-relaxed">
+    <div
+      lang={summaryLanguage(summary)}
+      className="flex flex-col gap-3 text-gray-700 leading-relaxed"
+    >
       {blocks.map((block, index) =>
         block.type === 'p' ? (
           <p key={index} className="m-0">
