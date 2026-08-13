@@ -317,6 +317,26 @@ describe('BookmarkPage summary polling', () => {
     expect(api.getBookmark).toHaveBeenCalledTimes(2)
   })
 
+  it('clears an earlier failure when polling installs a summary', async () => {
+    vi.mocked(api.getBookmark)
+      .mockResolvedValueOnce(bookmark)
+      .mockResolvedValueOnce(bookmark)
+      .mockResolvedValueOnce({ ...bookmark, summary: 'Summary from the background run.' })
+    vi.mocked(api.generateSummary).mockRejectedValue(new Error('API error: 502'))
+    renderPage()
+    await flush()
+    fireEvent.click(screen.getByRole('button', { name: 'Generate summary' }))
+    await flush()
+    expect(screen.getByText("Couldn't generate a summary.")).toBeInTheDocument()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+
+    expect(screen.getByText('Summary from the background run.')).toBeInTheDocument()
+    expect(screen.queryByText(/Couldn't regenerate the summary/)).not.toBeInTheDocument()
+  })
+
   it('does not poll when a summary is already present', async () => {
     vi.mocked(api.getBookmark).mockResolvedValueOnce({
       ...bookmark,

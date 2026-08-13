@@ -160,7 +160,13 @@ export default function BookmarkPage() {
         .getBookmark(id)
         .then((result) => {
           if (cancelled || id !== latestId.current) return
-          if (result.summary) setBookmark(result)
+          if (!result.summary) return
+          setBookmark(result)
+          // A summary arriving here settles any earlier failure: the user's own request may have
+          // failed while the generation kicked off on the add page was still running. Leaving the
+          // flag set would caption a summary that just appeared with a regeneration error the user
+          // never triggered, because the summary-present branch below renders `generateFailed`.
+          setGenerateFailed(false)
         })
         .catch(() => {
           // Opportunistic background polling: swallow failures and keep the remaining budget.
