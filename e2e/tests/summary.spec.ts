@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test'
 import { signIn } from '../fixtures/auth'
-import { clearFirestore } from '../fixtures/firestore'
+import { clearFirestore, seedBookmark } from '../fixtures/firestore'
 
 // Deliberately not a second real external site: this loopback literal is rejected synchronously
 // by the backend's SSRF guard (isDisallowedHost in backend/src/services/ipGuard.ts checks
@@ -65,6 +65,25 @@ test.describe('bookmark summary page', () => {
     const retryButton = page.getByRole('button', { name: 'Try again' })
     await expect(retryButton).toBeVisible()
     await expect(retryButton).toBeEnabled()
+  })
+
+  test('keeps the existing summary when a regeneration fails', async ({ page }) => {
+    const id = await seedBookmark({
+      url: 'https://example.com',
+      title: 'Example Domain',
+      summary: 'A stored summary.',
+    })
+
+    await page.goto(`/bookmarks/${id}`)
+    await expect(page.getByText('A stored summary.')).toBeVisible()
+
+    await page.getByRole('button', { name: 'Regenerate' }).click()
+
+    // Same deterministic 503 as the generate case above — no GEMINI_API_KEY in e2e. The point
+    // here is that a failed regeneration is non-destructive: the stored summary is still shown.
+    await expect(page.getByText(/Couldn't regenerate the summary/)).toBeVisible()
+    await expect(page.getByText('A stored summary.')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Regenerate' })).toBeEnabled()
   })
 
   test('shows an error for a bookmark that does not exist', async ({ page }) => {

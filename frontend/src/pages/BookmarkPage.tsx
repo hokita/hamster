@@ -4,6 +4,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faArrowLeft,
   faArrowUpRightFromSquare,
+  faRotate,
   faSpinner,
   faTriangleExclamation,
   faWandMagicSparkles,
@@ -152,6 +153,10 @@ export default function BookmarkPage() {
     }
   }, [id, bookmark, isGenerating])
 
+  // Drives both the empty state's "Generate summary" button and the "Regenerate" button shown
+  // under an existing summary: POST /:id/summary always runs a fresh generation and overwrites
+  // whatever is stored, so one handler covers both. A failed regeneration leaves the stored
+  // summary untouched, which is why the current one stays on screen when `generateFailed` flips.
   async function handleGenerate() {
     if (!id) return
     const requestedId = id
@@ -228,7 +233,34 @@ export default function BookmarkPage() {
       </h2>
 
       {bookmark.summary ? (
-        <SummaryBody summary={bookmark.summary} />
+        <div className="flex flex-col items-start gap-4">
+          {/* Dimmed while a regeneration is in flight: the text on screen is about to be replaced,
+              and the button's spinner alone is easy to miss below a long summary. */}
+          <div
+            aria-busy={isGenerating}
+            className={`transition-opacity ${isGenerating ? 'opacity-50' : ''}`}
+          >
+            <SummaryBody summary={bookmark.summary} />
+          </div>
+          {generateFailed && (
+            <p className="m-0 flex items-center gap-2 text-sm text-red-700">
+              <FontAwesomeIcon icon={faTriangleExclamation} aria-hidden="true" />
+              Couldn&apos;t regenerate the summary — the one above is unchanged.
+            </p>
+          )}
+          <button
+            onClick={handleGenerate}
+            disabled={isGenerating}
+            className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-800 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+          >
+            <FontAwesomeIcon
+              icon={isGenerating ? faSpinner : faRotate}
+              spin={isGenerating}
+              aria-hidden="true"
+            />
+            {isGenerating ? 'Regenerating…' : 'Regenerate'}
+          </button>
+        </div>
       ) : (
         <div className="flex flex-col items-start gap-3">
           <p className="m-0 text-gray-500">
