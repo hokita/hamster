@@ -155,11 +155,13 @@ export default function BookmarkPage() {
 
   // Drives both the empty state's "Generate summary" button and the "Regenerate" button shown
   // under an existing summary: POST /:id/summary always runs a fresh generation and overwrites
-  // whatever is stored, so one handler covers both. A failed regeneration leaves the stored
-  // summary untouched, which is why the current one stays on screen when `generateFailed` flips.
+  // whatever is stored, so one handler covers both. A regeneration that fails before the write
+  // leaves the stored summary untouched, which is why the current one stays on screen when
+  // `generateFailed` flips — see the catch block for the case where the write did land.
   async function handleGenerate() {
     if (!id) return
     const requestedId = id
+    const summaryBefore = bookmark?.summary
     setIsGenerating(true)
     setGenerateFailed(false)
     try {
@@ -167,6 +169,24 @@ export default function BookmarkPage() {
       if (requestedId !== latestId.current) return
       setBookmark((previous) => (previous ? { ...previous, summary } : previous))
     } catch {
+      if (requestedId !== latestId.current) return
+      // A failed request does not prove nothing was written: the summary is persisted before the
+      // response is sent, so a connection dropped in between leaves a fresh summary in Firestore
+      // that this page knows nothing about. Re-read the bookmark before reporting failure —
+      // otherwise the page shows the old text under a message claiming it is unchanged, and the
+      // polling effect cannot repair it because that only runs while there is no summary at all.
+      // Retrying blind would also pay for a second generation to reproduce what already exists.
+      try {
+        const refreshed = await api.getBookmark(requestedId)
+        if (requestedId !== latestId.current) return
+        if (refreshed.summary && refreshed.summary !== summaryBefore) {
+          setBookmark(refreshed)
+          return
+        }
+      } catch {
+        // The re-read failed too, so nothing was learned: fall through to the failure state,
+        // which still describes what the user can see.
+      }
       if (requestedId !== latestId.current) return
       setGenerateFailed(true)
     } finally {

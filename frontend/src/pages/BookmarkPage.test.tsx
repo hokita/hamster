@@ -94,6 +94,28 @@ describe('BookmarkPage', () => {
     expect(screen.getByRole('button', { name: 'Regenerate' })).toBeEnabled()
   })
 
+  it('adopts a summary the failed request had already persisted', async () => {
+    vi.mocked(api.getBookmark)
+      .mockResolvedValueOnce({ ...bookmark, summary: 'First take.' })
+      .mockResolvedValueOnce({ ...bookmark, summary: 'Written before the connection dropped.' })
+    vi.mocked(api.generateSummary).mockRejectedValue(new Error('API error: 502'))
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: 'Regenerate' }))
+    expect(await screen.findByText('Written before the connection dropped.')).toBeInTheDocument()
+    expect(screen.queryByText(/Couldn't regenerate the summary/)).not.toBeInTheDocument()
+  })
+
+  it('reports failure when the re-read after a failed regeneration also fails', async () => {
+    vi.mocked(api.getBookmark)
+      .mockResolvedValueOnce({ ...bookmark, summary: 'First take.' })
+      .mockRejectedValueOnce(new Error('API error: 500'))
+    vi.mocked(api.generateSummary).mockRejectedValue(new Error('API error: 502'))
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: 'Regenerate' }))
+    expect(await screen.findByText(/Couldn't regenerate the summary/)).toBeInTheDocument()
+    expect(screen.getByText('First take.')).toBeInTheDocument()
+  })
+
   it('offers to generate a summary when the bookmark has none', async () => {
     renderPage()
     expect(await screen.findByText('No summary yet.')).toBeInTheDocument()
