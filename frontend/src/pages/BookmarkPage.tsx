@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import { useParams, Link } from 'react-router-dom'
+import Markdown from 'react-markdown'
+import type { Components } from 'react-markdown'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faArrowLeft,
@@ -47,44 +50,74 @@ function summaryLanguage(summary: string): 'ja' | 'en' {
   return japanese / characters.length >= JAPANESE_SHARE ? 'ja' : 'en'
 }
 
-// The prompt asks for an overview paragraph, "- " bullets, then a closing paragraph, so this is all
-// the structure the text can have — a markdown dependency would be dead weight. Anything unexpected
-// degrades to paragraphs, which is a safe worst case.
+// The summary arrives as Markdown (see the prompt in backend/src/services/summarizer.ts), so it is
+// parsed rather than read line by line: the model is asked for a small subset — paragraphs, "## "
+// headings, bullets, bold — but it is a model, and a hand-rolled reader would render whatever it
+// improvises outside that subset as literal "[text](url)" noise. Summaries written before this
+// feature are plain text, which is also valid Markdown, so they keep rendering as paragraphs and
+// bullets exactly as before.
+//
+// Markdown that came out of an untrusted page is still untrusted. react-markdown does not render
+// raw HTML unless rehype-raw is added (it is not), which leaves link and image URLs as the only
+// live surface — so both are dropped here rather than sanitized. Nothing in the prompt asks for
+// them, the page has nothing to gain from a URL the model copied out of an article, and a
+// convincing link to somewhere else is exactly what a hostile page would want out of this. Their
+// text stays, courtesy of unwrapDisallowed.
+const DISALLOWED_ELEMENTS = ['a', 'img']
+
+// The model writes its own headings, so they land under the page's "Summary" <h2> — h3 keeps the
+// document outline intact whichever level (# or ##) the model reached for.
+function SummaryHeading({ children }: { children?: ReactNode }) {
+  return <h3 className="m-0 mt-2 text-base font-semibold text-gray-900">{children}</h3>
+}
+
+const SUMMARY_COMPONENTS: Components = {
+  p: ({ children }) => <p className="m-0">{children}</p>,
+  h1: SummaryHeading,
+  h2: SummaryHeading,
+  h3: SummaryHeading,
+  h4: SummaryHeading,
+  h5: SummaryHeading,
+  h6: SummaryHeading,
+  ul: ({ children }) => <ul className="m-0 flex flex-col gap-1.5 list-disc pl-5">{children}</ul>,
+  ol: ({ children }) => <ol className="m-0 flex flex-col gap-1.5 list-decimal pl-5">{children}</ol>,
+  li: ({ children }) => <li className="pl-1">{children}</li>,
+  strong: ({ children }) => <strong className="font-semibold text-gray-900">{children}</strong>,
+  em: ({ children }) => <em className="italic">{children}</em>,
+  code: ({ children }) => (
+    <code className="rounded bg-gray-100 px-1 py-0.5 text-[0.9em] text-gray-800">{children}</code>
+  ),
+  // The prompt rules out code blocks and blockquotes, but a model is not a parser: styling them
+  // costs two lines and keeps a summary that ignores the rules readable instead of ragged. The
+  // scroll container matters most — an unwrapped code line would otherwise widen the whole page.
+  pre: ({ children }) => (
+    <pre className="m-0 overflow-x-auto rounded bg-gray-100 p-3 text-sm text-gray-800">
+      {children}
+    </pre>
+  ),
+  blockquote: ({ children }) => (
+    <blockquote className="m-0 border-l-2 border-gray-200 pl-3 text-gray-600">
+      {children}
+    </blockquote>
+  ),
+  hr: () => <hr className="m-0 border-gray-200" />,
+}
+
 function SummaryBody({ summary }: { summary: string }) {
-  type Block = { type: 'p'; text: string } | { type: 'ul'; items: string[] }
-  const blocks: Block[] = []
-
-  for (const rawLine of summary.split('\n')) {
-    const line = rawLine.trim()
-    if (!line) continue
-    const bullet = /^[-*・]\s*(.+)$/.exec(line)
-    const last = blocks[blocks.length - 1]
-    if (bullet) {
-      if (last?.type === 'ul') last.items.push(bullet[1])
-      else blocks.push({ type: 'ul', items: [bullet[1]] })
-    } else {
-      blocks.push({ type: 'p', text: line })
-    }
-  }
-
   return (
+    // gap-3 spaces the blocks, so every child above resets its own margin to zero rather than
+    // stacking browser defaults on top of it.
     <div
       lang={summaryLanguage(summary)}
       className="flex flex-col gap-3 text-gray-700 leading-relaxed"
     >
-      {blocks.map((block, index) =>
-        block.type === 'p' ? (
-          <p key={index} className="m-0">
-            {block.text}
-          </p>
-        ) : (
-          <ul key={index} className="m-0 flex flex-col gap-1.5 list-disc pl-5">
-            {block.items.map((item, itemIndex) => (
-              <li key={itemIndex}>{item}</li>
-            ))}
-          </ul>
-        )
-      )}
+      <Markdown
+        components={SUMMARY_COMPONENTS}
+        disallowedElements={DISALLOWED_ELEMENTS}
+        unwrapDisallowed
+      >
+        {summary}
+      </Markdown>
     </div>
   )
 }
