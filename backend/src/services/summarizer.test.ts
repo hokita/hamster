@@ -30,12 +30,12 @@ describe('summarize', () => {
     )
   })
 
-  it('calls the model eagle uses, with a bounded output budget', async () => {
+  it('calls the latest Flash model, with a bounded output budget', async () => {
     mockGenerateContent.mockResolvedValue({ text: 'ok' })
     await summarize('Title', 'Article body')
     expect(mockGenerateContent).toHaveBeenCalledWith(
       expect.objectContaining({
-        model: 'gemini-3.1-flash-lite',
+        model: 'gemini-3.6-flash',
         config: expect.objectContaining({ maxOutputTokens: 1024 }),
       })
     )

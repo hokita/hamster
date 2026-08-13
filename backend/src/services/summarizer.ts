@@ -1,8 +1,9 @@
 import { GoogleGenAI } from '@google/genai'
 import { withSignal } from './safeFetch'
 
-// Same model, timeout, and output budget as the sibling eagle repo.
-const MODEL = 'gemini-3.1-flash-lite'
+// Same timeout and output budget as the sibling eagle repo; the model is one step up from eagle's
+// flash-lite — summarising a whole article benefits from the stronger model.
+const MODEL = 'gemini-3.6-flash'
 const TIMEOUT_MS = 20_000
 // The prompt asks for a paragraph plus three bullets, but nothing stops the model from ignoring
 // that. The input side is bounded by articleFetcher; the output side is bounded here.
