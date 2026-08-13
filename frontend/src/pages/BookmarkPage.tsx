@@ -28,9 +28,9 @@ function hostnameOf(url: string): string | null {
   }
 }
 
-// The prompt asks for a paragraph followed by "- " bullets, so this is all the structure the text
-// can have — a markdown dependency would be dead weight. Anything unexpected degrades to
-// paragraphs, which is a safe worst case.
+// The prompt asks for an overview paragraph, "- " bullets, then a closing paragraph, so this is all
+// the structure the text can have — a markdown dependency would be dead weight. Anything unexpected
+// degrades to paragraphs, which is a safe worst case.
 function SummaryBody({ summary }: { summary: string }) {
   type Block = { type: 'p'; text: string } | { type: 'ul'; items: string[] }
   const blocks: Block[] = []

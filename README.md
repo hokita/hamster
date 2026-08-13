@@ -23,8 +23,10 @@ hamster/
 
 ## Summaries
 
-Each bookmark has its own page at `/bookmarks/:id` showing an English summary of the
-linked article, generated with the Gemini API. Generation runs automatically just after
+Each bookmark has its own page at `/bookmarks/:id` showing a summary of the linked
+article — an overview paragraph, four to six bullet points, and a closing takeaway —
+generated with the Gemini API. English and Japanese articles are summarized in their own
+language; anything else is summarized in English. Generation runs automatically just after
 a bookmark is saved; if it fails — or if the bookmark predates this feature — the page
 offers a **Generate summary** button.
 
