@@ -34,6 +34,12 @@ const app = express()
 app.use(express.json())
 app.use('/api/bookmarks', createBookmarksRouter())
 
+// The summary route logs the cause of every failure, and several tests below deliberately provoke
+// one. Silence it here so a passing run stays readable; the test that asserts on the log reads this
+// spy. Safe under the per-suite vi.clearAllMocks(), which clears recorded calls but keeps the
+// implementation.
+const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+
 describe('GET /api/bookmarks', () => {
   beforeEach(() => vi.clearAllMocks())
 
@@ -245,6 +251,23 @@ describe('POST /api/bookmarks/:id/summary', () => {
     expect(db.updateSummary).not.toHaveBeenCalled()
   })
 
+  it('logs the underlying cause when generation fails, instead of swallowing it', async () => {
+    // The 502 body is deliberately vague, so without this the only trace a failed summary leaves
+    // is a bare status code in the Cloud Run request log — which is exactly what made the
+    // gemini-3.6-flash token-budget regression take a revision-by-revision bisect to diagnose.
+    vi.mocked(db.getBookmark).mockResolvedValue(bookmark)
+    vi.mocked(fetchArticleText).mockResolvedValue('Article body')
+    vi.mocked(summarize).mockRejectedValue(new Error('gemini response was truncated'))
+
+    const res = await request(app).post('/api/bookmarks/1/summary')
+
+    expect(res.status).toBe(502)
+    expect(consoleError).toHaveBeenCalled()
+    const logged = consoleError.mock.calls[0].map(String).join(' ')
+    expect(logged).toContain('gemini response was truncated')
+    expect(logged).toContain('1') // the bookmark id, so a failure can be tied to its bookmark
+  })
+
   it('returns 503 when the API key is not configured', async () => {
     vi.mocked(db.getBookmark).mockResolvedValue(bookmark)
     vi.mocked(fetchArticleText).mockResolvedValue('Article body')
@@ -260,6 +283,22 @@ describe('POST /api/bookmarks/:id/summary', () => {
     vi.mocked(db.updateSummary).mockRejectedValue(new Error('firestore down'))
     const res = await request(app).post('/api/bookmarks/1/summary')
     expect(res.status).toBe(500)
+  })
+
+  it('keeps the underlying write failure as the cause, so the log names it', async () => {
+    // Codex caught that SummaryStorageError replaced the Firestore exception outright, so the
+    // failure log said only "Failed to save the summary" — it could not distinguish a permission
+    // problem from an outage from a bad document, which is the whole point of logging it.
+    vi.mocked(db.getBookmark).mockResolvedValue(bookmark)
+    vi.mocked(fetchArticleText).mockResolvedValue('Article body')
+    vi.mocked(summarize).mockResolvedValue('A summary.')
+    vi.mocked(db.updateSummary).mockRejectedValue(new Error('7 PERMISSION_DENIED'))
+
+    const res = await request(app).post('/api/bookmarks/1/summary')
+
+    expect(res.status).toBe(500)
+    const logged = consoleError.mock.calls[0][1] as { cause?: unknown }
+    expect((logged.cause as Error | undefined)?.message).toBe('7 PERMISSION_DENIED')
   })
 
   // Codex identified that checking configuration only inside summarize() meant an unconfigured

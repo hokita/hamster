@@ -2,11 +2,17 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 const { mockGenerateContent } = vi.hoisted(() => ({ mockGenerateContent: vi.fn() }))
 
-vi.mock('@google/genai', () => ({
-  GoogleGenAI: class {
-    models = { generateContent: mockGenerateContent }
-  },
-}))
+vi.mock('@google/genai', async () => {
+  const actual = await vi.importActual<typeof import('@google/genai')>('@google/genai')
+  return {
+    GoogleGenAI: class {
+      models = { generateContent: mockGenerateContent }
+    },
+    // The real enum, not a stand-in: the thinking assertion below is only worth anything if it
+    // pins the value the SDK actually puts on the wire.
+    ThinkingLevel: actual.ThinkingLevel,
+  }
+})
 
 import { summarize, SummarizerUnavailableError } from './summarizer'
 
@@ -36,9 +42,19 @@ describe('summarize', () => {
     expect(mockGenerateContent).toHaveBeenCalledWith(
       expect.objectContaining({
         model: 'gemini-3.6-flash',
-        config: expect.objectContaining({ maxOutputTokens: 1024 }),
+        config: expect.objectContaining({ maxOutputTokens: 8192 }),
       })
     )
+  })
+
+  it('asks for minimal thinking, so the output budget funds the summary and not the reasoning', async () => {
+    // gemini-3.6-flash thinks at "medium" by default and thinking tokens are drawn from
+    // maxOutputTokens. Left at the default, reasoning about a 20k-char article exhausts the budget
+    // before any summary text is emitted, and every request dies on the MAX_TOKENS guard below.
+    mockGenerateContent.mockResolvedValue({ text: 'ok' })
+    await summarize('Title', 'Article body')
+    const config = mockGenerateContent.mock.calls[0][0].config
+    expect(config.thinkingConfig).toEqual({ thinkingLevel: 'MINIMAL' })
   })
 
   it('puts the trusted rules in systemInstruction, asking for English output and three bullets', async () => {

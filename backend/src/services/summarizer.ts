@@ -1,13 +1,24 @@
-import { GoogleGenAI } from '@google/genai'
+import { GoogleGenAI, ThinkingLevel } from '@google/genai'
 import { withSignal } from './safeFetch'
 
-// Same timeout and output budget as the sibling eagle repo; the model is one step up from eagle's
-// flash-lite — summarising a whole article benefits from the stronger model.
+// Same timeout as the sibling eagle repo; the model is one step up from eagle's flash-lite —
+// summarising a whole article benefits from the stronger model.
 const MODEL = 'gemini-3.6-flash'
 const TIMEOUT_MS = 20_000
 // The prompt asks for a paragraph plus three bullets, but nothing stops the model from ignoring
 // that. The input side is bounded by articleFetcher; the output side is bounded here.
-const MAX_OUTPUT_TOKENS = 1024
+//
+// This budget also has to cover the model's thinking tokens, which are drawn from the same pool.
+// eagle's 1024 was sized for flash-lite, which barely thinks; on gemini-3.6-flash it was not enough
+// to reach the first output token, so every request died on the MAX_TOKENS check below. Sized for
+// the ~150 tokens the prompt actually asks for plus ample headroom for reasoning.
+const MAX_OUTPUT_TOKENS = 8192
+// Deciding what a page says is a reading task, not a reasoning one, so buy the least thinking on
+// offer: it keeps latency and per-summary cost close to the old flash-lite behaviour and leaves the
+// budget above to the summary itself. Belt and braces with MAX_OUTPUT_TOKENS — either alone fixes
+// the truncation, but minimal thinking also stops a pathological page from quietly costing 8k
+// output tokens of reasoning.
+const THINKING_LEVEL = ThinkingLevel.MINIMAL
 
 export class SummarizerUnavailableError extends Error {
   constructor() {
@@ -73,6 +84,7 @@ export async function summarize(title: string, text: string): Promise<string> {
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
         maxOutputTokens: MAX_OUTPUT_TOKENS,
+        thinkingConfig: { thinkingLevel: THINKING_LEVEL },
         abortSignal: signal,
       },
     }),

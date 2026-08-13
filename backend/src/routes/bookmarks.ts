@@ -19,8 +19,16 @@ class ArticleUnreadableError extends Error {
 // distinct from a generation failure because it maps to 500, not 502 — the expensive part (calling
 // Gemini) already succeeded, only the write did not.
 class SummaryStorageError extends Error {
-  constructor() {
+  // Declared explicitly rather than passed to super() as an ErrorOptions `cause`, which needs the
+  // ES2022 lib; this project targets ES2020. Node still reports an own `cause` when the error is
+  // logged, underlying stack included, so the diagnostic value is the same.
+  readonly cause: unknown
+
+  constructor(cause: unknown) {
     super('Failed to save the summary')
+    // Without this the original Firestore error is discarded, and the failure log can only say
+    // "Failed to save the summary" — it cannot tell a permissions problem from an outage.
+    this.cause = cause
   }
 }
 
@@ -59,8 +67,8 @@ export function createBookmarksRouter(): Router {
 
       try {
         await db.updateSummary(bookmark.id, summary)
-      } catch {
-        throw new SummaryStorageError()
+      } catch (error) {
+        throw new SummaryStorageError(error)
       }
       return summary
     })()
@@ -142,6 +150,11 @@ export function createBookmarksRouter(): Router {
       const summary = await generation
       res.json({ summary })
     } catch (error) {
+      // Every response body below is deliberately vague — the client has no use for the internals
+      // and they must not leak to it. That left a failed summary with no trace anywhere but a bare
+      // status code in the Cloud Run request log. Log the real cause here, tagged with the bookmark
+      // id, so the next failure is one log query rather than a bisect across revisions.
+      console.error(`summary generation failed for bookmark ${bookmark.id}:`, error)
       if (error instanceof SummarizerUnavailableError) {
         res.status(503).json({ error: 'Summarization is not configured' })
       } else if (error instanceof SummaryStorageError) {
