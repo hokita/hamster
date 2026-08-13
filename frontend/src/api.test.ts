@@ -59,3 +59,48 @@ describe('api.createBookmark', () => {
     expect(result.title).toBe('Example')
   })
 })
+
+describe('api.getBookmark', () => {
+  it('fetches a single bookmark by id', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: '1',
+        url: 'https://example.com',
+        title: 'Example',
+        summary: 'A summary.',
+        createdAt: '2024-01-01',
+      }),
+    })
+    const result = await api.getBookmark('1')
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/bookmarks/1'),
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer fake-token' }),
+      })
+    )
+    expect(result.summary).toBe('A summary.')
+  })
+
+  it('throws when the bookmark is not found', async () => {
+    mockFetch.mockResolvedValue({ ok: false, status: 404 })
+    await expect(api.getBookmark('nope')).rejects.toThrow('API error: 404')
+  })
+})
+
+describe('api.generateSummary', () => {
+  it('posts to the summary endpoint and returns the summary', async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({ summary: 'A summary.' }) })
+    const result = await api.generateSummary('1')
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/bookmarks/1/summary'),
+      expect.objectContaining({ method: 'POST' })
+    )
+    expect(result.summary).toBe('A summary.')
+  })
+
+  it('throws when generation fails', async () => {
+    mockFetch.mockResolvedValue({ ok: false, status: 502 })
+    await expect(api.generateSummary('1')).rejects.toThrow('API error: 502')
+  })
+})

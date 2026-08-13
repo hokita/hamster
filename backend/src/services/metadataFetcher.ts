@@ -1,10 +1,7 @@
-import { lookup } from 'node:dns/promises'
-import { isIP } from 'node:net'
-import { isDisallowedIp } from './ipGuard'
+import { fetchAllowedUrl, isDisallowedHost } from './safeFetch'
 
-const HTML_CONTENT_TYPE = /^(text\/html|application\/xhtml\+xml)/i
+export const HTML_CONTENT_TYPE = /^(text\/html|application\/xhtml\+xml)/i
 const TITLE_REGEX = /<title[^>]*>([^<]*)<\/title>/i
-const MAX_REDIRECTS = 3
 const MAX_BYTES = 100_000
 const FETCH_TIMEOUT_MS = 5000
 
@@ -27,36 +24,11 @@ const NON_MARKUP_MASKS: RegExp[] = [
   /<style\b[^>]*>[\s\S]*$/i,
 ]
 
-function maskNonMarkup(text: string): string {
+export function maskNonMarkup(text: string): string {
   return NON_MARKUP_MASKS.reduce(
     (masked, pattern) => masked.replace(pattern, (m) => ' '.repeat(m.length)),
     text
   )
-}
-
-export function withSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) return Promise.reject(signal.reason)
-  return new Promise((resolve, reject) => {
-    const onAbort = () => reject(signal.reason)
-    signal.addEventListener('abort', onAbort, { once: true })
-    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort))
-  })
-}
-
-async function isDisallowedHost(hostname: string, signal: AbortSignal): Promise<boolean> {
-  // URL.hostname brackets IPv6 literals (e.g. "[::1]"); dns.lookup() rejects that form,
-  // so literal IPs are checked directly instead of going through DNS at all.
-  const literal =
-    hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname
-  const literalFamily = isIP(literal)
-  if (literalFamily) return isDisallowedIp(literal, literalFamily)
-
-  try {
-    const { address, family } = await withSignal(lookup(hostname), signal)
-    return isDisallowedIp(address, family)
-  } catch {
-    return true
-  }
 }
 
 // Decodes a numeric character reference's digits (already stripped of "&#"/"&#x" and any
@@ -82,28 +54,43 @@ function decodeNumericEntity(digits: string): string {
 // intentionally left undecoded. Numeric references cover the general escaping trick (e.g. an
 // attacker or CMS encoding "/" as "&#47;" to smuggle it past naive parsing) even though the named
 // table isn't exhaustive.
-function decodeEntities(text: string): string {
-  return text
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#(x[0-9a-fA-F]+|[0-9]+);?/gi, (_match, digits: string) =>
-      decodeNumericEntity(digits)
-    )
+//
+// This must decode in a single regex pass rather than a chain of sequential .replace() calls.
+// A chained decode re-scans its own output: "&amp;" -> "&" runs first, so source text
+// "&amp;lt;" (what a browser displays as the literal "&lt;") would have its freshly-produced "&"
+// picked up by the later &lt; pass and collapse all the way to "<" — silently changing text a
+// reader would see as escaped markup into live markup. Matching every supported reference in one
+// pass means a decoded "&" is never re-examined by a later alternative.
+// No top-level 'i' flag: the five named references must stay case-sensitive exactly as the old
+// sequential .replace() calls were (none of them had an 'i' flag). Only the hex numeric prefix
+// ("x" or "X") needs case-insensitivity, so that's spelled out explicitly as [xX] instead.
+const ENTITY_REGEX = /&amp;|&lt;|&gt;|&quot;|&#39;|&#([xX][0-9a-fA-F]+|[0-9]+);?/g
+
+const NAMED_ENTITIES: Record<string, string> = {
+  '&amp;': '&',
+  '&lt;': '<',
+  '&gt;': '>',
+  '&quot;': '"',
+  '&#39;': "'",
+}
+
+export function decodeEntities(text: string): string {
+  return text.replace(ENTITY_REGEX, (match, digits: string | undefined) => {
+    if (digits !== undefined) return decodeNumericEntity(digits)
+    return NAMED_ENTITIES[match]
+  })
 }
 
 // A charset extracted from the HTTP Content-Type header always wins over an in-document
 // <meta charset> declaration, matching how browsers resolve the two when both are present.
-function resolveCharset(contentType: string, asciiSafeText: string): string | undefined {
+export function resolveCharset(contentType: string, asciiSafeText: string): string | undefined {
   return (
     contentType.match(/charset=["']?([^"';\s]+)/i)?.[1] ??
     asciiSafeText.match(/<meta[^>]+charset=["']?([^"';\s>]+)/i)?.[1]
   )
 }
 
-function decodeWithCharset(bytes: Uint8Array, charset: string | undefined): string {
+export function decodeWithCharset(bytes: Uint8Array, charset: string | undefined): string {
   try {
     return new TextDecoder(charset).decode(bytes)
   } catch {
@@ -485,63 +472,47 @@ function extractIconHref(text: string, baseUrl: string): string | null {
 }
 
 async function fetchMetadataInner(url: string, signal: AbortSignal): Promise<PageMetadata> {
-  let currentUrl = url
+  const allowed = await fetchAllowedUrl(url, signal)
+  if (!allowed) return EMPTY_METADATA
+  const { response, finalUrl } = allowed
 
-  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-    const parsed = new URL(currentUrl)
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return EMPTY_METADATA
-    if (await isDisallowedHost(parsed.hostname, signal)) return EMPTY_METADATA
+  // Past this point the final URL is known and its host passed the SSRF guard, so an
+  // origin favicon is always a usable answer even when the body is unparseable.
+  const originFavicon = new URL('/favicon.ico', finalUrl).toString()
 
-    const response = await fetch(currentUrl, { redirect: 'manual', signal })
+  const contentType = response.headers.get('content-type') ?? ''
+  if (!HTML_CONTENT_TYPE.test(contentType)) return { title: null, faviconUrl: originFavicon }
 
-    if (response.status >= 300 && response.status < 400) {
-      if (hop === MAX_REDIRECTS) return EMPTY_METADATA
-      const location = response.headers.get('location')
-      if (!location) return EMPTY_METADATA
-      currentUrl = new URL(location, currentUrl).toString()
-      continue
-    }
+  const bytes = await readBoundedBytes(response)
+  const asciiSafeText = Buffer.from(bytes).toString('latin1')
+  const charset = resolveCharset(contentType, asciiSafeText)
+  const text = decodeWithCharset(bytes, charset)
 
-    // Past this point the final URL is known and its host passed the SSRF guard, so an
-    // origin favicon is always a usable answer even when the body is unparseable.
-    const originFavicon = new URL('/favicon.ico', currentUrl).toString()
-
-    const contentType = response.headers.get('content-type') ?? ''
-    if (!HTML_CONTENT_TYPE.test(contentType)) return { title: null, faviconUrl: originFavicon }
-
-    const bytes = await readBoundedBytes(response)
-    const asciiSafeText = Buffer.from(bytes).toString('latin1')
-    const charset = resolveCharset(contentType, asciiSafeText)
-    const text = decodeWithCharset(bytes, charset)
-
-    // extractIconHref already picks the single best candidate (icon over apple-touch-icon,
-    // first-icon-wins); only that final candidate's host is guard-checked here — if it's
-    // disallowed we fall back to the origin default rather than walking to another <link>.
-    // The origin default itself is never re-checked: its host already passed the guard at
-    // the top of this loop iteration, and a redundant DNS lookup would just be wasted work.
-    // Note: this only guards what this server does with the href server-side (it never
-    // fetches it) — the browser resolves and loads the chosen URL independently later, so
-    // DNS-rebinding between this check and the browser's own load isn't (and can't be) closed
-    // here, same caveat as isDisallowedHost above.
-    // The document's <base href> (if any) governs relative *link* resolution, but never the
-    // origin default above: that's always derived from the fetched page URL itself.
-    const baseUrl = extractBaseUrl(text, currentUrl)
-    const iconCandidate = extractIconHref(text, baseUrl)
-    let faviconUrl = originFavicon
-    if (iconCandidate) {
-      const iconHost = new URL(iconCandidate).hostname
-      if (!(await isDisallowedHost(iconHost, signal))) {
-        faviconUrl = iconCandidate
-      }
-    }
-
-    return {
-      title: extractTitle(text),
-      faviconUrl,
+  // extractIconHref already picks the single best candidate (icon over apple-touch-icon,
+  // first-icon-wins); only that final candidate's host is guard-checked here — if it's
+  // disallowed we fall back to the origin default rather than walking to another <link>.
+  // The origin default itself is never re-checked: its host already passed the guard inside
+  // fetchAllowedUrl, and a redundant DNS lookup would just be wasted work.
+  // Note: this only guards what this server does with the href server-side (it never
+  // fetches it) — the browser resolves and loads the chosen URL independently later, so
+  // DNS-rebinding between this check and the browser's own load isn't (and can't be) closed
+  // here, same caveat as isDisallowedHost itself.
+  // The document's <base href> (if any) governs relative *link* resolution, but never the
+  // origin default above: that's always derived from the fetched page URL itself.
+  const baseUrl = extractBaseUrl(text, finalUrl)
+  const iconCandidate = extractIconHref(text, baseUrl)
+  let faviconUrl = originFavicon
+  if (iconCandidate) {
+    const iconHost = new URL(iconCandidate).hostname
+    if (!(await isDisallowedHost(iconHost, signal))) {
+      faviconUrl = iconCandidate
     }
   }
 
-  return EMPTY_METADATA
+  return {
+    title: extractTitle(text),
+    faviconUrl,
+  }
 }
 
 export async function fetchMetadata(url: string): Promise<PageMetadata> {

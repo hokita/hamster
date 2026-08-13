@@ -17,6 +17,7 @@ export default function BookmarksPage() {
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false)
+  const [summarizingIds, setSummarizingIds] = useState<ReadonlySet<string>>(new Set())
   // Shared across the mount effect and refresh() so a slow, superseded request can't
   // overwrite state a newer request already applied.
   const requestId = useRef(0)
@@ -24,21 +25,38 @@ export default function BookmarksPage() {
   // independent of requestId. requestId is also bumped by handleAdd's catch block (to
   // protect the add-failure error from being silently cleared) even when no replacement
   // fetch is started — that bump must not also discard a genuinely successful, still-
-  // in-flight fetch's data, which is why this is a separate counter.
+  // in-flight fetch's data, which is why this is a separate counter. fetchId orders when
+  // fetches are ISSUED: each refresh (or the mount fetch) takes the next value when it starts.
   const fetchId = useRef(0)
+  // Tracks the fetchId of the last fetch whose result was actually APPLIED to bookmarks/
+  // hasLoadedOnce, as opposed to fetchId.current, which tracks the last fetch ISSUED. A
+  // result is applied when its fetchId is newer than appliedFetchId — i.e. newer than what's
+  // currently displayed — not when it's the newest fetch in flight. Those differ whenever a
+  // newer fetch is issued but never delivers data (e.g. it rejects): gating on "newest issued"
+  // would let that failed newer request permanently suppress an older one that succeeded,
+  // leaving the list silently stale even though a good response arrived. Gating on "newer than
+  // applied" still discards a genuinely stale response (one older than what's already on
+  // screen), which is the property the original guard existed for.
+  const appliedFetchId = useRef(0)
 
-  const refresh = useCallback(async () => {
-    const id = ++requestId.current
+  const refresh = useCallback(async (options?: { background?: boolean }) => {
+    // A background refresh (the one that follows a summary landing) must not touch error state:
+    // it can settle seconds after it was launched, long after an unrelated action has produced an
+    // error the user is still reading. It stays out of requestId entirely — it has nothing to say
+    // about whether the user's most recent action succeeded — and participates only in fetchId,
+    // which orders list data.
+    const id = options?.background ? null : ++requestId.current
     const fid = ++fetchId.current
     try {
       const result = await api.listBookmarks()
-      if (fid === fetchId.current) {
+      if (fid > appliedFetchId.current) {
+        appliedFetchId.current = fid
         setBookmarks(result)
         setHasLoadedOnce(true)
       }
-      if (id === requestId.current) setError(null)
+      if (id !== null && id === requestId.current) setError(null)
     } catch {
-      if (id === requestId.current) setError('Failed to load bookmarks.')
+      if (id !== null && id === requestId.current) setError('Failed to load bookmarks.')
     } finally {
       if (fid === fetchId.current) setIsLoading(false)
     }
@@ -72,8 +90,9 @@ export default function BookmarksPage() {
   }, [])
 
   async function handleAdd(bookmark: { url: string }) {
+    let created
     try {
-      await api.createBookmark(bookmark)
+      created = await api.createBookmark(bookmark)
       await refresh()
     } catch {
       // Invalidate any in-flight load (mount fetch or refresh) so its eventual
@@ -81,6 +100,25 @@ export default function BookmarksPage() {
       requestId.current++
       setError('Failed to add bookmark.')
       throw new Error('Failed to add bookmark.')
+    }
+    // Deliberately not awaited: the save is already done, and the summary takes several seconds.
+    // A failure here is silent on this page — the bookmark's own page owns the retry.
+    void generateSummaryFor(created.id)
+  }
+
+  async function generateSummaryFor(id: string) {
+    setSummarizingIds((previous) => new Set(previous).add(id))
+    try {
+      await api.generateSummary(id)
+      await refresh({ background: true })
+    } catch {
+      // Intentionally ignored — see handleAdd.
+    } finally {
+      setSummarizingIds((previous) => {
+        const next = new Set(previous)
+        next.delete(id)
+        return next
+      })
     }
   }
 
@@ -112,7 +150,9 @@ export default function BookmarksPage() {
           <FontAwesomeIcon icon={faSpinner} spin size="lg" aria-hidden="true" />
         </div>
       ) : (
-        !(error && !hasLoadedOnce) && <BookmarkList bookmarks={bookmarks} />
+        !(error && !hasLoadedOnce) && (
+          <BookmarkList bookmarks={bookmarks} summarizingIds={summarizingIds} />
+        )
       )}
     </div>
   )

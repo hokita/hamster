@@ -1,6 +1,7 @@
 # hamster
 
-Personal bookmark manager — save a URL and title, see them in a list.
+Personal bookmark manager — save a URL and title, see them in a list, and read an
+AI-generated summary of each saved page.
 
 ## Stack
 
@@ -19,6 +20,16 @@ hamster/
 ├── backend/    # Express API
 └── e2e/        # Playwright end-to-end tests
 ```
+
+## Summaries
+
+Each bookmark has its own page at `/bookmarks/:id` showing an English summary of the
+linked article, generated with the Gemini API. Generation runs automatically just after
+a bookmark is saved; if it fails — or if the bookmark predates this feature — the page
+offers a **Generate summary** button.
+
+Summarization needs `GEMINI_API_KEY`. Without it the app works normally and every
+bookmark page simply shows its empty state.
 
 ## Local development
 
@@ -66,6 +77,7 @@ Open http://localhost:5173 and sign in — locally, sign-in goes through the Aut
 | `FIREBASE_PROJECT_ID` | Firebase project ID (`demo-hamster` for local dev — no real GCP project needed) |
 | `FRONTEND_URL` | Frontend origin for CORS |
 | `PORT` | Port the backend listens on |
+| `GEMINI_API_KEY` | Gemini API key used to generate bookmark summaries (summarization is disabled when unset) |
 | `FIRESTORE_EMULATOR_HOST` | Host:port of the Firestore emulator (routes the Admin SDK to it instead of production) |
 | `FIREBASE_AUTH_EMULATOR_HOST` | Host:port of the Auth emulator (routes the Admin SDK to it instead of production) |
 
