@@ -6,6 +6,7 @@ export interface BookmarkDoc {
   title: string
   faviconUrl?: string
   summary?: string
+  labels?: string[]
   createdAt: string
 }
 
@@ -30,6 +31,7 @@ function toBookmark(id: string, data: unknown): BookmarkDoc | null {
     title?: unknown
     faviconUrl?: unknown
     summary?: unknown
+    labels?: unknown
     createdAt?: { toDate?: () => Date }
   }
   if (
@@ -48,6 +50,9 @@ function toBookmark(id: string, data: unknown): BookmarkDoc | null {
     title: doc.title,
     ...(typeof doc.faviconUrl === 'string' ? { faviconUrl: doc.faviconUrl } : {}),
     ...(typeof doc.summary === 'string' ? { summary: doc.summary } : {}),
+    ...(Array.isArray(doc.labels) && doc.labels.every((label) => typeof label === 'string')
+      ? { labels: doc.labels as string[] }
+      : {}),
     createdAt: doc.createdAt.toDate().toISOString(),
   }
 }
@@ -62,6 +67,27 @@ export async function getBookmark(id: string): Promise<BookmarkDoc | null> {
 export async function updateSummary(id: string, summary: string): Promise<void> {
   const db = getFirestore()
   await db.collection('bookmarks').doc(id).update({ summary })
+}
+
+export async function updateLabels(id: string, labels: string[]): Promise<void> {
+  const db = getFirestore()
+  await db.collection('bookmarks').doc(id).update({ labels })
+}
+
+// Feeds the labeler's "prefer existing labels" vocabulary. A select-only scan of the whole
+// collection is fine at single-user scale and avoids a second source of truth.
+export async function listAllLabels(): Promise<string[]> {
+  const db = getFirestore()
+  const snap = await db.collection('bookmarks').select('labels').get()
+  const labels = new Set<string>()
+  for (const doc of snap.docs) {
+    const value = (doc.data() as { labels?: unknown }).labels
+    if (!Array.isArray(value)) continue
+    for (const label of value) {
+      if (typeof label === 'string') labels.add(label)
+    }
+  }
+  return [...labels].sort()
 }
 
 export async function listBookmarks(): Promise<BookmarkDoc[]> {
