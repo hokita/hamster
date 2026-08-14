@@ -60,10 +60,18 @@ describe('generateLabels', () => {
     mockGenerateContent.mockResolvedValue({ text: '["a"]' })
     await generateLabels('My Title', 'The body', ['react', 'testing'])
     const contents = mockGenerateContent.mock.calls[0][0].contents as string
-    expect(contents).toContain('react, testing')
+    expect(contents).toMatch(/"""\s*react, testing\s*"""/)
     expect(contents).toMatch(/"""\s*My Title\s*"""/)
     expect(contents).toMatch(/"""\s*The body\s*"""/)
     expect(contents).not.toContain('Rules:')
+  })
+
+  it('fences the existing-labels list too, and drops labels that could escape the fence', async () => {
+    mockGenerateContent.mockResolvedValue({ text: '["a"]' })
+    await generateLabels('Title', 'Body', ['ok-label', 'bad"label'])
+    const contents = mockGenerateContent.mock.calls[0][0].contents as string
+    expect(contents).toContain('ok-label')
+    expect(contents).not.toContain('bad"label')
   })
 
   it('says the existing-label list is empty rather than omitting the section', async () => {

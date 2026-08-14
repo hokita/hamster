@@ -74,20 +74,37 @@ export async function updateLabels(id: string, labels: string[]): Promise<void> 
   await db.collection('bookmarks').doc(id).update({ labels })
 }
 
+// Bounds the prompt the labeler builds from this list; an unbounded union grows forever and
+// degrades the reuse instruction.
+const MAX_VOCABULARY = 100
+
 // Feeds the labeler's "prefer existing labels" vocabulary. A select-only scan of the whole
 // collection is fine at single-user scale and avoids a second source of truth.
 export async function listAllLabels(): Promise<string[]> {
   const db = getFirestore()
   const snap = await db.collection('bookmarks').select('labels').get()
-  const labels = new Set<string>()
+  const counts = new Map<string, number>()
   for (const doc of snap.docs) {
     const value = (doc.data() as { labels?: unknown }).labels
     if (!Array.isArray(value)) continue
     for (const label of value) {
-      if (typeof label === 'string') labels.add(label)
+      if (typeof label !== 'string') continue
+      counts.set(label, (counts.get(label) ?? 0) + 1)
     }
   }
-  return [...labels].sort()
+
+  if (counts.size <= MAX_VOCABULARY) {
+    return [...counts.keys()].sort()
+  }
+
+  const mostFrequent = [...counts.entries()]
+    .sort(([labelA, countA], [labelB, countB]) =>
+      countB !== countA ? countB - countA : labelA.localeCompare(labelB)
+    )
+    .slice(0, MAX_VOCABULARY)
+    .map(([label]) => label)
+
+  return mostFrequent.sort()
 }
 
 export async function listBookmarks(): Promise<BookmarkDoc[]> {

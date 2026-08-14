@@ -35,5 +35,7 @@ export const api = {
     }),
   getBookmark: (id: string) => request<Bookmark>(`/api/bookmarks/${id}`),
   generateSummary: (id: string) =>
-    request<{ summary: string }>(`/api/bookmarks/${id}/summary`, { method: 'POST' }),
+    request<{ summary: string; labels?: string[] }>(`/api/bookmarks/${id}/summary`, {
+      method: 'POST',
+    }),
 }

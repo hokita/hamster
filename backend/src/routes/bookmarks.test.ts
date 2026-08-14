@@ -480,6 +480,7 @@ describe('POST /api/bookmarks/:id/summary — labels', () => {
   it('generates labels from the same article text and stores them', async () => {
     const res = await request(app).post('/api/bookmarks/abc/summary')
     expect(res.status).toBe(200)
+    expect(res.body).toEqual({ summary: 'A summary.', labels: ['typescript'] })
     expect(generateLabels).toHaveBeenCalledWith('Example', 'Article text', ['react'])
     expect(db.updateLabels).toHaveBeenCalledWith('abc', ['typescript'])
   })

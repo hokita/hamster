@@ -324,6 +324,24 @@ describe('listAllLabels', () => {
 
     await expect(listAllLabels()).resolves.toEqual(['ok'])
   })
+
+  it('caps the vocabulary at the 100 most frequent labels', async () => {
+    const many = Array.from({ length: 110 }, (_, i) => `a${String(i + 1).padStart(3, '0')}`)
+    mockGet.mockResolvedValue({
+      docs: [
+        { id: 'a', data: () => ({ labels: many }) },
+        { id: 'b', data: () => ({ labels: ['zpop'] }) },
+        { id: 'c', data: () => ({ labels: ['zpop'] }) },
+      ],
+    })
+
+    const result = await listAllLabels()
+
+    expect(result).toHaveLength(100)
+    expect(result).toContain('zpop') // count 2 → always kept
+    expect(result).toContain('a001') // alphabetical tie-break keeps the earliest
+    expect(result).not.toContain('a110') // lowest-priority tie dropped
+  })
 })
 
 describe('bookmark labels handling', () => {

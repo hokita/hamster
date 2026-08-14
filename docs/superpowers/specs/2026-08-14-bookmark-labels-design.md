@@ -173,3 +173,16 @@ Red/green TDD throughout — failing test first, then the minimal code to pass.
 - A separate labels endpoint or per-label retry UI
 - Bulk backfill of all existing bookmarks in one action
 - Migrating or renaming labels across bookmarks
+
+## Amendments (2026-08-14, post adversarial review)
+
+- `POST /api/bookmarks/:id/summary` now returns `{ summary, labels }` when labels were
+  generated (labels key omitted on a labels failure) — the response already waited for the
+  labels write, so returning them lets the detail page render chips without a refetch.
+- The labeler timeout is 10s (was 20s) to bound what a hung labels call can add to a
+  summary request.
+- The existing-labels list is fenced in the prompt like the page content, and labels
+  containing a quote or newline are dropped before prompting (fence-escape guard).
+- `listAllLabels` caps the vocabulary at the 100 most frequent labels.
+- The detail page polls until labels arrive (bounded budget) and merges labels from the
+  generate response.

@@ -118,15 +118,19 @@ export default function BookmarkPage() {
 
   // Adding a bookmark kicks off summary generation in the background from the list page; if the
   // user clicks into it immediately, this page's own fetch above usually wins the race and loads
-  // before the summary is written. Poll for it while it's missing, bounded by the budget above.
-  // Skipped while a manual generation is in flight (that request will deliver the summary itself,
-  // and a concurrent poll would race it) and stopped for good once a summary is present. Reruns
-  // whenever `bookmark` changes, which naturally restarts once the initial load completes and
-  // stops once a summary lands — see the constants above for why a fresh budget on resume is fine.
+  // before the summary (and labels, written a few seconds later) are written. Poll while either is
+  // missing, bounded by the budget above. Skipped while a manual generation is in flight (that
+  // request will deliver both itself, and a concurrent poll would race it) and stopped for good
+  // once both a summary and labels are present. Reruns whenever `bookmark` changes, which naturally
+  // restarts once the initial load completes and stops once both land — see the constants above for
+  // why a fresh budget on resume is fine.
+  //
+  // Accepted cost: a legacy bookmark with a summary but no labels polls out its bounded budget (15
+  // cheap reads) once per visit and stops, since it will never see labels arrive.
   useEffect(() => {
     if (!id) return
     if (!bookmark) return
-    if (bookmark.summary) return
+    if (bookmark.summary && bookmark.labels) return
     if (isGenerating) return
 
     let cancelled = false
@@ -138,7 +142,12 @@ export default function BookmarkPage() {
         .getBookmark(id)
         .then((result) => {
           if (cancelled || id !== latestId.current) return
-          if (result.summary) setBookmark(result)
+          // Only set state when it actually advances something. Setting identical state (e.g. a
+          // poll result that still lacks labels) would create a new object reference, re-run this
+          // effect, and reset `attempts` to 0 — polling forever instead of stopping at the budget.
+          if ((result.summary && !bookmark.summary) || (result.labels && !bookmark.labels)) {
+            setBookmark(result)
+          }
         })
         .catch(() => {
           // Opportunistic background polling: swallow failures and keep the remaining budget.
@@ -158,9 +167,11 @@ export default function BookmarkPage() {
     setIsGenerating(true)
     setGenerateFailed(false)
     try {
-      const { summary } = await api.generateSummary(requestedId)
+      const { summary, labels } = await api.generateSummary(requestedId)
       if (requestedId !== latestId.current) return
-      setBookmark((previous) => (previous ? { ...previous, summary } : previous))
+      setBookmark((previous) =>
+        previous ? { ...previous, summary, ...(labels ? { labels } : {}) } : previous
+      )
     } catch {
       if (requestedId !== latestId.current) return
       setGenerateFailed(true)

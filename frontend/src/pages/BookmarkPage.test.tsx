@@ -81,6 +81,17 @@ describe('BookmarkPage', () => {
     expect(await screen.findByText('Freshly generated.')).toBeInTheDocument()
   })
 
+  it('renders label chips from the generate response without a refetch', async () => {
+    vi.mocked(api.generateSummary).mockResolvedValue({
+      summary: 'A summary.',
+      labels: ['typescript'],
+    })
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: 'Generate summary' }))
+    expect(await screen.findByText('typescript')).toBeInTheDocument()
+    expect(api.getBookmark).toHaveBeenCalledTimes(1)
+  })
+
   it('shows a retry button when generation fails', async () => {
     vi.mocked(api.generateSummary).mockRejectedValue(new Error('API error: 502'))
     renderPage()
@@ -242,10 +253,11 @@ describe('BookmarkPage summary polling', () => {
     expect(api.getBookmark).toHaveBeenCalledTimes(2)
   })
 
-  it('does not poll when a summary is already present', async () => {
+  it('does not poll when a summary and labels are already present', async () => {
     vi.mocked(api.getBookmark).mockResolvedValueOnce({
       ...bookmark,
       summary: 'Existing summary.',
+      labels: ['typescript'],
     })
     renderPage()
     await flush()
@@ -295,6 +307,23 @@ describe('BookmarkPage summary polling', () => {
     expect(api.getBookmark).toHaveBeenCalledTimes(1)
     expect(consoleError).not.toHaveBeenCalled()
     consoleError.mockRestore()
+  })
+
+  it('keeps polling for labels that arrive after the summary', async () => {
+    vi.mocked(api.getBookmark)
+      .mockResolvedValueOnce({ ...bookmark, summary: 'A summary.' })
+      .mockResolvedValueOnce({ ...bookmark, summary: 'A summary.', labels: ['typescript'] })
+    renderPage()
+    await flush()
+    expect(screen.getByText('A summary.')).toBeInTheDocument()
+    expect(screen.queryByText('typescript')).not.toBeInTheDocument()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+
+    expect(screen.getByText('typescript')).toBeInTheDocument()
+    expect(api.getBookmark).toHaveBeenCalledTimes(2)
   })
 
   it('swallows a failed poll without surfacing an error, keeping the remaining budget', async () => {
