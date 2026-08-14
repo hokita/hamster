@@ -89,6 +89,9 @@ describe('BookmarkPage', () => {
     expect(screen.queryByRole('link', { name: 'the vendor page' })).not.toBeInTheDocument()
     expect(screen.queryByRole('img')).not.toBeInTheDocument()
     expect(screen.queryByText(/evil\.example/)).not.toBeInTheDocument()
+    // An image's text lives in its alt attribute rather than its children, so dropping the node
+    // would take the caption with it. The URL is what had to go, not the words.
+    expect(screen.getByText('a banner')).toBeInTheDocument()
   })
 
   it('renders a plain-text summary saved before summaries were markdown', async () => {
@@ -103,6 +106,39 @@ describe('BookmarkPage', () => {
       'Second point',
       'Third point',
     ])
+  })
+
+  it('keeps "・" bullets in an older summary as a list', async () => {
+    // CommonMark does not know "・" as a list marker, so without a rewrite these lines collapse
+    // into one paragraph with the breaks rendered as spaces — the bullets would run together.
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...bookmark,
+      summary:
+        'この記事はウィジェットについて説明している。\n・最初の点\n・二つ目の点\n・三つ目の点',
+    })
+    renderPage()
+
+    expect(
+      await screen.findByText('この記事はウィジェットについて説明している。')
+    ).toBeInTheDocument()
+    expect(screen.getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+      '最初の点',
+      '二つ目の点',
+      '三つ目の点',
+    ])
+  })
+
+  it('leaves a "・" inside a sentence alone', async () => {
+    // Japanese uses "・" between the halves of a compound name, mid-line and mid-sentence. Only a
+    // line that opens with one is a bullet.
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...bookmark,
+      summary: 'テスト・ドリブン開発について論じている。',
+    })
+    renderPage()
+
+    expect(await screen.findByText('テスト・ドリブン開発について論じている。')).toBeInTheDocument()
+    expect(screen.queryByRole('listitem')).not.toBeInTheDocument()
   })
 
   it('offers to regenerate an existing summary', async () => {

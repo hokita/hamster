@@ -59,11 +59,32 @@ function summaryLanguage(summary: string): 'ja' | 'en' {
 //
 // Markdown that came out of an untrusted page is still untrusted. react-markdown does not render
 // raw HTML unless rehype-raw is added (it is not), which leaves link and image URLs as the only
-// live surface — so both are dropped here rather than sanitized. Nothing in the prompt asks for
-// them, the page has nothing to gain from a URL the model copied out of an article, and a
-// convincing link to somewhere else is exactly what a hostile page would want out of this. Their
-// text stays, courtesy of unwrapDisallowed.
-const DISALLOWED_ELEMENTS = ['a', 'img']
+// live surface — so both are dropped rather than sanitized. Nothing in the prompt asks for them,
+// the page has nothing to gain from a URL the model copied out of an article, and a convincing
+// link to somewhere else is exactly what a hostile page would want out of this.
+//
+// A link's text is its children, so unwrapDisallowed keeps it. An image's is its alt attribute,
+// which unwrapping would throw away with the node — hence the component below rather than a second
+// entry here.
+const DISALLOWED_ELEMENTS = ['a']
+
+// The image itself is dropped: no request is made and no URL reaches the page, but a caption that
+// carried meaning survives as the text it already was.
+function SummaryImageText({ alt }: { alt?: string }) {
+  return <>{alt}</>
+}
+
+// Bullets in summaries stored before this feature are whatever the model happened to emit, and the
+// line reader this replaced accepted "・" alongside "-" and "*". CommonMark does not: a run of
+// "・" lines is one paragraph, and its line breaks collapse to spaces, so those bullets would run
+// together into a single block of text. Rewriting the marker costs one pass and keeps the promise
+// that an old summary renders as it always did. Anchored to the start of the line so a "・" used
+// mid-sentence, as Japanese does for a compound name, is left alone.
+const LEGACY_BULLET = /^([ \t]*)・[ \t]*(?=\S)/gm
+
+function normalizeLegacyBullets(summary: string): string {
+  return summary.replace(LEGACY_BULLET, '$1- ')
+}
 
 // The model writes its own headings, so they land under the page's "Summary" <h2> — h3 keeps the
 // document outline intact whichever level (# or ##) the model reached for.
@@ -101,6 +122,7 @@ const SUMMARY_COMPONENTS: Components = {
     </blockquote>
   ),
   hr: () => <hr className="m-0 border-gray-200" />,
+  img: SummaryImageText,
 }
 
 function SummaryBody({ summary }: { summary: string }) {
@@ -116,7 +138,7 @@ function SummaryBody({ summary }: { summary: string }) {
         disallowedElements={DISALLOWED_ELEMENTS}
         unwrapDisallowed
       >
-        {summary}
+        {normalizeLegacyBullets(summary)}
       </Markdown>
     </div>
   )
