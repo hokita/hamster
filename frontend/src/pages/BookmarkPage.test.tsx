@@ -318,3 +318,30 @@ describe('BookmarkPage summary polling', () => {
     expect(api.getBookmark).toHaveBeenCalledTimes(3)
   })
 })
+
+describe('labels', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('renders label chips when the bookmark has labels', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...bookmark,
+      summary: 'A summary.',
+      labels: ['typescript', 'testing'],
+    })
+    renderPage()
+    expect(await screen.findByText('typescript')).toBeInTheDocument()
+    expect(screen.getByText('testing')).toBeInTheDocument()
+  })
+
+  it('renders no chip container when the bookmark has no labels', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...bookmark,
+      summary: 'A summary.',
+    })
+    renderPage()
+    await screen.findByText('Example Article')
+    expect(screen.queryByTestId('bookmark-labels')).not.toBeInTheDocument()
+  })
+})

@@ -223,6 +223,19 @@ export default function BookmarkPage() {
         {formatRelativeTime(bookmark.createdAt)}
       </p>
 
+      {bookmark.labels && bookmark.labels.length > 0 && (
+        <div data-testid="bookmark-labels" className="mt-3 flex flex-wrap gap-1.5">
+          {bookmark.labels.map((label) => (
+            <span
+              key={label}
+              className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs text-gray-600"
+            >
+              {label}
+            </span>
+          ))}
+        </div>
+      )}
+
       <h2 className="mt-8 mb-3 text-sm font-semibold uppercase tracking-wide text-gray-400">
         Summary
       </h2>
