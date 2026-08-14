@@ -4,10 +4,14 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faLink, faArrowUpRightFromSquare } from '@fortawesome/free-solid-svg-icons'
 import type { Bookmark } from '../api'
 import { formatRelativeTime } from '../relativeTime'
+import DeleteBookmarkButton from './DeleteBookmarkButton'
 
 interface BookmarkListProps {
   bookmarks: Bookmark[]
   summarizingIds?: ReadonlySet<string>
+  // Optional so a list can be rendered read-only; rows show no delete control without it.
+  onDelete?: (id: string) => void
+  deletingIds?: ReadonlySet<string>
 }
 
 function hostnameOf(url: string): string | null {
@@ -141,7 +145,12 @@ function originFaviconOf(url: string): string | null {
   }
 }
 
-export default function BookmarkList({ bookmarks, summarizingIds }: BookmarkListProps) {
+export default function BookmarkList({
+  bookmarks,
+  summarizingIds,
+  onDelete,
+  deletingIds,
+}: BookmarkListProps) {
   const items = Array.isArray(bookmarks) ? bookmarks : []
   const [failedIcons, setFailedIcons] = useState<ReadonlySet<string>>(new Set())
 
@@ -215,6 +224,13 @@ export default function BookmarkList({ bookmarks, summarizingIds }: BookmarkList
               >
                 <FontAwesomeIcon icon={faArrowUpRightFromSquare} aria-hidden="true" />
               </a>
+              {onDelete && (
+                <DeleteBookmarkButton
+                  title={bookmark.title}
+                  isDeleting={deletingIds?.has(bookmark.id)}
+                  onDelete={() => onDelete(bookmark.id)}
+                />
+              )}
             </div>
           </li>
         )

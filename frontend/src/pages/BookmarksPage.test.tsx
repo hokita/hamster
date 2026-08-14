@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
 
@@ -7,6 +7,7 @@ vi.mock('../api', () => ({
     listBookmarks: vi.fn(),
     createBookmark: vi.fn(),
     generateSummary: vi.fn(),
+    deleteBookmark: vi.fn(),
   },
 }))
 vi.mock('../firebase', () => ({ auth: {} }))
@@ -14,6 +15,7 @@ vi.mock('firebase/auth', () => ({ signOut: vi.fn() }))
 
 import { signOut } from 'firebase/auth'
 import { api } from '../api'
+import type { Bookmark } from '../api'
 import BookmarksPage from './BookmarksPage'
 
 // BookmarksPage renders BookmarkList, whose rows are now react-router <Link>s, so every
@@ -627,6 +629,108 @@ describe('BookmarksPage', () => {
     ])
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(screen.getByRole('link', { name: /New Site/ })).toBeInTheDocument()
+  })
+
+  it('deletes a bookmark and drops it from the list', async () => {
+    vi.mocked(api.listBookmarks).mockResolvedValue([
+      {
+        id: '1',
+        url: 'https://example.com',
+        title: 'Example Site',
+        createdAt: '2024-01-01T00:00:00.000Z',
+      },
+      {
+        id: '2',
+        url: 'https://other.example',
+        title: 'Other Site',
+        createdAt: '2024-01-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(api.deleteBookmark).mockResolvedValue(undefined)
+    renderPage()
+    await screen.findByRole('link', { name: /Example Site/ })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Example Site' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm deleting Example Site' }))
+
+    await waitFor(() =>
+      expect(screen.queryByRole('link', { name: /Example Site/ })).not.toBeInTheDocument()
+    )
+    expect(api.deleteBookmark).toHaveBeenCalledWith('1')
+    // The row goes away on its own, without a second listBookmarks round trip.
+    expect(api.listBookmarks).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('link', { name: /Other Site/ })).toBeInTheDocument()
+  })
+
+  it('keeps the bookmark and shows an error when the delete fails', async () => {
+    vi.mocked(api.listBookmarks).mockResolvedValue([
+      {
+        id: '1',
+        url: 'https://example.com',
+        title: 'Example Site',
+        createdAt: '2024-01-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(api.deleteBookmark).mockRejectedValue(new Error('API error: 500'))
+    renderPage()
+    await screen.findByRole('link', { name: /Example Site/ })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Example Site' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm deleting Example Site' }))
+
+    expect(await screen.findByText('Failed to delete bookmark.')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /Example Site/ })).toBeInTheDocument()
+    // Back to a resting delete button, ready for another attempt.
+    expect(screen.getByRole('button', { name: 'Delete Example Site' })).toBeInTheDocument()
+  })
+
+  it('does not let a list fetch issued before a delete put the deleted row back', async () => {
+    // The add flow's refresh is in flight when the delete lands. Its response was assembled while
+    // the bookmark still existed, so applying it afterwards would resurrect a deleted row.
+    let resolveStaleFetch!: (value: Bookmark[]) => void
+    const initial = [
+      {
+        id: '1',
+        url: 'https://example.com',
+        title: 'Example Site',
+        createdAt: '2024-01-01T00:00:00.000Z',
+      },
+    ]
+    vi.mocked(api.listBookmarks).mockResolvedValueOnce(initial)
+    vi.mocked(api.deleteBookmark).mockResolvedValue(undefined)
+    renderPage()
+    await screen.findByRole('link', { name: /Example Site/ })
+
+    // Kick off an add whose refresh never settles until this test says so.
+    vi.mocked(api.createBookmark).mockResolvedValue({
+      id: '2',
+      url: 'https://other.example',
+      title: 'Other Site',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    })
+    vi.mocked(api.generateSummary).mockReturnValue(new Promise(() => {}))
+    vi.mocked(api.listBookmarks).mockReturnValueOnce(
+      new Promise<Bookmark[]>((resolve) => {
+        resolveStaleFetch = resolve
+      })
+    )
+    fireEvent.change(screen.getByLabelText('URL'), {
+      target: { value: 'https://other.example' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
+    await waitFor(() => expect(api.listBookmarks).toHaveBeenCalledTimes(2))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Example Site' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm deleting Example Site' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('link', { name: /Example Site/ })).not.toBeInTheDocument()
+    )
+
+    await act(async () => {
+      resolveStaleFetch(initial)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    expect(screen.queryByRole('link', { name: /Example Site/ })).not.toBeInTheDocument()
   })
 
   it('does not surface an error when summary generation fails', async () => {

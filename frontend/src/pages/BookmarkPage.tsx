@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, useNavigate, Link } from 'react-router-dom'
 import Markdown from 'react-markdown'
 import type { Components } from 'react-markdown'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
@@ -15,6 +15,7 @@ import {
 import { api } from '../api'
 import type { Bookmark } from '../api'
 import { formatRelativeTime } from '../relativeTime'
+import DeleteBookmarkButton from '../components/DeleteBookmarkButton'
 
 // Summary generation typically takes 10-25 seconds in the background (article fetch + Gemini
 // call). Polling every 2 seconds for up to 30 seconds (15 attempts) covers the normal case
@@ -146,11 +147,14 @@ function SummaryBody({ summary }: { summary: string }) {
 
 export default function BookmarkPage() {
   const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
   const [bookmark, setBookmark] = useState<Bookmark | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
   const [generateFailed, setGenerateFailed] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [deleteFailed, setDeleteFailed] = useState(false)
   // The summary on screen when a generation request failed without proving the write never
   // happened. Express does not abort a handler when the client goes away, so the backend keeps
   // generating and may persist a summary seconds after the request died. Holding the old text here
@@ -172,6 +176,8 @@ export default function BookmarkPage() {
     setGenerateFailed(false)
     setIsGenerating(false)
     setSupersededSummary(null)
+    setIsDeleting(false)
+    setDeleteFailed(false)
   }
 
   // Tracks the id the route is currently on, so a generation request kicked off for a bookmark
@@ -296,6 +302,27 @@ export default function BookmarkPage() {
     }
   }
 
+  async function handleDelete() {
+    if (!id) return
+    const requestedId = id
+    setIsDeleting(true)
+    setDeleteFailed(false)
+    try {
+      await api.deleteBookmark(requestedId)
+      // Same staleness guard the generation handler uses: if the user has since opened another
+      // bookmark, the delete they asked for is done, but yanking them back to the list would be
+      // a navigation they never requested. The reset on id change already cleared isDeleting.
+      if (requestedId !== latestId.current) return
+      // This page is about a bookmark that no longer exists, so there is nothing left to show.
+      // Replace rather than push: going Back should not land on a page that can only 404 now.
+      navigate('/', { replace: true })
+    } catch {
+      if (requestedId !== latestId.current) return
+      setDeleteFailed(true)
+      setIsDeleting(false)
+    }
+  }
+
   if (isLoading) {
     return (
       <div
@@ -402,6 +429,23 @@ export default function BookmarkPage() {
           </button>
         </div>
       )}
+
+      {/* Kept below the summary and behind a rule: it is the one irreversible action on the page,
+          so it sits away from the buttons a reader reaches for repeatedly. */}
+      <div className="mt-10 flex flex-col items-start gap-3 border-t border-gray-200 pt-4">
+        {deleteFailed && (
+          <p className="m-0 flex items-center gap-2 text-sm text-red-700">
+            <FontAwesomeIcon icon={faTriangleExclamation} aria-hidden="true" />
+            Couldn&apos;t delete this bookmark.
+          </p>
+        )}
+        <DeleteBookmarkButton
+          title={bookmark.title}
+          isDeleting={isDeleting}
+          onDelete={handleDelete}
+          variant="labeled"
+        />
+      </div>
     </div>
   )
 }

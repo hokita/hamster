@@ -18,6 +18,7 @@ export default function BookmarksPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false)
   const [summarizingIds, setSummarizingIds] = useState<ReadonlySet<string>>(new Set())
+  const [deletingIds, setDeletingIds] = useState<ReadonlySet<string>>(new Set())
   // Shared across the mount effect and refresh() so a slow, superseded request can't
   // overwrite state a newer request already applied.
   const requestId = useRef(0)
@@ -106,6 +107,36 @@ export default function BookmarksPage() {
     void generateSummaryFor(created.id)
   }
 
+  async function handleDelete(id: string) {
+    // Ordering is the same as refresh()'s: this is a user action, so it takes ownership of the
+    // error banner and invalidates whatever an older in-flight load has to say about it.
+    const requestNo = ++requestId.current
+    setDeletingIds((previous) => new Set(previous).add(id))
+    try {
+      await api.deleteBookmark(id)
+      // Drop the row here rather than refetching: the delete has already settled server-side, and
+      // a round trip would leave the deleted bookmark on screen for its duration.
+      //
+      // Claiming the next fetchId as already-applied retires any list fetch issued before this
+      // delete. Such a response was assembled while the bookmark still existed, so applying it
+      // would put the row back; the existing staleness guard in refresh() now discards it, and a
+      // fetch issued after this point still wins normally.
+      appliedFetchId.current = ++fetchId.current
+      setBookmarks((previous) => previous.filter((bookmark) => bookmark.id !== id))
+      if (requestNo === requestId.current) setError(null)
+    } catch {
+      // Same bump as handleAdd's: nothing else may clear this error out from under the user.
+      requestId.current++
+      setError('Failed to delete bookmark.')
+    } finally {
+      setDeletingIds((previous) => {
+        const next = new Set(previous)
+        next.delete(id)
+        return next
+      })
+    }
+  }
+
   async function generateSummaryFor(id: string) {
     setSummarizingIds((previous) => new Set(previous).add(id))
     try {
@@ -151,7 +182,12 @@ export default function BookmarksPage() {
         </div>
       ) : (
         !(error && !hasLoadedOnce) && (
-          <BookmarkList bookmarks={bookmarks} summarizingIds={summarizingIds} />
+          <BookmarkList
+            bookmarks={bookmarks}
+            summarizingIds={summarizingIds}
+            onDelete={handleDelete}
+            deletingIds={deletingIds}
+          />
         )
       )}
     </div>

@@ -5,7 +5,8 @@ const mockAdd = vi.fn()
 const mockOrderBy = vi.fn(() => ({ get: mockGet }))
 const mockDocGet = vi.fn()
 const mockUpdate = vi.fn()
-const mockDoc = vi.fn(() => ({ get: mockDocGet, update: mockUpdate }))
+const mockDelete = vi.fn()
+const mockDoc = vi.fn(() => ({ get: mockDocGet, update: mockUpdate, delete: mockDelete }))
 const mockCollection = vi.fn(() => ({ orderBy: mockOrderBy, add: mockAdd, doc: mockDoc }))
 const fixedDate = new Date('2024-01-01T00:00:00.000Z')
 
@@ -14,7 +15,13 @@ vi.mock('firebase-admin/firestore', () => ({
   Timestamp: { now: () => ({ toDate: () => fixedDate }) },
 }))
 
-import { listBookmarks, createBookmark, getBookmark, updateSummary } from './firestore'
+import {
+  listBookmarks,
+  createBookmark,
+  getBookmark,
+  updateSummary,
+  deleteBookmark,
+} from './firestore'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -210,6 +217,24 @@ describe('updateSummary', () => {
 
     expect(mockDoc).toHaveBeenCalledWith('abc')
     expect(mockUpdate).toHaveBeenCalledWith({ summary: 'A summary.' })
+  })
+})
+
+describe('deleteBookmark', () => {
+  it('deletes the document with the given id', async () => {
+    mockDelete.mockResolvedValue(undefined)
+
+    await deleteBookmark('abc')
+
+    expect(mockCollection).toHaveBeenCalledWith('bookmarks')
+    expect(mockDoc).toHaveBeenCalledWith('abc')
+    expect(mockDelete).toHaveBeenCalled()
+  })
+
+  it('propagates a Firestore failure to the caller', async () => {
+    mockDelete.mockRejectedValue(new Error('firestore down'))
+
+    await expect(deleteBookmark('abc')).rejects.toThrow('firestore down')
   })
 })
 

@@ -1,5 +1,5 @@
 import { render, screen, fireEvent } from '@testing-library/react'
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
 import BookmarkList from './BookmarkList'
 
@@ -60,6 +60,50 @@ describe('BookmarkList', () => {
     renderList({ bookmarks: recent, summarizingIds: new Set() })
     expect(screen.queryByText('Summarizing…')).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: /Example Site/ })).toHaveTextContent('just now')
+  })
+
+  it('offers no delete control when no onDelete handler is given', () => {
+    renderList({ bookmarks })
+    expect(screen.queryByRole('button', { name: /^Delete/ })).not.toBeInTheDocument()
+  })
+
+  it('deletes the row it belongs to, after confirmation', () => {
+    const onDelete = vi.fn()
+    renderList({ bookmarks, onDelete })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Example Site' }))
+    expect(onDelete).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm deleting Example Site' }))
+    expect(onDelete).toHaveBeenCalledWith('1')
+  })
+
+  it('confirms one row at a time when several share a title', () => {
+    // The accessible names are built from the title, so two rows titled the same would collide.
+    // Both carry a distinct hostname, which is what keeps the queries — and a screen reader —
+    // able to tell one row's delete button from the other's.
+    const sameTitle = [
+      { ...bookmarks[0], id: '1', url: 'https://example.com' },
+      { ...bookmarks[0], id: '2', url: 'https://other.example' },
+    ]
+    const onDelete = vi.fn()
+    renderList({ bookmarks: sameTitle, onDelete })
+
+    const [first, second] = screen.getAllByRole('button', { name: 'Delete Example Site' })
+    fireEvent.click(second)
+
+    expect(screen.getAllByRole('button', { name: 'Delete Example Site' })).toHaveLength(1)
+    expect(first).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm deleting Example Site' }))
+    expect(onDelete).toHaveBeenCalledWith('2')
+  })
+
+  it('shows a busy indicator for a row whose delete is in flight', () => {
+    renderList({ bookmarks, onDelete: vi.fn(), deletingIds: new Set(['1']) })
+
+    expect(screen.getByRole('status', { name: 'Deleting Example Site' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Delete Example Site' })).not.toBeInTheDocument()
   })
 
   it('renders without throwing when a bookmark has a URL that new URL() rejects', () => {
