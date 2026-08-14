@@ -50,7 +50,7 @@ Summarization needs `GEMINI_API_KEY`. Without it the app works normally and ever
 bookmark page simply shows its empty state.
 
 Saving a bookmark also assigns it a handful of short topic labels, generated with the
-lighter `gemini-3.6-flash-lite` model from the same page content. Labels appear as chips
+lighter `gemini-3.5-flash-lite` model from the same page content. Labels appear as chips
 in the list and on each bookmark's page. They are best-effort: a labelling failure never
 blocks the summary, and regenerating a summary regenerates the labels too.
 

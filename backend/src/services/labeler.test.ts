@@ -39,7 +39,7 @@ describe('generateLabels', () => {
     mockGenerateContent.mockResolvedValue({ text: '["a"]' })
     await generateLabels('Title', 'Body', [])
     const call = mockGenerateContent.mock.calls[0][0]
-    expect(call.model).toBe('gemini-3.6-flash-lite')
+    expect(call.model).toBe('gemini-3.5-flash-lite')
     expect(call.config.responseMimeType).toBe('application/json')
     expect(call.config.responseSchema).toEqual({ type: 'ARRAY', items: { type: 'STRING' } })
     expect(call.config.thinkingConfig).toEqual({ thinkingLevel: 'MINIMAL' })

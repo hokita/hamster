@@ -1,9 +1,12 @@
 import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai'
 import { withSignal } from './safeFetch'
 
-// Labelling is a cheaper task than summarizing the same page, so it gets the lighter tier of the
-// family the summarizer uses.
-const MODEL = 'gemini-3.6-flash-lite'
+// Labelling is a cheaper task than summarizing the same page, so it gets a flash-lite model. Not
+// "the lite sibling of the summarizer's gemini-3.6-flash": no such model exists — that id shipped
+// once and 404'd on every call in production (ListModels is the source of truth, and 3.5 is the
+// newest flash-lite there). Pinned rather than `gemini-flash-lite-latest` because a silent model
+// upgrade behind an alias is how the summarizer's thinking-budget breakage happened.
+const MODEL = 'gemini-3.5-flash-lite'
 // The route's HTTP response now waits on this call (and returns its result), so this timeout
 // bounds how much a hung Gemini call can add to a summary request; flash-lite typically answers
 // in 1-3s.

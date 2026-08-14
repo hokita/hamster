@@ -14,7 +14,7 @@ filtering by label is a possible later feature, not part of this one.
 
 | Question | Decision |
 |---|---|
-| What model | `gemini-3.6-flash-lite` — labelling is a cheaper task than summarizing, so it gets the lighter tier |
+| What model | `gemini-3.5-flash-lite` — labelling is a cheaper task than summarizing, so it gets the lighter tier (originally specified as `gemini-3.6-flash-lite`, which does not exist — see Amendments) |
 | When generated | Inside the existing `POST /api/bookmarks/:id/summary` flow, from the same fetched article text |
 | Vocabulary | Prefer reusing labels already present on other bookmarks; invent a new label only when nothing fits |
 | Label language | English, regardless of the article's language — same rule as summaries |
@@ -186,3 +186,14 @@ Red/green TDD throughout — failing test first, then the minimal code to pass.
 - `listAllLabels` caps the vocabulary at the 100 most frequent labels.
 - The detail page polls until labels arrive (bounded budget) and merges labels from the
   generate response.
+
+## Amendment (2026-08-15, production incident)
+
+- The model is `gemini-3.5-flash-lite`, not `gemini-3.6-flash-lite` as originally
+  specified. The 3.6 family has no flash-lite variant: the original id 404'd on every
+  production call, and because label failures are swallowed by design, the feature
+  silently produced no labels at all until Cloud Run logs surfaced the error. The
+  corrected id was validated against the live `ListModels` endpoint and with a real
+  `generateContent` call using the labeler's exact config before shipping. Lesson
+  recorded: a model id that only ever runs against a mocked SDK and a key-less e2e
+  environment is unvalidated until it hits the real API.
