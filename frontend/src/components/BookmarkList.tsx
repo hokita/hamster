@@ -4,6 +4,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faLink, faArrowUpRightFromSquare } from '@fortawesome/free-solid-svg-icons'
 import type { Bookmark } from '../api'
 import { formatRelativeTime } from '../relativeTime'
+import { describeBookmark } from '../bookmarkLabel'
 import DeleteBookmarkButton from './DeleteBookmarkButton'
 
 interface BookmarkListProps {
@@ -226,10 +227,10 @@ export default function BookmarkList({
               </a>
               {onDelete && (
                 <DeleteBookmarkButton
-                  // Title plus hostname, for the same reason the link above names the hostname:
-                  // two bookmarks can carry the same title, and of every control in this row the
-                  // delete button is the one where acting on the wrong bookmark cannot be undone.
-                  label={`${bookmark.title} on ${hostname ?? bookmark.url}`}
+                  // Of every control in this row, the delete button is the one where acting on
+                  // the wrong bookmark cannot be undone — so its name says which bookmark it is
+                  // for in as much detail as a reader can use. See describeBookmark.
+                  label={describeBookmark(bookmark)}
                   isDeleting={deletingIds?.has(bookmark.id)}
                   onDelete={() => onDelete(bookmark.id)}
                 />

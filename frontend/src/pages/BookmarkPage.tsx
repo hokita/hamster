@@ -15,6 +15,7 @@ import {
 import { api } from '../api'
 import type { Bookmark } from '../api'
 import { formatRelativeTime } from '../relativeTime'
+import { describeBookmark } from '../bookmarkLabel'
 import DeleteBookmarkButton from '../components/DeleteBookmarkButton'
 
 // Summary generation typically takes 10-25 seconds in the background (article fetch + Gemini
@@ -442,7 +443,7 @@ export default function BookmarkPage() {
         <DeleteBookmarkButton
           // Same descriptor the list builds, so one convention covers both places a bookmark can
           // be deleted from.
-          label={`${bookmark.title} on ${hostname ?? bookmark.url}`}
+          label={describeBookmark(bookmark)}
           isDeleting={isDeleting}
           onDelete={handleDelete}
           variant="labeled"
