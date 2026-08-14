@@ -125,6 +125,24 @@ export function createBookmarksRouter(): Router {
     }
   })
 
+  // Deliberately idempotent: no existence check before the write. Firestore's delete() resolves
+  // for a document that is already gone, and a DELETE for an id the user has just removed — a
+  // stale list row, a double click, a retried request — asks for a state that already holds, so
+  // answering 404 would report a failure the caller has no way to act on. It also keeps this to a
+  // single write rather than a read plus a write with a window in between.
+  //
+  // A summary generation still in flight for this id keeps running and then fails its own write:
+  // updateSummary uses update(), which rejects on a missing document instead of recreating the
+  // bookmark that was just deleted.
+  router.delete('/:id', async (req: Request, res: Response) => {
+    try {
+      await db.deleteBookmark(req.params.id)
+      res.status(204).end()
+    } catch {
+      res.status(500).json({ error: 'Failed to delete bookmark' })
+    }
+  })
+
   // Always regenerates rather than returning a stored summary, so this endpoint doubles as
   // "redo this summary" for the retry button.
   router.post('/:id/summary', async (req: Request, res: Response) => {

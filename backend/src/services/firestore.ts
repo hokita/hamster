@@ -64,6 +64,11 @@ export async function updateSummary(id: string, summary: string): Promise<void> 
   await db.collection('bookmarks').doc(id).update({ summary })
 }
 
+export async function deleteBookmark(id: string): Promise<void> {
+  const db = getFirestore()
+  await db.collection('bookmarks').doc(id).delete()
+}
+
 export async function listBookmarks(): Promise<BookmarkDoc[]> {
   const db = getFirestore()
   const snap = await db.collection('bookmarks').orderBy('createdAt', 'desc').get()

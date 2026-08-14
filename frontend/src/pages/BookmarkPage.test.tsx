@@ -6,6 +6,7 @@ vi.mock('../api', () => ({
   api: {
     getBookmark: vi.fn(),
     generateSummary: vi.fn(),
+    deleteBookmark: vi.fn(),
   },
 }))
 
@@ -24,6 +25,8 @@ function renderPage() {
     <MemoryRouter initialEntries={['/bookmarks/1']}>
       <Routes>
         <Route path="/bookmarks/:id" element={<BookmarkPage />} />
+        {/* Stands in for the list page, so a delete's navigation is observable here. */}
+        <Route path="/" element={<p>Bookmarks list</p>} />
       </Routes>
     </MemoryRouter>
   )
@@ -357,6 +360,69 @@ describe('BookmarkPage', () => {
 
     expect(screen.queryByText('Stale summary from bookmark 1.')).not.toBeInTheDocument()
     expect(screen.getByText('Second summary already here.')).toBeInTheDocument()
+  })
+})
+
+describe('BookmarkPage delete', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(api.getBookmark).mockResolvedValue(bookmark)
+  })
+
+  it('asks before deleting', async () => {
+    renderPage()
+    await screen.findByRole('heading', { name: 'Example Article' })
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Delete Example Article on example.com/article' })
+    )
+
+    expect(api.deleteBookmark).not.toHaveBeenCalled()
+    expect(
+      screen.getByRole('button', {
+        name: 'Confirm deleting Example Article on example.com/article',
+      })
+    ).toBeInTheDocument()
+  })
+
+  it('deletes the bookmark and goes back to the list', async () => {
+    vi.mocked(api.deleteBookmark).mockResolvedValue(undefined)
+    renderPage()
+    await screen.findByRole('heading', { name: 'Example Article' })
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Delete Example Article on example.com/article' })
+    )
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Confirm deleting Example Article on example.com/article',
+      })
+    )
+
+    expect(await screen.findByText('Bookmarks list')).toBeInTheDocument()
+    expect(api.deleteBookmark).toHaveBeenCalledWith('1')
+  })
+
+  it('stays on the page and reports a failed delete', async () => {
+    vi.mocked(api.deleteBookmark).mockRejectedValue(new Error('API error: 500'))
+    renderPage()
+    await screen.findByRole('heading', { name: 'Example Article' })
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Delete Example Article on example.com/article' })
+    )
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Confirm deleting Example Article on example.com/article',
+      })
+    )
+
+    expect(await screen.findByText("Couldn't delete this bookmark.")).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Example Article' })).toBeInTheDocument()
+    // Ready for another attempt rather than stuck showing a spinner.
+    expect(
+      screen.getByRole('button', { name: 'Delete Example Article on example.com/article' })
+    ).toBeInTheDocument()
   })
 })
 

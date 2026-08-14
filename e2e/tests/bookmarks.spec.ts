@@ -23,6 +23,55 @@ test.describe('bookmarks', () => {
     ).toHaveAttribute('href', 'https://example.com')
   })
 
+  test('deletes a bookmark from the list, for good', async ({ page }) => {
+    await page.getByLabel('URL').fill('https://example.com')
+    await page.getByRole('button', { name: 'Add bookmark' }).click()
+    await expect(page.getByRole('link', { name: 'Example Domain' })).toBeVisible()
+
+    await page.getByRole('button', { name: 'Delete Example Domain on example.com' }).click()
+    // The first click only asks; the bookmark is still there until the confirmation.
+    await expect(page.getByRole('link', { name: 'Example Domain' })).toBeVisible()
+    await page
+      .getByRole('button', { name: 'Confirm deleting Example Domain on example.com' })
+      .click()
+
+    await expect(page.getByRole('link', { name: 'Example Domain' })).toHaveCount(0)
+
+    // A reload proves the row went away because the backend deleted it, not because the page
+    // dropped it locally.
+    await page.reload()
+    await expect(page.getByText('No bookmarks yet — paste a URL above to add one.')).toBeVisible()
+  })
+
+  test('keeps a bookmark when the delete is cancelled', async ({ page }) => {
+    await page.getByLabel('URL').fill('https://example.com')
+    await page.getByRole('button', { name: 'Add bookmark' }).click()
+    await expect(page.getByRole('link', { name: 'Example Domain' })).toBeVisible()
+
+    await page.getByRole('button', { name: 'Delete Example Domain on example.com' }).click()
+    await page
+      .getByRole('button', { name: 'Cancel deleting Example Domain on example.com' })
+      .click()
+
+    await page.reload()
+    await expect(page.getByRole('link', { name: 'Example Domain' })).toBeVisible()
+  })
+
+  test('deletes a bookmark from its own page and returns to the list', async ({ page }) => {
+    await page.getByLabel('URL').fill('https://example.com')
+    await page.getByRole('button', { name: 'Add bookmark' }).click()
+    await page.getByRole('link', { name: 'Example Domain' }).click()
+    await expect(page.getByRole('heading', { name: 'Example Domain' })).toBeVisible()
+
+    await page.getByRole('button', { name: 'Delete Example Domain on example.com' }).click()
+    await page
+      .getByRole('button', { name: 'Confirm deleting Example Domain on example.com' })
+      .click()
+
+    await expect(page).toHaveURL(/\/$/)
+    await expect(page.getByText('No bookmarks yet — paste a URL above to add one.')).toBeVisible()
+  })
+
   test('persists bookmarks across a reload', async ({ page }) => {
     await page.getByLabel('URL').fill('https://example.com')
     await page.getByRole('button', { name: 'Add bookmark' }).click()

@@ -1,7 +1,7 @@
 # hamster
 
-Personal bookmark manager — save a URL and title, see them in a list, and read an
-AI-generated summary of each saved page.
+Personal bookmark manager — save a URL and title, see them in a list, read an
+AI-generated summary of each saved page, and delete the ones you're done with.
 
 ## Stack
 
@@ -20,6 +20,16 @@ hamster/
 ├── backend/    # Express API
 └── e2e/        # Playwright end-to-end tests
 ```
+
+## Deleting
+
+Every row in the list carries a delete button, and each bookmark's own page has one under its
+summary. Deleting is permanent — there is no trash and no undo — so both ask for confirmation
+first, inline next to the button. Deleting from a bookmark's page returns to the list.
+
+`DELETE /api/bookmarks/:id` is idempotent: it answers `204` whether or not the bookmark was still
+there, so a second delete (a stale list row, a retried request) is not an error. A summary
+generation still running for a deleted bookmark fails its own write rather than recreating it.
 
 ## Summaries
 
