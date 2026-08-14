@@ -623,6 +623,31 @@ describe('BookmarkPage summary polling', () => {
     expect(screen.getByText('Recovered summary.')).toBeInTheDocument()
     expect(api.getBookmark).toHaveBeenCalledTimes(3)
   })
+
+  it('adopts replacement labels when a failed regeneration reproduced the same summary text', async () => {
+    vi.mocked(api.getBookmark)
+      .mockResolvedValueOnce({ ...bookmark, summary: 'Same take.', labels: ['old-topic'] })
+      .mockResolvedValueOnce({ ...bookmark, summary: 'Same take.', labels: ['old-topic'] })
+      .mockResolvedValueOnce({ ...bookmark, summary: 'Same take.' })
+      .mockResolvedValueOnce({ ...bookmark, summary: 'Same take.', labels: ['fresh-topic'] })
+    vi.mocked(api.generateSummary).mockRejectedValue(new Error('API error: 502'))
+    renderPage()
+    await flush()
+    fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }))
+    await flush()
+    expect(screen.getByText(/Couldn't regenerate the summary/)).toBeInTheDocument()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+    expect(screen.queryByText('old-topic')).not.toBeInTheDocument()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+    expect(screen.getByText('fresh-topic')).toBeInTheDocument()
+    expect(screen.queryByText(/Couldn't regenerate the summary/)).not.toBeInTheDocument()
+  })
 })
 
 describe('labels', () => {

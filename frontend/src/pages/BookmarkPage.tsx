@@ -26,6 +26,13 @@ import DeleteBookmarkButton from '../components/DeleteBookmarkButton'
 const POLL_INTERVAL_MS = 2000
 const MAX_POLL_ATTEMPTS = 15
 
+// Label equality, treating absent and present-but-different alike: the poll below adopts any
+// content change, including labels disappearing (the atomic clear that starts a regeneration).
+function sameLabels(a?: string[], b?: string[]): boolean {
+  if (!a || !b) return !a && !b
+  return a.length === b.length && a.every((label, index) => label === b[index])
+}
+
 function hostnameOf(url: string): string | null {
   try {
     return new URL(url).hostname
@@ -236,23 +243,23 @@ export default function BookmarkPage() {
         .getBookmark(id)
         .then((result) => {
           if (cancelled || id !== latestId.current) return
-          // Only adopt a result that advances something: a new or replacement summary, or labels
-          // where there were none. Setting identical state would create a new object, re-run this
-          // effect, and hand the poll a fresh budget — polling forever.
+          // Only adopt a result that advances something: a new or replacement summary, or a
+          // change in label content (including labels disappearing, which is the atomic clear a
+          // regeneration starts with). Setting identical state would create a new object, re-run
+          // this effect, and hand the poll a fresh budget — polling forever.
           const summaryAdvanced = Boolean(
             result.summary &&
               result.summary !== supersededSummary &&
               result.summary !== bookmark.summary
           )
-          const labelsAdvanced = Boolean(result.labels && !bookmark.labels)
+          const labelsAdvanced = !sameLabels(result.labels, bookmark.labels)
           if (!summaryAdvanced && !labelsAdvanced) return
           setBookmark(result)
-          if (summaryAdvanced) {
-            // A summary arriving here settles any earlier failure: the user's own request may have
-            // failed while the generation kicked off on the add page was still running, or while
-            // the regeneration it started went on to finish server-side. Leaving the flag set
-            // would caption the summary that just appeared with an error that no longer describes
-            // it, because the summary-present branch below renders `generateFailed`.
+          if (summaryAdvanced || (labelsAdvanced && result.labels)) {
+            // A fresh labels write proves a generation run completed server-side even when the
+            // summary text came out identical — the failure banner and the superseded watch no
+            // longer describe reality. Labels merely disappearing proves only that a run started;
+            // keep watching.
             setGenerateFailed(false)
             setSupersededSummary(null)
           }
