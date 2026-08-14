@@ -282,13 +282,15 @@ export default function BookmarkPage() {
     setGenerateFailed(false)
     setSupersededSummary(null)
     try {
-      // Labels ride along on the response when their generation succeeded; merging them here is
-      // what makes this button double as the labels backfill path for older bookmarks.
+      // Labels ride along on the response when their generation succeeded; adopting them
+      // unconditionally (rather than only when present) is what makes this button double as the
+      // labels backfill path for older bookmarks. The server clears labels in the same write as
+      // the new summary (see updateSummary), so a response with no labels means the labels step
+      // failed after that write landed — keeping the previous topics on screen here would show
+      // outdated chips for text they no longer describe, so they must be dropped too.
       const { summary, labels } = await api.generateSummary(requestedId)
       if (requestedId !== latestId.current) return
-      setBookmark((previous) =>
-        previous ? { ...previous, summary, ...(labels ? { labels } : {}) } : previous
-      )
+      setBookmark((previous) => (previous ? { ...previous, summary, labels } : previous))
     } catch {
       if (requestedId !== latestId.current) return
       // A failed request does not prove nothing was written: the summary is persisted before the

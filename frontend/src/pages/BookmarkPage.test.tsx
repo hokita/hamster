@@ -668,4 +668,25 @@ describe('labels', () => {
     expect(api.generateSummary).toHaveBeenCalledWith('1')
     expect(await screen.findByText('typescript')).toBeInTheDocument()
   })
+
+  // If the labels step of a regeneration fails server-side, the response carries a new summary
+  // but no labels — the server has already cleared the old ones (see updateSummary), and the
+  // page must not paper over that by keeping the previous topics attached to text they no
+  // longer describe.
+  it('drops stale label chips when a regeneration response carries no labels', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...bookmark,
+      summary: 'Old summary.',
+      labels: ['old-topic'],
+    })
+    vi.mocked(api.generateSummary).mockResolvedValue({ summary: 'New summary.' })
+    renderPage()
+    expect(await screen.findByText('old-topic')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }))
+
+    expect(await screen.findByText('New summary.')).toBeInTheDocument()
+    expect(screen.queryByText('old-topic')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('bookmark-labels')).not.toBeInTheDocument()
+  })
 })

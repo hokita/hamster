@@ -1,4 +1,4 @@
-import { getFirestore, Timestamp } from 'firebase-admin/firestore'
+import { FieldValue, getFirestore, Timestamp } from 'firebase-admin/firestore'
 
 export interface BookmarkDoc {
   id: string
@@ -66,7 +66,13 @@ export async function getBookmark(id: string): Promise<BookmarkDoc | null> {
 
 export async function updateSummary(id: string, summary: string): Promise<void> {
   const db = getFirestore()
-  await db.collection('bookmarks').doc(id).update({ summary })
+  // A stored document must never pair a new summary with the previous page-version's labels: the
+  // labeler runs afterward and may fail (network, quota, a bad response), which would otherwise
+  // leave stale topics attached to text they no longer describe. Clearing labels atomically in
+  // this same write — not as a second call — means any snapshot a client reads has either the old
+  // summary with its old labels, or the new summary with no labels, never a mixed pair. That is
+  // also what lets the detail page's poll treat "labels present" as a reliable completion signal.
+  await db.collection('bookmarks').doc(id).update({ summary, labels: FieldValue.delete() })
 }
 
 export async function updateLabels(id: string, labels: string[]): Promise<void> {

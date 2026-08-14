@@ -19,6 +19,7 @@ const fixedDate = new Date('2024-01-01T00:00:00.000Z')
 vi.mock('firebase-admin/firestore', () => ({
   getFirestore: () => ({ collection: mockCollection }),
   Timestamp: { now: () => ({ toDate: () => fixedDate }) },
+  FieldValue: { delete: () => 'DELETE_SENTINEL' },
 }))
 
 import {
@@ -218,13 +219,13 @@ describe('getBookmark', () => {
 })
 
 describe('updateSummary', () => {
-  it('writes the summary onto the document', async () => {
+  it('writes the summary and clears any labels from the previous page version', async () => {
     mockUpdate.mockResolvedValue(undefined)
 
     await updateSummary('abc', 'A summary.')
 
     expect(mockDoc).toHaveBeenCalledWith('abc')
-    expect(mockUpdate).toHaveBeenCalledWith({ summary: 'A summary.' })
+    expect(mockUpdate).toHaveBeenCalledWith({ summary: 'A summary.', labels: 'DELETE_SENTINEL' })
   })
 })
 
