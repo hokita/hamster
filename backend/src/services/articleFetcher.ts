@@ -9,10 +9,14 @@ import {
 
 // The whole page body is read here, not just the head, so the bound is larger than
 // metadataFetcher's — but still bounded: a runaway response must not be able to exhaust memory.
-const MAX_BYTES = 300_000
-// Matches eagle's maxPromptChars. Well past the length of any article worth summarizing, and
-// short enough to keep one request's token cost predictable.
-const MAX_CHARS = 20_000
+// 300KB of fetched HTML (markup overhead, 3-bytes-per-char Japanese) often yields far less text
+// than MAX_CHARS below; the byte cap must stay comfortably ahead of it or it silently becomes the
+// real limit. Still bounded: this is the network/memory guard, not the text-length guard.
+const MAX_BYTES = 1_500_000
+// The summary is meant to replace reading the article, so the model has to see the whole thing.
+// 200k chars ≈ 50k tokens — well inside gemini-3.7-flash's 1M context; covers all but
+// book-length pages.
+const MAX_CHARS = 200_000
 const FETCH_TIMEOUT_MS = 8000
 
 async function readBoundedBytes(response: Response): Promise<Uint8Array> {

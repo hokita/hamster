@@ -67,10 +67,10 @@ describe('fetchArticleText', () => {
     await expect(fetchArticleText('https://example.com')).resolves.toBe('one two')
   })
 
-  it('truncates the text to 20000 characters', async () => {
-    allow(`<body><p>${'a'.repeat(30000)}</p></body>`)
+  it('truncates the text to 200000 characters', async () => {
+    allow(`<body><p>${'a'.repeat(250_000)}</p></body>`)
     const text = await fetchArticleText('https://example.com')
-    expect(text).toHaveLength(20000)
+    expect(text).toHaveLength(200_000)
   })
 
   it('returns null when the content type is not HTML', async () => {
