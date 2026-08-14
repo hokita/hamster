@@ -41,7 +41,8 @@ const SYSTEM_INSTRUCTION = [
 
 // Stored labels are prior model output derived from untrusted pages, so they get the same
 // fencing as the page content. Labels containing a quote or newline could break out of the
-// fence; normalize() never produces them, but hand-edited documents could, so drop them here.
+// fence; normalize()'s charset check now rejects those before storage, so this is belt-and-braces
+// for labels stored before that check existed or hand-edited documents.
 function buildContents(title: string, text: string, existingLabels: string[]): string {
   const safeLabels = existingLabels.filter((label) => !label.includes('"') && !label.includes('\n'))
   return [
@@ -62,13 +63,22 @@ function buildContents(title: string, text: string, existingLabels: string[]): s
   ].join('\n')
 }
 
-// The model is told the rules, but nothing enforces them — normalization does. Anything that
-// survives is lowercase, trimmed, unique, bounded in length and count.
+// The model is told the rules, but nothing enforces them — this is the write-time guard that
+// does. A schema-valid string can still contain newlines, quotes, control characters, or markup
+// (plausible after a page-content prompt injection); allowing only lowercase ASCII letters,
+// digits, spaces, and a small set of punctuation used in real tech labels (c++, c#, .net, ci/cd,
+// node.js) means none of that can ever reach Firestore or the UI. This is also what makes
+// buildContents' "labels can't contain a quote or newline" fence assumption true.
+const ALLOWED_LABEL_PATTERN = /^[a-z0-9.][a-z0-9 .+#&/-]*$/
+
+// Anything that survives is lowercase, trimmed, charset-restricted, unique, bounded in length and
+// count.
 function normalize(labels: string[]): string[] {
   const seen = new Set<string>()
   for (const raw of labels) {
     const label = raw.trim().toLowerCase()
     if (!label || label.length > MAX_LABEL_LENGTH) continue
+    if (!ALLOWED_LABEL_PATTERN.test(label)) continue
     seen.add(label)
     if (seen.size === MAX_LABELS) break
   }

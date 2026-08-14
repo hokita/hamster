@@ -104,6 +104,27 @@ describe('generateLabels', () => {
     ])
   })
 
+  it('normalizes: rejects labels outside the allowed charset (newlines, quotes, control characters, markup) while keeping punctuation used in real tech labels', async () => {
+    mockGenerateContent.mockResolvedValue({
+      text: JSON.stringify([
+        'good label',
+        'bad\nlabel',
+        'bad"label',
+        '<markup>',
+        '\x07',
+        '.net',
+        'c++',
+        'ci/cd',
+      ]),
+    })
+    await expect(generateLabels('Title', 'Body', [])).resolves.toEqual([
+      'good label',
+      '.net',
+      'c++',
+      'ci/cd',
+    ])
+  })
+
   it('throws when every label is dropped by normalization', async () => {
     mockGenerateContent.mockResolvedValue({ text: '["", "   "]' })
     await expect(generateLabels('Title', 'Body', [])).rejects.toThrow()
