@@ -41,20 +41,22 @@ describe('summarize', () => {
     await summarize('Title', 'Article body')
     expect(mockGenerateContent).toHaveBeenCalledWith(
       expect.objectContaining({
-        model: 'gemini-3.6-flash',
+        model: 'gemini-3.7-flash',
         config: expect.objectContaining({ maxOutputTokens: 8192 }),
       })
     )
   })
 
-  it('asks for minimal thinking, so the output budget funds the summary and not the reasoning', async () => {
-    // gemini-3.6-flash thinks at "medium" by default and thinking tokens are drawn from
-    // maxOutputTokens. Left at the default, reasoning about a 20k-char article exhausts the budget
-    // before any summary text is emitted, and every request dies on the MAX_TOKENS guard below.
+  it('asks for the lowest supported thinking, so the output budget funds the summary and not the reasoning', async () => {
+    // Thinking tokens are drawn from maxOutputTokens, and flash models think at "medium" by
+    // default. Left at the default, reasoning about a 20k-char article exhausts the budget before
+    // any summary text is emitted, and every request dies on the MAX_TOKENS guard below.
+    // gemini-3.7-flash rejects MINIMAL outright (400 INVALID_ARGUMENT, verified live), so LOW is
+    // the floor for this model.
     mockGenerateContent.mockResolvedValue({ text: 'ok' })
     await summarize('Title', 'Article body')
     const config = mockGenerateContent.mock.calls[0][0].config
-    expect(config.thinkingConfig).toEqual({ thinkingLevel: 'MINIMAL' })
+    expect(config.thinkingConfig).toEqual({ thinkingLevel: 'LOW' })
   })
 
   it('puts the trusted rules in systemInstruction', async () => {
