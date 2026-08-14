@@ -373,4 +373,41 @@ describe('labels', () => {
     await screen.findByText('Example Article')
     expect(screen.queryByTestId('bookmark-labels')).not.toBeInTheDocument()
   })
+
+  it('offers to regenerate when the bookmark has a summary but no labels', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...bookmark,
+      summary: 'A summary.',
+    })
+    renderPage()
+    await screen.findByText('A summary.')
+    expect(screen.getByRole('button', { name: 'Regenerate summary' })).toBeInTheDocument()
+  })
+
+  it('regenerates the summary and labels when the regenerate button is clicked', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...bookmark,
+      summary: 'A summary.',
+    })
+    vi.mocked(api.generateSummary).mockResolvedValue({
+      summary: 'A summary.',
+      labels: ['typescript'],
+    })
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: 'Regenerate summary' }))
+    expect(api.generateSummary).toHaveBeenCalledWith('1')
+    expect(await screen.findByText('typescript')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Regenerate summary' })).not.toBeInTheDocument()
+  })
+
+  it('does not show a regenerate button when the bookmark already has labels', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...bookmark,
+      summary: 'A summary.',
+      labels: ['typescript'],
+    })
+    renderPage()
+    await screen.findByText('typescript')
+    expect(screen.queryByRole('button', { name: 'Regenerate summary' })).not.toBeInTheDocument()
+  })
 })

@@ -252,7 +252,28 @@ export default function BookmarkPage() {
       </h2>
 
       {bookmark.summary ? (
-        <SummaryBody summary={bookmark.summary} />
+        <>
+          <SummaryBody summary={bookmark.summary} />
+          {(!bookmark.labels || bookmark.labels.length === 0) && (
+            <div className="flex flex-col items-start gap-2 mt-4">
+              {generateFailed && (
+                <p className="m-0 text-sm text-gray-500">Couldn't regenerate.</p>
+              )}
+              <button
+                onClick={handleGenerate}
+                disabled={isGenerating}
+                className="inline-flex items-center gap-2 rounded-md bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+              >
+                <FontAwesomeIcon
+                  icon={isGenerating ? faSpinner : faWandMagicSparkles}
+                  spin={isGenerating}
+                  aria-hidden="true"
+                />
+                {isGenerating ? 'Regenerating…' : 'Regenerate summary'}
+              </button>
+            </div>
+          )}
+        </>
       ) : (
         <div className="flex flex-col items-start gap-3">
           <p className="m-0 text-gray-500">
