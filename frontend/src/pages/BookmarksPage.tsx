@@ -12,6 +12,13 @@ import type { Bookmark } from '../api'
 import BookmarkForm from '../components/BookmarkForm'
 import BookmarkList from '../components/BookmarkList'
 
+// Applied to every fetch result before it reaches state, so "nothing deleted is ever displayed"
+// holds at each of the places a list response lands. Module-level, taking the set as an argument,
+// so it is not a reactive dependency of the hooks that call it.
+function withoutDeleted(list: Bookmark[], deleted: ReadonlySet<string>): Bookmark[] {
+  return deleted.size > 0 ? list.filter((bookmark) => !deleted.has(bookmark.id)) : list
+}
+
 export default function BookmarksPage() {
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -39,6 +46,15 @@ export default function BookmarksPage() {
   // applied" still discards a genuinely stale response (one older than what's already on
   // screen), which is the property the original guard existed for.
   const appliedFetchId = useRef(0)
+  // Bookmarks deleted during this session. A list fetch issued before a delete is assembled from
+  // data where the bookmark still existed, so its response would put the row back on screen.
+  // Filtering applied responses through this set removes exactly that row and keeps the rest —
+  // discarding the whole response instead (by treating it as stale) would also throw away records
+  // it is the only carrier of, such as a bookmark added moments earlier whose own refresh this is.
+  //
+  // Never pruned: Firestore does not reuse document ids, so an id in here can only ever match the
+  // bookmark that was deleted, and one string per delete is nothing over a session.
+  const deletedIds = useRef<Set<string>>(new Set())
 
   const refresh = useCallback(async (options?: { background?: boolean }) => {
     // A background refresh (the one that follows a summary landing) must not touch error state:
@@ -52,7 +68,7 @@ export default function BookmarksPage() {
       const result = await api.listBookmarks()
       if (fid > appliedFetchId.current) {
         appliedFetchId.current = fid
-        setBookmarks(result)
+        setBookmarks(withoutDeleted(result, deletedIds.current))
         setHasLoadedOnce(true)
       }
       if (id !== null && id === requestId.current) setError(null)
@@ -72,7 +88,7 @@ export default function BookmarksPage() {
       .then((result) => {
         if (cancelled) return
         if (fid === fetchId.current) {
-          setBookmarks(result)
+          setBookmarks(withoutDeleted(result, deletedIds.current))
           setHasLoadedOnce(true)
         }
         if (id === requestId.current) setError(null)
@@ -115,13 +131,10 @@ export default function BookmarksPage() {
     try {
       await api.deleteBookmark(id)
       // Drop the row here rather than refetching: the delete has already settled server-side, and
-      // a round trip would leave the deleted bookmark on screen for its duration.
-      //
-      // Claiming the next fetchId as already-applied retires any list fetch issued before this
-      // delete. Such a response was assembled while the bookmark still existed, so applying it
-      // would put the row back; the existing staleness guard in refresh() now discards it, and a
-      // fetch issued after this point still wins normally.
-      appliedFetchId.current = ++fetchId.current
+      // a round trip would leave the deleted bookmark on screen for its duration. Recording the id
+      // is what keeps it gone — see deletedIds for why an in-flight fetch is filtered rather than
+      // discarded outright.
+      deletedIds.current.add(id)
       setBookmarks((previous) => previous.filter((bookmark) => bookmark.id !== id))
       if (requestNo === requestId.current) setError(null)
     } catch {

@@ -733,6 +733,59 @@ describe('BookmarksPage', () => {
     expect(screen.queryByRole('link', { name: /Example Site/ })).not.toBeInTheDocument()
   })
 
+  it('keeps a concurrently added bookmark from the same in-flight fetch it filters the deleted one out of', async () => {
+    // The add's own refresh is the only carrier of the new bookmark: its response was issued
+    // before the delete, so the deleted row has to be filtered out of it — but discarding the
+    // whole response would lose the addition with it, leaving a bookmark that was saved
+    // successfully invisible until a reload. Summary generation is made to fail here, as it does
+    // whenever GEMINI_API_KEY is unset, so no later background refresh can paper over it.
+    let resolveAddRefresh!: (value: Bookmark[]) => void
+    const deleted = {
+      id: '1',
+      url: 'https://example.com',
+      title: 'Example Site',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    }
+    const added = {
+      id: '2',
+      url: 'https://other.example',
+      title: 'Other Site',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    }
+    vi.mocked(api.listBookmarks).mockResolvedValueOnce([deleted])
+    vi.mocked(api.deleteBookmark).mockResolvedValue(undefined)
+    vi.mocked(api.createBookmark).mockResolvedValue(added)
+    vi.mocked(api.generateSummary).mockRejectedValue(new Error('API error: 503'))
+    renderPage()
+    await screen.findByRole('link', { name: /Example Site/ })
+
+    vi.mocked(api.listBookmarks).mockReturnValueOnce(
+      new Promise<Bookmark[]>((resolve) => {
+        resolveAddRefresh = resolve
+      })
+    )
+    fireEvent.change(screen.getByLabelText('URL'), {
+      target: { value: 'https://other.example' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
+    await waitFor(() => expect(api.listBookmarks).toHaveBeenCalledTimes(2))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Example Site' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm deleting Example Site' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('link', { name: /Example Site/ })).not.toBeInTheDocument()
+    )
+
+    // The add's refresh finally lands, carrying both bookmarks.
+    await act(async () => {
+      resolveAddRefresh([deleted, added])
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(screen.getByRole('link', { name: /Other Site/ })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Example Site/ })).not.toBeInTheDocument()
+  })
+
   it('does not surface an error when summary generation fails', async () => {
     vi.mocked(api.createBookmark).mockResolvedValue({
       id: '42',
