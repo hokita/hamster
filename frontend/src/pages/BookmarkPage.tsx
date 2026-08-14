@@ -440,7 +440,9 @@ export default function BookmarkPage() {
           </p>
         )}
         <DeleteBookmarkButton
-          title={bookmark.title}
+          // Same descriptor the list builds, so one convention covers both places a bookmark can
+          // be deleted from.
+          label={`${bookmark.title} on ${hostname ?? bookmark.url}`}
           isDeleting={isDeleting}
           onDelete={handleDelete}
           variant="labeled"

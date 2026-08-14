@@ -3,9 +3,11 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faTrashCan, faSpinner } from '@fortawesome/free-solid-svg-icons'
 
 interface DeleteBookmarkButtonProps {
-  // Only used to build accessible names. A list of rows would otherwise offer several buttons
-  // called "Delete", indistinguishable to a screen reader and to a test querying by role.
-  title: string
+  // Identifies the bookmark in this control's accessible names, and nothing else. A list of rows
+  // would otherwise offer several buttons called "Delete", indistinguishable to a screen reader
+  // and to a test querying by role. Callers pass a descriptor that is unique on the page — a title
+  // alone is not, since two bookmarks can share one — so both build it from title and hostname.
+  label: string
   onDelete: () => void
   isDeleting?: boolean
   // 'icon' is the compact trash glyph used in a list row; 'labeled' adds the visible word for the
@@ -17,7 +19,7 @@ interface DeleteBookmarkButtonProps {
 // asks first. The confirmation is inline rather than window.confirm(): a native dialog blocks the
 // page, cannot be styled to match, and (in the list) loses track of which row it belongs to.
 export default function DeleteBookmarkButton({
-  title,
+  label,
   onDelete,
   isDeleting,
   variant = 'icon',
@@ -28,7 +30,7 @@ export default function DeleteBookmarkButton({
     return (
       <span
         role="status"
-        aria-label={`Deleting ${title}`}
+        aria-label={`Deleting ${label}`}
         className="flex-shrink-0 p-2 text-gray-400"
       >
         <FontAwesomeIcon icon={faSpinner} spin aria-hidden="true" />
@@ -41,7 +43,7 @@ export default function DeleteBookmarkButton({
       <button
         type="button"
         onClick={() => setIsConfirming(true)}
-        aria-label={`Delete ${title}`}
+        aria-label={`Delete ${label}`}
         className={
           variant === 'labeled'
             ? 'inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-red-50 hover:border-red-200 hover:text-red-700 cursor-pointer'
@@ -68,7 +70,7 @@ export default function DeleteBookmarkButton({
           setIsConfirming(false)
           onDelete()
         }}
-        aria-label={`Confirm deleting ${title}`}
+        aria-label={`Confirm deleting ${label}`}
         className="rounded-md bg-red-600 px-2 py-1 text-xs font-medium text-white hover:bg-red-700 cursor-pointer"
       >
         Delete
@@ -76,7 +78,7 @@ export default function DeleteBookmarkButton({
       <button
         type="button"
         onClick={() => setIsConfirming(false)}
-        aria-label={`Cancel deleting ${title}`}
+        aria-label={`Cancel deleting ${label}`}
         className="rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 cursor-pointer"
       >
         Cancel

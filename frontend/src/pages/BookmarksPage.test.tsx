@@ -650,8 +650,10 @@ describe('BookmarksPage', () => {
     renderPage()
     await screen.findByRole('link', { name: /Example Site/ })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Delete Example Site' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm deleting Example Site' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Example Site on example.com' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Confirm deleting Example Site on example.com' })
+    )
 
     await waitFor(() =>
       expect(screen.queryByRole('link', { name: /Example Site/ })).not.toBeInTheDocument()
@@ -675,13 +677,17 @@ describe('BookmarksPage', () => {
     renderPage()
     await screen.findByRole('link', { name: /Example Site/ })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Delete Example Site' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm deleting Example Site' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Example Site on example.com' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Confirm deleting Example Site on example.com' })
+    )
 
     expect(await screen.findByText('Failed to delete bookmark.')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /Example Site/ })).toBeInTheDocument()
     // Back to a resting delete button, ready for another attempt.
-    expect(screen.getByRole('button', { name: 'Delete Example Site' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Delete Example Site on example.com' })
+    ).toBeInTheDocument()
   })
 
   it('does not let a list fetch issued before a delete put the deleted row back', async () => {
@@ -720,8 +726,10 @@ describe('BookmarksPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
     await waitFor(() => expect(api.listBookmarks).toHaveBeenCalledTimes(2))
 
-    fireEvent.click(screen.getByRole('button', { name: 'Delete Example Site' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm deleting Example Site' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Example Site on example.com' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Confirm deleting Example Site on example.com' })
+    )
     await waitFor(() =>
       expect(screen.queryByRole('link', { name: /Example Site/ })).not.toBeInTheDocument()
     )
@@ -770,8 +778,10 @@ describe('BookmarksPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
     await waitFor(() => expect(api.listBookmarks).toHaveBeenCalledTimes(2))
 
-    fireEvent.click(screen.getByRole('button', { name: 'Delete Example Site' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm deleting Example Site' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Example Site on example.com' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Confirm deleting Example Site on example.com' })
+    )
     await waitFor(() =>
       expect(screen.queryByRole('link', { name: /Example Site/ })).not.toBeInTheDocument()
     )

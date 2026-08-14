@@ -226,7 +226,10 @@ export default function BookmarkList({
               </a>
               {onDelete && (
                 <DeleteBookmarkButton
-                  title={bookmark.title}
+                  // Title plus hostname, for the same reason the link above names the hostname:
+                  // two bookmarks can carry the same title, and of every control in this row the
+                  // delete button is the one where acting on the wrong bookmark cannot be undone.
+                  label={`${bookmark.title} on ${hostname ?? bookmark.url}`}
                   isDeleting={deletingIds?.has(bookmark.id)}
                   onDelete={() => onDelete(bookmark.id)}
                 />

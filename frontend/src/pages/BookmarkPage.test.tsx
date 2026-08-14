@@ -373,11 +373,11 @@ describe('BookmarkPage delete', () => {
     renderPage()
     await screen.findByRole('heading', { name: 'Example Article' })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Delete Example Article' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Example Article on example.com' }))
 
     expect(api.deleteBookmark).not.toHaveBeenCalled()
     expect(
-      screen.getByRole('button', { name: 'Confirm deleting Example Article' })
+      screen.getByRole('button', { name: 'Confirm deleting Example Article on example.com' })
     ).toBeInTheDocument()
   })
 
@@ -386,8 +386,10 @@ describe('BookmarkPage delete', () => {
     renderPage()
     await screen.findByRole('heading', { name: 'Example Article' })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Delete Example Article' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm deleting Example Article' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Example Article on example.com' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Confirm deleting Example Article on example.com' })
+    )
 
     expect(await screen.findByText('Bookmarks list')).toBeInTheDocument()
     expect(api.deleteBookmark).toHaveBeenCalledWith('1')
@@ -398,13 +400,17 @@ describe('BookmarkPage delete', () => {
     renderPage()
     await screen.findByRole('heading', { name: 'Example Article' })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Delete Example Article' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm deleting Example Article' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Example Article on example.com' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Confirm deleting Example Article on example.com' })
+    )
 
     expect(await screen.findByText("Couldn't delete this bookmark.")).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Example Article' })).toBeInTheDocument()
     // Ready for another attempt rather than stuck showing a spinner.
-    expect(screen.getByRole('button', { name: 'Delete Example Article' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Delete Example Article on example.com' })
+    ).toBeInTheDocument()
   })
 })
 

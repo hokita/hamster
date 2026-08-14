@@ -28,10 +28,12 @@ test.describe('bookmarks', () => {
     await page.getByRole('button', { name: 'Add bookmark' }).click()
     await expect(page.getByRole('link', { name: 'Example Domain' })).toBeVisible()
 
-    await page.getByRole('button', { name: 'Delete Example Domain' }).click()
+    await page.getByRole('button', { name: 'Delete Example Domain on example.com' }).click()
     // The first click only asks; the bookmark is still there until the confirmation.
     await expect(page.getByRole('link', { name: 'Example Domain' })).toBeVisible()
-    await page.getByRole('button', { name: 'Confirm deleting Example Domain' }).click()
+    await page
+      .getByRole('button', { name: 'Confirm deleting Example Domain on example.com' })
+      .click()
 
     await expect(page.getByRole('link', { name: 'Example Domain' })).toHaveCount(0)
 
@@ -46,8 +48,10 @@ test.describe('bookmarks', () => {
     await page.getByRole('button', { name: 'Add bookmark' }).click()
     await expect(page.getByRole('link', { name: 'Example Domain' })).toBeVisible()
 
-    await page.getByRole('button', { name: 'Delete Example Domain' }).click()
-    await page.getByRole('button', { name: 'Cancel deleting Example Domain' }).click()
+    await page.getByRole('button', { name: 'Delete Example Domain on example.com' }).click()
+    await page
+      .getByRole('button', { name: 'Cancel deleting Example Domain on example.com' })
+      .click()
 
     await page.reload()
     await expect(page.getByRole('link', { name: 'Example Domain' })).toBeVisible()
@@ -59,8 +63,10 @@ test.describe('bookmarks', () => {
     await page.getByRole('link', { name: 'Example Domain' }).click()
     await expect(page.getByRole('heading', { name: 'Example Domain' })).toBeVisible()
 
-    await page.getByRole('button', { name: 'Delete Example Domain' }).click()
-    await page.getByRole('button', { name: 'Confirm deleting Example Domain' }).click()
+    await page.getByRole('button', { name: 'Delete Example Domain on example.com' }).click()
+    await page
+      .getByRole('button', { name: 'Confirm deleting Example Domain on example.com' })
+      .click()
 
     await expect(page).toHaveURL(/\/$/)
     await expect(page.getByText('No bookmarks yet — paste a URL above to add one.')).toBeVisible()
