@@ -26,6 +26,13 @@ import DeleteBookmarkButton from '../components/DeleteBookmarkButton'
 const POLL_INTERVAL_MS = 2000
 const MAX_POLL_ATTEMPTS = 15
 
+// Label equality, treating absent and present-but-different alike: the poll below adopts any
+// content change, including labels disappearing (the atomic clear that starts a regeneration).
+function sameLabels(a?: string[], b?: string[]): boolean {
+  if (!a || !b) return !a && !b
+  return a.length === b.length && a.every((label, index) => label === b[index])
+}
+
 function hostnameOf(url: string): string | null {
   try {
     return new URL(url).hostname
@@ -210,17 +217,21 @@ export default function BookmarkPage() {
 
   // Adding a bookmark kicks off summary generation in the background from the list page; if the
   // user clicks into it immediately, this page's own fetch above usually wins the race and loads
-  // before the summary is written. Poll for it while it's missing, bounded by the budget above.
-  // Skipped while a manual generation is in flight (that request will deliver the summary itself,
-  // and a concurrent poll would race it) and stopped for good once a summary is present. Reruns
-  // whenever `bookmark` changes, which naturally restarts once the initial load completes and
-  // stops once a summary lands — see the constants above for why a fresh budget on resume is fine.
+  // before the summary (and labels, written a few seconds later) are written. Poll while something
+  // is still worth waiting for, bounded by the budget above. Skipped while a manual generation is
+  // in flight (that request delivers both itself, and a concurrent poll would race it). Reruns
+  // whenever `bookmark` changes, which naturally restarts once the initial load completes — see
+  // the constants above for why a fresh budget on resume is fine.
+  //
+  // Accepted cost: a legacy bookmark with a summary but no labels polls out its bounded budget
+  // (15 cheap reads) once per visit and stops; the Regenerate button is its backfill path.
   useEffect(() => {
     if (!id) return
     if (!bookmark) return
-    // Two things are worth waiting for: a first summary, and a replacement for one whose
-    // regeneration request died mid-flight. Anything else is already up to date.
-    if (bookmark.summary && bookmark.summary !== supersededSummary) return
+    // Three things are worth waiting for: a first summary, a replacement for one whose
+    // regeneration request died mid-flight, and the labels the backend writes just after a
+    // summary. Anything else is already up to date.
+    if (bookmark.summary && bookmark.summary !== supersededSummary && bookmark.labels) return
     if (isGenerating) return
 
     let cancelled = false
@@ -232,16 +243,26 @@ export default function BookmarkPage() {
         .getBookmark(id)
         .then((result) => {
           if (cancelled || id !== latestId.current) return
-          if (!result.summary) return
-          if (result.summary === supersededSummary) return
+          // Only adopt a result that advances something: a new or replacement summary, or a
+          // change in label content (including labels disappearing, which is the atomic clear a
+          // regeneration starts with). Setting identical state would create a new object, re-run
+          // this effect, and hand the poll a fresh budget — polling forever.
+          const summaryAdvanced = Boolean(
+            result.summary &&
+              result.summary !== supersededSummary &&
+              result.summary !== bookmark.summary
+          )
+          const labelsAdvanced = !sameLabels(result.labels, bookmark.labels)
+          if (!summaryAdvanced && !labelsAdvanced) return
           setBookmark(result)
-          // A summary arriving here settles any earlier failure: the user's own request may have
-          // failed while the generation kicked off on the add page was still running, or while the
-          // regeneration it started went on to finish server-side. Leaving the flag set would
-          // caption the summary that just appeared with an error that no longer describes it,
-          // because the summary-present branch below renders `generateFailed`.
-          setGenerateFailed(false)
-          setSupersededSummary(null)
+          if (summaryAdvanced || (labelsAdvanced && result.labels)) {
+            // A fresh labels write proves a generation run completed server-side even when the
+            // summary text came out identical — the failure banner and the superseded watch no
+            // longer describe reality. Labels merely disappearing proves only that a run started;
+            // keep watching.
+            setGenerateFailed(false)
+            setSupersededSummary(null)
+          }
         })
         .catch(() => {
           // Opportunistic background polling: swallow failures and keep the remaining budget.
@@ -268,9 +289,15 @@ export default function BookmarkPage() {
     setGenerateFailed(false)
     setSupersededSummary(null)
     try {
-      const { summary } = await api.generateSummary(requestedId)
+      // Labels ride along on the response when their generation succeeded; adopting them
+      // unconditionally (rather than only when present) is what makes this button double as the
+      // labels backfill path for older bookmarks. The server clears labels in the same write as
+      // the new summary (see updateSummary), so a response with no labels means the labels step
+      // failed after that write landed — keeping the previous topics on screen here would show
+      // outdated chips for text they no longer describe, so they must be dropped too.
+      const { summary, labels } = await api.generateSummary(requestedId)
       if (requestedId !== latestId.current) return
-      setBookmark((previous) => (previous ? { ...previous, summary } : previous))
+      setBookmark((previous) => (previous ? { ...previous, summary, labels } : previous))
     } catch {
       if (requestedId !== latestId.current) return
       // A failed request does not prove nothing was written: the summary is persisted before the
@@ -377,6 +404,19 @@ export default function BookmarkPage() {
         {' · '}
         {formatRelativeTime(bookmark.createdAt)}
       </p>
+
+      {bookmark.labels && bookmark.labels.length > 0 && (
+        <div data-testid="bookmark-labels" className="mt-3 flex flex-wrap gap-1.5">
+          {bookmark.labels.map((label) => (
+            <span
+              key={label}
+              className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs text-gray-600"
+            >
+              {label}
+            </span>
+          ))}
+        </div>
+      )}
 
       <h2 className="mt-8 mb-3 text-sm font-semibold uppercase tracking-wide text-gray-400">
         Summary

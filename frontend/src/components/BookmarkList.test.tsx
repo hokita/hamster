@@ -278,3 +278,35 @@ describe('BookmarkList favicons', () => {
     )
   })
 })
+
+describe('labels', () => {
+  it('renders each label as a chip under the title', () => {
+    renderList({
+      bookmarks: [
+        {
+          id: '1',
+          url: 'https://example.com',
+          title: 'Example',
+          labels: ['typescript', 'testing'],
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    })
+    expect(screen.getByText('typescript')).toBeInTheDocument()
+    expect(screen.getByText('testing')).toBeInTheDocument()
+  })
+
+  it('renders no chips for a bookmark without labels', () => {
+    renderList({
+      bookmarks: [
+        {
+          id: '1',
+          url: 'https://example.com',
+          title: 'Example',
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    })
+    expect(screen.queryByTestId('bookmark-labels')).not.toBeInTheDocument()
+  })
+})

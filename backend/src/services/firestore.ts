@@ -1,4 +1,4 @@
-import { getFirestore, Timestamp } from 'firebase-admin/firestore'
+import { FieldValue, getFirestore, Timestamp } from 'firebase-admin/firestore'
 
 export interface BookmarkDoc {
   id: string
@@ -6,6 +6,7 @@ export interface BookmarkDoc {
   title: string
   faviconUrl?: string
   summary?: string
+  labels?: string[]
   createdAt: string
 }
 
@@ -30,6 +31,7 @@ function toBookmark(id: string, data: unknown): BookmarkDoc | null {
     title?: unknown
     faviconUrl?: unknown
     summary?: unknown
+    labels?: unknown
     createdAt?: { toDate?: () => Date }
   }
   if (
@@ -48,6 +50,9 @@ function toBookmark(id: string, data: unknown): BookmarkDoc | null {
     title: doc.title,
     ...(typeof doc.faviconUrl === 'string' ? { faviconUrl: doc.faviconUrl } : {}),
     ...(typeof doc.summary === 'string' ? { summary: doc.summary } : {}),
+    ...(Array.isArray(doc.labels) && doc.labels.every((label) => typeof label === 'string')
+      ? { labels: doc.labels as string[] }
+      : {}),
     createdAt: doc.createdAt.toDate().toISOString(),
   }
 }
@@ -61,7 +66,58 @@ export async function getBookmark(id: string): Promise<BookmarkDoc | null> {
 
 export async function updateSummary(id: string, summary: string): Promise<void> {
   const db = getFirestore()
-  await db.collection('bookmarks').doc(id).update({ summary })
+  // Within one process, a stored document can never pair a new summary with the previous
+  // page-version's labels: the labeler runs afterward and may fail (network, quota, a bad
+  // response), which would otherwise leave stale topics attached to text they no longer describe.
+  // Clearing labels atomically in this same write — not as a second call — means any snapshot a
+  // client reads has either the old summary with its old labels, or the new summary with no
+  // labels, never a mixed pair, as long as one process owns the sequence. That is also what lets
+  // the detail page's poll treat "labels present" as a reliable completion signal.
+  //
+  // Two Cloud Run instances regenerating the same bookmark concurrently — the per-process dedup
+  // gap the route documents and accepts — can still interleave their summary and label writes, so
+  // a client can transiently observe a summary from one run paired with labels from the other.
+  // That pairing is still both from the same, current regeneration attempt, never a previous page
+  // version's labels, and it self-heals the next time either run's labels write lands.
+  await db.collection('bookmarks').doc(id).update({ summary, labels: FieldValue.delete() })
+}
+
+export async function updateLabels(id: string, labels: string[]): Promise<void> {
+  const db = getFirestore()
+  await db.collection('bookmarks').doc(id).update({ labels })
+}
+
+// Bounds the prompt the labeler builds from this list; an unbounded union grows forever and
+// degrades the reuse instruction.
+const MAX_VOCABULARY = 100
+
+// Feeds the labeler's "prefer existing labels" vocabulary. A select-only scan of the whole
+// collection is fine at single-user scale and avoids a second source of truth.
+export async function listAllLabels(): Promise<string[]> {
+  const db = getFirestore()
+  const snap = await db.collection('bookmarks').select('labels').get()
+  const counts = new Map<string, number>()
+  for (const doc of snap.docs) {
+    const value = (doc.data() as { labels?: unknown }).labels
+    if (!Array.isArray(value)) continue
+    for (const label of value) {
+      if (typeof label !== 'string') continue
+      counts.set(label, (counts.get(label) ?? 0) + 1)
+    }
+  }
+
+  if (counts.size <= MAX_VOCABULARY) {
+    return [...counts.keys()].sort()
+  }
+
+  const mostFrequent = [...counts.entries()]
+    .sort(([labelA, countA], [labelB, countB]) =>
+      countB !== countA ? countB - countA : labelA.localeCompare(labelB)
+    )
+    .slice(0, MAX_VOCABULARY)
+    .map(([label]) => label)
+
+  return mostFrequent.sort()
 }
 
 export async function deleteBookmark(id: string): Promise<void> {

@@ -235,6 +235,17 @@ describe('BookmarkPage', () => {
     expect(await screen.findByText('Freshly generated.')).toBeInTheDocument()
   })
 
+  it('renders label chips from the generate response without a refetch', async () => {
+    vi.mocked(api.generateSummary).mockResolvedValue({
+      summary: 'A summary.',
+      labels: ['typescript'],
+    })
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: 'Generate summary' }))
+    expect(await screen.findByText('typescript')).toBeInTheDocument()
+    expect(api.getBookmark).toHaveBeenCalledTimes(1)
+  })
+
   it('shows a retry button when generation fails', async () => {
     vi.mocked(api.generateSummary).mockRejectedValue(new Error('API error: 502'))
     renderPage()
@@ -519,10 +530,11 @@ describe('BookmarkPage summary polling', () => {
     expect(screen.getByText(/Couldn't regenerate the summary/)).toBeInTheDocument()
   })
 
-  it('does not poll when a summary is already present', async () => {
+  it('does not poll when a summary and labels are already present', async () => {
     vi.mocked(api.getBookmark).mockResolvedValueOnce({
       ...bookmark,
       summary: 'Existing summary.',
+      labels: ['typescript'],
     })
     renderPage()
     await flush()
@@ -574,6 +586,23 @@ describe('BookmarkPage summary polling', () => {
     consoleError.mockRestore()
   })
 
+  it('keeps polling for labels that arrive after the summary', async () => {
+    vi.mocked(api.getBookmark)
+      .mockResolvedValueOnce({ ...bookmark, summary: 'A summary.' })
+      .mockResolvedValueOnce({ ...bookmark, summary: 'A summary.', labels: ['typescript'] })
+    renderPage()
+    await flush()
+    expect(screen.getByText('A summary.')).toBeInTheDocument()
+    expect(screen.queryByText('typescript')).not.toBeInTheDocument()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+
+    expect(screen.getByText('typescript')).toBeInTheDocument()
+    expect(api.getBookmark).toHaveBeenCalledTimes(2)
+  })
+
   it('swallows a failed poll without surfacing an error, keeping the remaining budget', async () => {
     vi.mocked(api.getBookmark)
       .mockResolvedValueOnce(bookmark)
@@ -593,5 +622,96 @@ describe('BookmarkPage summary polling', () => {
     })
     expect(screen.getByText('Recovered summary.')).toBeInTheDocument()
     expect(api.getBookmark).toHaveBeenCalledTimes(3)
+  })
+
+  it('adopts replacement labels when a failed regeneration reproduced the same summary text', async () => {
+    vi.mocked(api.getBookmark)
+      .mockResolvedValueOnce({ ...bookmark, summary: 'Same take.', labels: ['old-topic'] })
+      .mockResolvedValueOnce({ ...bookmark, summary: 'Same take.', labels: ['old-topic'] })
+      .mockResolvedValueOnce({ ...bookmark, summary: 'Same take.' })
+      .mockResolvedValueOnce({ ...bookmark, summary: 'Same take.', labels: ['fresh-topic'] })
+    vi.mocked(api.generateSummary).mockRejectedValue(new Error('API error: 502'))
+    renderPage()
+    await flush()
+    fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }))
+    await flush()
+    expect(screen.getByText(/Couldn't regenerate the summary/)).toBeInTheDocument()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+    expect(screen.queryByText('old-topic')).not.toBeInTheDocument()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+    expect(screen.getByText('fresh-topic')).toBeInTheDocument()
+    expect(screen.queryByText(/Couldn't regenerate the summary/)).not.toBeInTheDocument()
+  })
+})
+
+describe('labels', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('renders label chips when the bookmark has labels', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...bookmark,
+      summary: 'A summary.',
+      labels: ['typescript', 'testing'],
+    })
+    renderPage()
+    expect(await screen.findByText('typescript')).toBeInTheDocument()
+    expect(screen.getByText('testing')).toBeInTheDocument()
+  })
+
+  it('renders no chip container when the bookmark has no labels', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...bookmark,
+      summary: 'A summary.',
+    })
+    renderPage()
+    await screen.findByText('Example Article')
+    expect(screen.queryByTestId('bookmark-labels')).not.toBeInTheDocument()
+  })
+
+  // The always-present Regenerate button doubles as the labels backfill path for bookmarks
+  // whose summary predates labels: the response carries the labels, and merging them into
+  // state is what makes the chips appear without a refetch.
+  it('surfaces labels from a regeneration', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...bookmark,
+      summary: 'A summary.',
+    })
+    vi.mocked(api.generateSummary).mockResolvedValue({
+      summary: 'A summary.',
+      labels: ['typescript'],
+    })
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: 'Regenerate' }))
+    expect(api.generateSummary).toHaveBeenCalledWith('1')
+    expect(await screen.findByText('typescript')).toBeInTheDocument()
+  })
+
+  // If the labels step of a regeneration fails server-side, the response carries a new summary
+  // but no labels — the server has already cleared the old ones (see updateSummary), and the
+  // page must not paper over that by keeping the previous topics attached to text they no
+  // longer describe.
+  it('drops stale label chips when a regeneration response carries no labels', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...bookmark,
+      summary: 'Old summary.',
+      labels: ['old-topic'],
+    })
+    vi.mocked(api.generateSummary).mockResolvedValue({ summary: 'New summary.' })
+    renderPage()
+    expect(await screen.findByText('old-topic')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }))
+
+    expect(await screen.findByText('New summary.')).toBeInTheDocument()
+    expect(screen.queryByText('old-topic')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('bookmark-labels')).not.toBeInTheDocument()
   })
 })

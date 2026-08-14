@@ -6,6 +6,7 @@ export interface Bookmark {
   title: string
   faviconUrl?: string
   summary?: string
+  labels?: string[]
   createdAt: string
 }
 
@@ -38,5 +39,7 @@ export const api = {
   getBookmark: (id: string) => request<Bookmark>(`/api/bookmarks/${id}`),
   deleteBookmark: (id: string) => request<void>(`/api/bookmarks/${id}`, { method: 'DELETE' }),
   generateSummary: (id: string) =>
-    request<{ summary: string }>(`/api/bookmarks/${id}/summary`, { method: 'POST' }),
+    request<{ summary: string; labels?: string[] }>(`/api/bookmarks/${id}/summary`, {
+      method: 'POST',
+    }),
 }

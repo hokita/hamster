@@ -49,6 +49,11 @@ it runs a fresh generation; if that fails, the existing summary is left as it wa
 Summarization needs `GEMINI_API_KEY`. Without it the app works normally and every
 bookmark page simply shows its empty state.
 
+Saving a bookmark also assigns it a handful of short topic labels, generated with the
+lighter `gemini-3.6-flash-lite` model from the same page content. Labels appear as chips
+in the list and on each bookmark's page. They are best-effort: a labelling failure never
+blocks the summary, and regenerating a summary regenerates the labels too.
+
 ## Local development
 
 **1. Start the Firebase emulators (Auth + Firestore)**

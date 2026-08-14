@@ -5,6 +5,7 @@ import type { BookmarkDoc } from '../services/firestore'
 import { fetchMetadata } from '../services/metadataFetcher'
 import { fetchArticleText } from '../services/articleFetcher'
 import { summarize, isSummarizerConfigured, SummarizerUnavailableError } from '../services/summarizer'
+import { generateLabels } from '../services/labeler'
 
 // Thrown when the linked page could not be read (blocked, non-HTML, 404/500, network failure, ...).
 // A sentinel rather than a plain Error so the shared in-flight promise's rejection can still be
@@ -50,9 +51,11 @@ export function createBookmarksRouter(): Router {
   // Firestore-backed lease would close the cross-instance gap, but that trades this in-memory map
   // for a distributed lock with its own failure modes (stale leases, lease-holder crashes) — real
   // cost for a single-user app where the occasional duplicate Gemini call is cheap to tolerate.
-  const inFlight = new Map<string, Promise<string>>()
+  const inFlight = new Map<string, Promise<{ summary: string; labels: string[] | null }>>()
 
-  function generateSummary(bookmark: BookmarkDoc): Promise<string> {
+  function generateSummary(
+    bookmark: BookmarkDoc
+  ): Promise<{ summary: string; labels: string[] | null }> {
     const generation = (async () => {
       // Check configuration before doing any network work. Without a key the request can never
       // succeed, so fetching the article first only burns up to 8 seconds and bandwidth on a
@@ -70,7 +73,22 @@ export function createBookmarksRouter(): Router {
       } catch (error) {
         throw new SummaryStorageError(error)
       }
-      return summary
+
+      // Labels are strictly best-effort: generated after the summary is stored so a labels
+      // failure can never cost the already-paid summary, and swallowed so the endpoint's
+      // contract doesn't change. The existing-labels list feeds the "prefer reusing labels"
+      // instruction; failures here are logged with the bookmark id, same as summary failures.
+      let labels: string[] | null = null
+      try {
+        const existingLabels = await db.listAllLabels()
+        const generatedLabels = await generateLabels(bookmark.title, text, existingLabels)
+        await db.updateLabels(bookmark.id, generatedLabels)
+        labels = generatedLabels
+      } catch (error) {
+        console.error(`label generation failed for bookmark ${bookmark.id}:`, error)
+      }
+
+      return { summary, labels }
     })()
 
     // Remove the map entry once the generation settles, success or failure, so the next request
@@ -165,8 +183,8 @@ export function createBookmarksRouter(): Router {
     }
 
     try {
-      const summary = await generation
-      res.json({ summary })
+      const { summary, labels } = await generation
+      res.json(labels ? { summary, labels } : { summary })
     } catch (error) {
       // Every response body below is deliberately vague — the client has no use for the internals
       // and they must not leak to it. That left a failed summary with no trace anywhere but a bare

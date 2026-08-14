@@ -7,12 +7,19 @@ const mockDocGet = vi.fn()
 const mockUpdate = vi.fn()
 const mockDelete = vi.fn()
 const mockDoc = vi.fn(() => ({ get: mockDocGet, update: mockUpdate, delete: mockDelete }))
-const mockCollection = vi.fn(() => ({ orderBy: mockOrderBy, add: mockAdd, doc: mockDoc }))
+const mockSelect = vi.fn(() => ({ get: mockGet }))
+const mockCollection = vi.fn(() => ({
+  orderBy: mockOrderBy,
+  add: mockAdd,
+  doc: mockDoc,
+  select: mockSelect,
+}))
 const fixedDate = new Date('2024-01-01T00:00:00.000Z')
 
 vi.mock('firebase-admin/firestore', () => ({
   getFirestore: () => ({ collection: mockCollection }),
   Timestamp: { now: () => ({ toDate: () => fixedDate }) },
+  FieldValue: { delete: () => 'DELETE_SENTINEL' },
 }))
 
 import {
@@ -20,6 +27,8 @@ import {
   createBookmark,
   getBookmark,
   updateSummary,
+  updateLabels,
+  listAllLabels,
   deleteBookmark,
 } from './firestore'
 
@@ -210,13 +219,13 @@ describe('getBookmark', () => {
 })
 
 describe('updateSummary', () => {
-  it('writes the summary onto the document', async () => {
+  it('writes the summary and clears any labels from the previous page version', async () => {
     mockUpdate.mockResolvedValue(undefined)
 
     await updateSummary('abc', 'A summary.')
 
     expect(mockDoc).toHaveBeenCalledWith('abc')
-    expect(mockUpdate).toHaveBeenCalledWith({ summary: 'A summary.' })
+    expect(mockUpdate).toHaveBeenCalledWith({ summary: 'A summary.', labels: 'DELETE_SENTINEL' })
   })
 })
 
@@ -298,5 +307,123 @@ describe('listBookmarks summary handling', () => {
 
     expect(result).toHaveLength(1)
     expect(result[0].summary).toBeUndefined()
+  })
+})
+
+describe('updateLabels', () => {
+  it('writes the labels array onto the document', async () => {
+    mockUpdate.mockResolvedValue(undefined)
+
+    await updateLabels('abc', ['typescript', 'testing'])
+
+    expect(mockDoc).toHaveBeenCalledWith('abc')
+    expect(mockUpdate).toHaveBeenCalledWith({ labels: ['typescript', 'testing'] })
+  })
+})
+
+describe('listAllLabels', () => {
+  it('returns the sorted, deduplicated union across documents', async () => {
+    mockGet.mockResolvedValue({
+      docs: [
+        { id: 'a', data: () => ({ labels: ['typescript', 'testing'] }) },
+        { id: 'b', data: () => ({ labels: ['react', 'typescript'] }) },
+      ],
+    })
+
+    await expect(listAllLabels()).resolves.toEqual(['react', 'testing', 'typescript'])
+    expect(mockSelect).toHaveBeenCalledWith('labels')
+  })
+
+  it('tolerates documents without labels or with a malformed labels field', async () => {
+    mockGet.mockResolvedValue({
+      docs: [
+        { id: 'legacy', data: () => ({}) },
+        { id: 'weird', data: () => ({ labels: 'not-an-array' }) },
+        { id: 'mixed', data: () => ({ labels: ['ok', 42] }) },
+      ],
+    })
+
+    await expect(listAllLabels()).resolves.toEqual(['ok'])
+  })
+
+  it('caps the vocabulary at the 100 most frequent labels', async () => {
+    const many = Array.from({ length: 110 }, (_, i) => `a${String(i + 1).padStart(3, '0')}`)
+    mockGet.mockResolvedValue({
+      docs: [
+        { id: 'a', data: () => ({ labels: many }) },
+        { id: 'b', data: () => ({ labels: ['zpop'] }) },
+        { id: 'c', data: () => ({ labels: ['zpop'] }) },
+      ],
+    })
+
+    const result = await listAllLabels()
+
+    expect(result).toHaveLength(100)
+    expect(result).toContain('zpop') // count 2 → always kept
+    expect(result).toContain('a001') // alphabetical tie-break keeps the earliest
+    expect(result).not.toContain('a110') // lowest-priority tie dropped
+  })
+})
+
+describe('bookmark labels handling', () => {
+  it('returns labels when a document has them', async () => {
+    mockGet.mockResolvedValue({
+      docs: [
+        {
+          id: 'a',
+          data: () => ({
+            url: 'https://example.com',
+            title: 'A',
+            labels: ['typescript'],
+            createdAt: { toDate: () => fixedDate },
+          }),
+        },
+      ],
+    })
+
+    const result = await listBookmarks()
+
+    expect(result[0].labels).toEqual(['typescript'])
+  })
+
+  it('still returns documents saved before labels existed', async () => {
+    mockGet.mockResolvedValue({
+      docs: [
+        {
+          id: 'legacy',
+          data: () => ({
+            url: 'https://example.com',
+            title: 'Legacy',
+            createdAt: { toDate: () => fixedDate },
+          }),
+        },
+      ],
+    })
+
+    const result = await listBookmarks()
+
+    expect(result).toHaveLength(1)
+    expect(result[0]).not.toHaveProperty('labels')
+  })
+
+  it('ignores a labels field that is not an array of strings rather than dropping the document', async () => {
+    mockGet.mockResolvedValue({
+      docs: [
+        {
+          id: 'weird',
+          data: () => ({
+            url: 'https://example.com',
+            title: 'Weird',
+            labels: ['ok', 42],
+            createdAt: { toDate: () => fixedDate },
+          }),
+        },
+      ],
+    })
+
+    const result = await listBookmarks()
+
+    expect(result).toHaveLength(1)
+    expect(result[0]).not.toHaveProperty('labels')
   })
 })
