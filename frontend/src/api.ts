@@ -23,6 +23,9 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     },
   })
   if (!res.ok) throw new Error(`API error: ${res.status}`)
+  // DELETE answers 204 with no body at all, and res.json() rejects on an empty one — which would
+  // turn a successful delete into a thrown error at every call site.
+  if (res.status === 204) return undefined as T
   return res.json()
 }
 
@@ -34,6 +37,7 @@ export const api = {
       body: JSON.stringify(bookmark),
     }),
   getBookmark: (id: string) => request<Bookmark>(`/api/bookmarks/${id}`),
+  deleteBookmark: (id: string) => request<void>(`/api/bookmarks/${id}`, { method: 'DELETE' }),
   generateSummary: (id: string) =>
     request<{ summary: string; labels?: string[] }>(`/api/bookmarks/${id}/summary`, {
       method: 'POST',

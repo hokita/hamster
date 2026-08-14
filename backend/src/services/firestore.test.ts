@@ -5,7 +5,8 @@ const mockAdd = vi.fn()
 const mockOrderBy = vi.fn(() => ({ get: mockGet }))
 const mockDocGet = vi.fn()
 const mockUpdate = vi.fn()
-const mockDoc = vi.fn(() => ({ get: mockDocGet, update: mockUpdate }))
+const mockDelete = vi.fn()
+const mockDoc = vi.fn(() => ({ get: mockDocGet, update: mockUpdate, delete: mockDelete }))
 const mockSelect = vi.fn(() => ({ get: mockGet }))
 const mockCollection = vi.fn(() => ({
   orderBy: mockOrderBy,
@@ -27,6 +28,7 @@ import {
   updateSummary,
   updateLabels,
   listAllLabels,
+  deleteBookmark,
 } from './firestore'
 
 beforeEach(() => {
@@ -223,6 +225,24 @@ describe('updateSummary', () => {
 
     expect(mockDoc).toHaveBeenCalledWith('abc')
     expect(mockUpdate).toHaveBeenCalledWith({ summary: 'A summary.' })
+  })
+})
+
+describe('deleteBookmark', () => {
+  it('deletes the document with the given id', async () => {
+    mockDelete.mockResolvedValue(undefined)
+
+    await deleteBookmark('abc')
+
+    expect(mockCollection).toHaveBeenCalledWith('bookmarks')
+    expect(mockDoc).toHaveBeenCalledWith('abc')
+    expect(mockDelete).toHaveBeenCalled()
+  })
+
+  it('propagates a Firestore failure to the caller', async () => {
+    mockDelete.mockRejectedValue(new Error('firestore down'))
+
+    await expect(deleteBookmark('abc')).rejects.toThrow('firestore down')
   })
 })
 

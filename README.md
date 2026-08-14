@@ -1,7 +1,7 @@
 # hamster
 
-Personal bookmark manager — save a URL and title, see them in a list, and read an
-AI-generated summary of each saved page.
+Personal bookmark manager — save a URL and title, see them in a list, read an
+AI-generated summary of each saved page, and delete the ones you're done with.
 
 ## Stack
 
@@ -21,12 +21,30 @@ hamster/
 └── e2e/        # Playwright end-to-end tests
 ```
 
+## Deleting
+
+Every row in the list carries a delete button, and each bookmark's own page has one under its
+summary. Deleting is permanent — there is no trash and no undo — so both ask for confirmation
+first, inline next to the button. Deleting from a bookmark's page returns to the list.
+
+`DELETE /api/bookmarks/:id` is idempotent: it answers `204` whether or not the bookmark was still
+there, so a second delete (a stale list row, a retried request) is not an error. A summary
+generation still running for a deleted bookmark fails its own write rather than recreating it.
+
 ## Summaries
 
-Each bookmark has its own page at `/bookmarks/:id` showing an English summary of the
-linked article, generated with the Gemini API. Generation runs automatically just after
-a bookmark is saved; if it fails — or if the bookmark predates this feature — the page
-offers a **Generate summary** button.
+Each bookmark has its own page at `/bookmarks/:id` showing a summary of the linked
+article — an overview paragraph, a "Key points" section of four to six bullet points, and a
+closing takeaway — generated with the Gemini API. The model writes the summary in Markdown,
+and the page renders it: section headings, bullets and bold lead-ins, so it can be skimmed
+rather than read straight through. Only that subset is rendered — links and images are
+dropped (their text stays), because a summary is written from an untrusted page and nothing
+in the prompt asks for a URL. English and Japanese articles are summarized in their own
+language, headings included; anything else is summarized in English. Summaries saved before
+this feature are plain text, which renders as it always did. Generation runs automatically
+just after a bookmark is saved; if it fails — or if the bookmark predates this feature — the page
+offers a **Generate summary** button. Once a summary exists, a **Regenerate** button under
+it runs a fresh generation; if that fails, the existing summary is left as it was.
 
 Summarization needs `GEMINI_API_KEY`. Without it the app works normally and every
 bookmark page simply shows its empty state.

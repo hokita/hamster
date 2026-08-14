@@ -88,6 +88,36 @@ describe('api.getBookmark', () => {
   })
 })
 
+describe('api.deleteBookmark', () => {
+  it('sends a DELETE for the bookmark', async () => {
+    mockFetch.mockResolvedValue({ ok: true, status: 204 })
+
+    await api.deleteBookmark('1')
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/bookmarks/1'),
+      expect.objectContaining({
+        method: 'DELETE',
+        headers: expect.objectContaining({ Authorization: 'Bearer fake-token' }),
+      })
+    )
+  })
+
+  it('resolves on a 204 without trying to parse a body', async () => {
+    // The backend answers 204 with nothing at all; calling json() on that response rejects, which
+    // would surface a successful delete as a failure. The mock has no json() on purpose — the
+    // request helper must not reach for one.
+    mockFetch.mockResolvedValue({ ok: true, status: 204 })
+
+    await expect(api.deleteBookmark('1')).resolves.toBeUndefined()
+  })
+
+  it('throws when the delete fails', async () => {
+    mockFetch.mockResolvedValue({ ok: false, status: 500 })
+    await expect(api.deleteBookmark('1')).rejects.toThrow('API error: 500')
+  })
+})
+
 describe('api.generateSummary', () => {
   it('posts to the summary endpoint and returns the summary', async () => {
     mockFetch.mockResolvedValue({ ok: true, json: async () => ({ summary: 'A summary.' }) })

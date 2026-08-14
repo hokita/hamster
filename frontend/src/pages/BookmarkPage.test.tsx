@@ -6,6 +6,7 @@ vi.mock('../api', () => ({
   api: {
     getBookmark: vi.fn(),
     generateSummary: vi.fn(),
+    deleteBookmark: vi.fn(),
   },
 }))
 
@@ -24,6 +25,8 @@ function renderPage() {
     <MemoryRouter initialEntries={['/bookmarks/1']}>
       <Routes>
         <Route path="/bookmarks/:id" element={<BookmarkPage />} />
+        {/* Stands in for the list page, so a delete's navigation is observable here. */}
+        <Route path="/" element={<p>Bookmarks list</p>} />
       </Routes>
     </MemoryRouter>
   )
@@ -50,19 +53,170 @@ describe('BookmarkPage', () => {
     )
   })
 
-  it('renders the summary paragraph and bullets', async () => {
+  it('renders markdown headings, bullets and bold as formatted elements', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...bookmark,
+      summary:
+        'This article explains widgets.\n\n## Key points\n\n' +
+        '- **Widgets ship early** — the first batch left in March.\n' +
+        '- **Cost fell** — a unit now costs $4.\n\n' +
+        '## Takeaway\n\nWorth reading for widget buyers.',
+    })
+    renderPage()
+
+    // The heading sits under the page's own "Summary" <h2>, so it has to be an <h3>.
+    const heading = await screen.findByRole('heading', { name: 'Key points', level: 3 })
+    expect(heading).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Takeaway', level: 3 })).toBeInTheDocument()
+    expect(screen.getByText('This article explains widgets.')).toBeInTheDocument()
+    expect(screen.getAllByRole('listitem')).toHaveLength(2)
+    // The bold lead-in is an element, not literal asterisks around the text.
+    expect(screen.getByText('Widgets ship early').tagName).toBe('STRONG')
+    expect(screen.queryByText(/\*\*/)).not.toBeInTheDocument()
+  })
+
+  it('drops links and images from a summary, keeping their text', async () => {
+    // The summary is written from an untrusted page, and the prompt never asks for a link — so a
+    // URL in one came from the page, and rendering it would hand a hostile page a live link on a
+    // page the user trusts.
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...bookmark,
+      summary:
+        'Read [the vendor page](https://evil.example/phish) for more.\n\n' +
+        '![a banner](https://evil.example/banner.png)',
+    })
+    renderPage()
+
+    // The page's own chrome has links, so this asks about the summary's would-be link by name.
+    expect(await screen.findByText(/Read the vendor page for more\./)).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'the vendor page' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('img')).not.toBeInTheDocument()
+    expect(screen.queryByText(/evil\.example/)).not.toBeInTheDocument()
+    // An image's text lives in its alt attribute rather than its children, so dropping the node
+    // would take the caption with it. The URL is what had to go, not the words.
+    expect(screen.getByText('a banner')).toBeInTheDocument()
+  })
+
+  it('renders a plain-text summary saved before summaries were markdown', async () => {
     vi.mocked(api.getBookmark).mockResolvedValue({
       ...bookmark,
       summary: 'This article explains widgets.\n- First point\n- Second point\n- Third point',
     })
     renderPage()
     expect(await screen.findByText('This article explains widgets.')).toBeInTheDocument()
-    const items = screen.getAllByRole('listitem')
-    expect(items.map((item) => item.textContent)).toEqual([
+    expect(screen.getAllByRole('listitem').map((item) => item.textContent)).toEqual([
       'First point',
       'Second point',
       'Third point',
     ])
+  })
+
+  it('keeps "・" bullets in an older summary as a list', async () => {
+    // CommonMark does not know "・" as a list marker, so without a rewrite these lines collapse
+    // into one paragraph with the breaks rendered as spaces — the bullets would run together.
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...bookmark,
+      summary:
+        'この記事はウィジェットについて説明している。\n・最初の点\n・二つ目の点\n・三つ目の点',
+    })
+    renderPage()
+
+    expect(
+      await screen.findByText('この記事はウィジェットについて説明している。')
+    ).toBeInTheDocument()
+    expect(screen.getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+      '最初の点',
+      '二つ目の点',
+      '三つ目の点',
+    ])
+  })
+
+  it('leaves a "・" inside a sentence alone', async () => {
+    // Japanese uses "・" between the halves of a compound name, mid-line and mid-sentence. Only a
+    // line that opens with one is a bullet.
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...bookmark,
+      summary: 'テスト・ドリブン開発について論じている。',
+    })
+    renderPage()
+
+    expect(await screen.findByText('テスト・ドリブン開発について論じている。')).toBeInTheDocument()
+    expect(screen.queryByRole('listitem')).not.toBeInTheDocument()
+  })
+
+  it('offers to regenerate an existing summary', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue({ ...bookmark, summary: 'First take.' })
+    vi.mocked(api.generateSummary).mockResolvedValue({ summary: 'Second take.' })
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: 'Regenerate' }))
+    expect(api.generateSummary).toHaveBeenCalledWith('1')
+    expect(await screen.findByText('Second take.')).toBeInTheDocument()
+    expect(screen.queryByText('First take.')).not.toBeInTheDocument()
+  })
+
+  it('keeps the summary visible and disables the button while regenerating', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue({ ...bookmark, summary: 'First take.' })
+    vi.mocked(api.generateSummary).mockReturnValue(new Promise(() => {}))
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: 'Regenerate' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /Regenerating/ })).toBeDisabled())
+    expect(screen.getByText('First take.')).toBeInTheDocument()
+  })
+
+  it('keeps the existing summary when regeneration fails', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue({ ...bookmark, summary: 'First take.' })
+    vi.mocked(api.generateSummary).mockRejectedValue(new Error('API error: 502'))
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: 'Regenerate' }))
+    expect(await screen.findByText(/Couldn't regenerate the summary/)).toBeInTheDocument()
+    expect(screen.getByText('First take.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Regenerate' })).toBeEnabled()
+  })
+
+  it('adopts a summary the failed request had already persisted', async () => {
+    vi.mocked(api.getBookmark)
+      .mockResolvedValueOnce({ ...bookmark, summary: 'First take.' })
+      .mockResolvedValueOnce({ ...bookmark, summary: 'Written before the connection dropped.' })
+    vi.mocked(api.generateSummary).mockRejectedValue(new Error('API error: 502'))
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: 'Regenerate' }))
+    expect(await screen.findByText('Written before the connection dropped.')).toBeInTheDocument()
+    expect(screen.queryByText(/Couldn't regenerate the summary/)).not.toBeInTheDocument()
+  })
+
+  it('reports failure when the re-read after a failed regeneration also fails', async () => {
+    vi.mocked(api.getBookmark)
+      .mockResolvedValueOnce({ ...bookmark, summary: 'First take.' })
+      .mockRejectedValueOnce(new Error('API error: 500'))
+    vi.mocked(api.generateSummary).mockRejectedValue(new Error('API error: 502'))
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: 'Regenerate' }))
+    expect(await screen.findByText(/Couldn't regenerate the summary/)).toBeInTheDocument()
+    expect(screen.getByText('First take.')).toBeInTheDocument()
+  })
+
+  // index.html declares lang="en" for the document, so a Japanese summary needs its own lang or a
+  // screen reader announces it with English pronunciation rules.
+  it('marks a Japanese summary as Japanese', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...bookmark,
+      summary:
+        'この記事はウィジェットの仕組みを説明しています。\n- 最初の要点\n- 二つ目の要点\n- 三つ目の要点',
+    })
+    renderPage()
+    const paragraph = await screen.findByText('この記事はウィジェットの仕組みを説明しています。')
+    expect(paragraph.closest('[lang]')).toHaveAttribute('lang', 'ja')
+  })
+
+  it('leaves an English summary in English, even when it quotes a Japanese term', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...bookmark,
+      summary:
+        'The article explains the widget process, which it calls "改善", in detail for newcomers.',
+    })
+    renderPage()
+    const paragraph = await screen.findByText(/The article explains the widget process/)
+    expect(paragraph.closest('[lang]')).toHaveAttribute('lang', 'en')
   })
 
   it('offers to generate a summary when the bookmark has none', async () => {
@@ -220,6 +374,69 @@ describe('BookmarkPage', () => {
   })
 })
 
+describe('BookmarkPage delete', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(api.getBookmark).mockResolvedValue(bookmark)
+  })
+
+  it('asks before deleting', async () => {
+    renderPage()
+    await screen.findByRole('heading', { name: 'Example Article' })
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Delete Example Article on example.com/article' })
+    )
+
+    expect(api.deleteBookmark).not.toHaveBeenCalled()
+    expect(
+      screen.getByRole('button', {
+        name: 'Confirm deleting Example Article on example.com/article',
+      })
+    ).toBeInTheDocument()
+  })
+
+  it('deletes the bookmark and goes back to the list', async () => {
+    vi.mocked(api.deleteBookmark).mockResolvedValue(undefined)
+    renderPage()
+    await screen.findByRole('heading', { name: 'Example Article' })
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Delete Example Article on example.com/article' })
+    )
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Confirm deleting Example Article on example.com/article',
+      })
+    )
+
+    expect(await screen.findByText('Bookmarks list')).toBeInTheDocument()
+    expect(api.deleteBookmark).toHaveBeenCalledWith('1')
+  })
+
+  it('stays on the page and reports a failed delete', async () => {
+    vi.mocked(api.deleteBookmark).mockRejectedValue(new Error('API error: 500'))
+    renderPage()
+    await screen.findByRole('heading', { name: 'Example Article' })
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Delete Example Article on example.com/article' })
+    )
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Confirm deleting Example Article on example.com/article',
+      })
+    )
+
+    expect(await screen.findByText("Couldn't delete this bookmark.")).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Example Article' })).toBeInTheDocument()
+    // Ready for another attempt rather than stuck showing a spinner.
+    expect(
+      screen.getByRole('button', { name: 'Delete Example Article on example.com/article' })
+    ).toBeInTheDocument()
+  })
+})
+
 describe('BookmarkPage summary polling', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -251,6 +468,66 @@ describe('BookmarkPage summary polling', () => {
 
     expect(screen.getByText('Polled summary.')).toBeInTheDocument()
     expect(api.getBookmark).toHaveBeenCalledTimes(2)
+  })
+
+  it('clears an earlier failure when polling installs a summary', async () => {
+    vi.mocked(api.getBookmark)
+      .mockResolvedValueOnce(bookmark)
+      .mockResolvedValueOnce(bookmark)
+      .mockResolvedValueOnce({ ...bookmark, summary: 'Summary from the background run.' })
+    vi.mocked(api.generateSummary).mockRejectedValue(new Error('API error: 502'))
+    renderPage()
+    await flush()
+    fireEvent.click(screen.getByRole('button', { name: 'Generate summary' }))
+    await flush()
+    expect(screen.getByText("Couldn't generate a summary.")).toBeInTheDocument()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+
+    expect(screen.getByText('Summary from the background run.')).toBeInTheDocument()
+    expect(screen.queryByText(/Couldn't regenerate the summary/)).not.toBeInTheDocument()
+  })
+
+  // The backend keeps generating after the client goes away, so a regeneration whose request died
+  // can still land — the one immediate re-read in the failure path is only the first sample.
+  it('keeps watching for a regeneration that lands after its request failed', async () => {
+    vi.mocked(api.getBookmark)
+      .mockResolvedValueOnce({ ...bookmark, summary: 'First take.' })
+      .mockResolvedValueOnce({ ...bookmark, summary: 'First take.' })
+      .mockResolvedValueOnce({ ...bookmark, summary: 'Landed after the request died.' })
+    vi.mocked(api.generateSummary).mockRejectedValue(new Error('API error: 502'))
+    renderPage()
+    await flush()
+    fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }))
+    await flush()
+    expect(screen.getByText(/Couldn't regenerate the summary/)).toBeInTheDocument()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+
+    expect(screen.getByText('Landed after the request died.')).toBeInTheDocument()
+    expect(screen.queryByText(/Couldn't regenerate the summary/)).not.toBeInTheDocument()
+  })
+
+  it('stops watching a superseded summary once the budget is spent', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue({ ...bookmark, summary: 'First take.' })
+    vi.mocked(api.generateSummary).mockRejectedValue(new Error('API error: 502'))
+    renderPage()
+    await flush()
+    fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }))
+    await flush()
+    const countAfterFailure = vi.mocked(api.getBookmark).mock.calls.length
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60000)
+    })
+
+    expect(vi.mocked(api.getBookmark).mock.calls.length).toBe(countAfterFailure + 15) // poll budget
+    expect(screen.getByText('First take.')).toBeInTheDocument()
+    expect(screen.getByText(/Couldn't regenerate the summary/)).toBeInTheDocument()
   })
 
   it('does not poll when a summary and labels are already present', async () => {
@@ -374,17 +651,10 @@ describe('labels', () => {
     expect(screen.queryByTestId('bookmark-labels')).not.toBeInTheDocument()
   })
 
-  it('offers to regenerate when the bookmark has a summary but no labels', async () => {
-    vi.mocked(api.getBookmark).mockResolvedValue({
-      ...bookmark,
-      summary: 'A summary.',
-    })
-    renderPage()
-    await screen.findByText('A summary.')
-    expect(screen.getByRole('button', { name: 'Regenerate summary' })).toBeInTheDocument()
-  })
-
-  it('regenerates the summary and labels when the regenerate button is clicked', async () => {
+  // The always-present Regenerate button doubles as the labels backfill path for bookmarks
+  // whose summary predates labels: the response carries the labels, and merging them into
+  // state is what makes the chips appear without a refetch.
+  it('surfaces labels from a regeneration', async () => {
     vi.mocked(api.getBookmark).mockResolvedValue({
       ...bookmark,
       summary: 'A summary.',
@@ -394,20 +664,8 @@ describe('labels', () => {
       labels: ['typescript'],
     })
     renderPage()
-    fireEvent.click(await screen.findByRole('button', { name: 'Regenerate summary' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Regenerate' }))
     expect(api.generateSummary).toHaveBeenCalledWith('1')
     expect(await screen.findByText('typescript')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Regenerate summary' })).not.toBeInTheDocument()
-  })
-
-  it('does not show a regenerate button when the bookmark already has labels', async () => {
-    vi.mocked(api.getBookmark).mockResolvedValue({
-      ...bookmark,
-      summary: 'A summary.',
-      labels: ['typescript'],
-    })
-    renderPage()
-    await screen.findByText('typescript')
-    expect(screen.queryByRole('button', { name: 'Regenerate summary' })).not.toBeInTheDocument()
   })
 })

@@ -9,6 +9,7 @@ vi.mock('../services/firestore', () => ({
   updateSummary: vi.fn(),
   updateLabels: vi.fn(),
   listAllLabels: vi.fn(),
+  deleteBookmark: vi.fn(),
 }))
 vi.mock('../services/metadataFetcher', () => ({
   fetchMetadata: vi.fn(),
@@ -197,6 +198,41 @@ describe('GET /api/bookmarks/:id', () => {
     vi.mocked(db.getBookmark).mockRejectedValue(new Error('firestore down'))
     const res = await request(app).get('/api/bookmarks/1')
     expect(res.status).toBe(500)
+  })
+})
+
+describe('DELETE /api/bookmarks/:id', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('deletes the bookmark and returns 204 with no body', async () => {
+    vi.mocked(db.deleteBookmark).mockResolvedValue(undefined)
+
+    const res = await request(app).delete('/api/bookmarks/1')
+
+    expect(res.status).toBe(204)
+    expect(res.body).toEqual({})
+    expect(db.deleteBookmark).toHaveBeenCalledWith('1')
+  })
+
+  it('answers 204 for an id that no longer exists rather than 404', async () => {
+    // Firestore's delete() resolves for a missing document, so a repeat delete — a stale list
+    // row, a retried request — reaches this route the same way a first one does. The endpoint is
+    // idempotent by design; asserting it here keeps that from being "fixed" into a 404 later.
+    vi.mocked(db.deleteBookmark).mockResolvedValue(undefined)
+
+    const res = await request(app).delete('/api/bookmarks/gone')
+
+    expect(res.status).toBe(204)
+    expect(db.getBookmark).not.toHaveBeenCalled()
+  })
+
+  it('returns 500 when the delete rejects', async () => {
+    vi.mocked(db.deleteBookmark).mockRejectedValue(new Error('firestore down'))
+
+    const res = await request(app).delete('/api/bookmarks/1')
+
+    expect(res.status).toBe(500)
+    expect(res.body).toEqual({ error: expect.any(String) })
   })
 })
 

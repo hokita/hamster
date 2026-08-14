@@ -107,6 +107,11 @@ export async function listAllLabels(): Promise<string[]> {
   return mostFrequent.sort()
 }
 
+export async function deleteBookmark(id: string): Promise<void> {
+  const db = getFirestore()
+  await db.collection('bookmarks').doc(id).delete()
+}
+
 export async function listBookmarks(): Promise<BookmarkDoc[]> {
   const db = getFirestore()
   const snap = await db.collection('bookmarks').orderBy('createdAt', 'desc').get()
