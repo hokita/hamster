@@ -201,6 +201,18 @@ export default function BookmarkList({ bookmarks, summarizingIds }: BookmarkList
                         : formatRelativeTime(bookmark.createdAt)}
                     </span>
                   </span>
+                  {bookmark.labels && bookmark.labels.length > 0 && (
+                    <span data-testid="bookmark-labels" className="mt-1 flex flex-wrap gap-1">
+                      {bookmark.labels.map((label) => (
+                        <span
+                          key={label}
+                          className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] leading-4 text-gray-500"
+                        >
+                          {label}
+                        </span>
+                      ))}
+                    </span>
+                  )}
                 </span>
               </Link>
               {/* Sibling of the Link, never nested inside it: nested anchors are invalid HTML.
