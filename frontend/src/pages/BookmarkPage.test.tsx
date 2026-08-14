@@ -50,19 +50,95 @@ describe('BookmarkPage', () => {
     )
   })
 
-  it('renders the summary paragraph and bullets', async () => {
+  it('renders markdown headings, bullets and bold as formatted elements', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...bookmark,
+      summary:
+        'This article explains widgets.\n\n## Key points\n\n' +
+        '- **Widgets ship early** — the first batch left in March.\n' +
+        '- **Cost fell** — a unit now costs $4.\n\n' +
+        '## Takeaway\n\nWorth reading for widget buyers.',
+    })
+    renderPage()
+
+    // The heading sits under the page's own "Summary" <h2>, so it has to be an <h3>.
+    const heading = await screen.findByRole('heading', { name: 'Key points', level: 3 })
+    expect(heading).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Takeaway', level: 3 })).toBeInTheDocument()
+    expect(screen.getByText('This article explains widgets.')).toBeInTheDocument()
+    expect(screen.getAllByRole('listitem')).toHaveLength(2)
+    // The bold lead-in is an element, not literal asterisks around the text.
+    expect(screen.getByText('Widgets ship early').tagName).toBe('STRONG')
+    expect(screen.queryByText(/\*\*/)).not.toBeInTheDocument()
+  })
+
+  it('drops links and images from a summary, keeping their text', async () => {
+    // The summary is written from an untrusted page, and the prompt never asks for a link — so a
+    // URL in one came from the page, and rendering it would hand a hostile page a live link on a
+    // page the user trusts.
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...bookmark,
+      summary:
+        'Read [the vendor page](https://evil.example/phish) for more.\n\n' +
+        '![a banner](https://evil.example/banner.png)',
+    })
+    renderPage()
+
+    // The page's own chrome has links, so this asks about the summary's would-be link by name.
+    expect(await screen.findByText(/Read the vendor page for more\./)).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'the vendor page' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('img')).not.toBeInTheDocument()
+    expect(screen.queryByText(/evil\.example/)).not.toBeInTheDocument()
+    // An image's text lives in its alt attribute rather than its children, so dropping the node
+    // would take the caption with it. The URL is what had to go, not the words.
+    expect(screen.getByText('a banner')).toBeInTheDocument()
+  })
+
+  it('renders a plain-text summary saved before summaries were markdown', async () => {
     vi.mocked(api.getBookmark).mockResolvedValue({
       ...bookmark,
       summary: 'This article explains widgets.\n- First point\n- Second point\n- Third point',
     })
     renderPage()
     expect(await screen.findByText('This article explains widgets.')).toBeInTheDocument()
-    const items = screen.getAllByRole('listitem')
-    expect(items.map((item) => item.textContent)).toEqual([
+    expect(screen.getAllByRole('listitem').map((item) => item.textContent)).toEqual([
       'First point',
       'Second point',
       'Third point',
     ])
+  })
+
+  it('keeps "・" bullets in an older summary as a list', async () => {
+    // CommonMark does not know "・" as a list marker, so without a rewrite these lines collapse
+    // into one paragraph with the breaks rendered as spaces — the bullets would run together.
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...bookmark,
+      summary:
+        'この記事はウィジェットについて説明している。\n・最初の点\n・二つ目の点\n・三つ目の点',
+    })
+    renderPage()
+
+    expect(
+      await screen.findByText('この記事はウィジェットについて説明している。')
+    ).toBeInTheDocument()
+    expect(screen.getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+      '最初の点',
+      '二つ目の点',
+      '三つ目の点',
+    ])
+  })
+
+  it('leaves a "・" inside a sentence alone', async () => {
+    // Japanese uses "・" between the halves of a compound name, mid-line and mid-sentence. Only a
+    // line that opens with one is a bullet.
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...bookmark,
+      summary: 'テスト・ドリブン開発について論じている。',
+    })
+    renderPage()
+
+    expect(await screen.findByText('テスト・ドリブン開発について論じている。')).toBeInTheDocument()
+    expect(screen.queryByRole('listitem')).not.toBeInTheDocument()
   })
 
   it('offers to regenerate an existing summary', async () => {

@@ -94,6 +94,26 @@ describe('summarize', () => {
     expect(systemInstruction).not.toContain('exactly three bullet points')
   })
 
+  it('asks for Markdown, restricted to the constructs the page renders', async () => {
+    // The page renders the summary as Markdown but drops anything outside this subset, so the
+    // prompt has to stay inside it — a summary whose substance lives in a table or a link arrives
+    // gutted. Headings are part of the deal: they are what makes a summary skimmable.
+    mockGenerateContent.mockResolvedValue({ text: 'ok' })
+    await summarize('My Title', 'The article body text')
+    const systemInstruction = mockGenerateContent.mock.calls[0][0].config
+      .systemInstruction as string
+    expect(systemInstruction).toContain('Markdown')
+    expect(systemInstruction).toContain('"## " section headings')
+    expect(systemInstruction).toContain('**bold**')
+    expect(systemInstruction).toContain('Never use links, images, tables, code blocks')
+    expect(systemInstruction).toContain('Key points')
+    expect(systemInstruction).toContain('Takeaway')
+    // Headings in English above a Japanese summary would read as a translation glitch.
+    expect(systemInstruction).toContain('write them in the summary language too')
+    // The old rule banned every heading, which was right when the output was plain text.
+    expect(systemInstruction).not.toContain('no heading, no preamble')
+  })
+
   it('keeps the rules out of contents, which carries only the untrusted title and body', async () => {
     mockGenerateContent.mockResolvedValue({ text: 'ok' })
     await summarize('My Title', 'The article body text')
