@@ -5,6 +5,7 @@ import type { BookmarkDoc } from '../services/firestore'
 import { fetchMetadata } from '../services/metadataFetcher'
 import { fetchArticleText } from '../services/articleFetcher'
 import { summarize, isSummarizerConfigured, SummarizerUnavailableError } from '../services/summarizer'
+import { generateLabels } from '../services/labeler'
 
 // Thrown when the linked page could not be read (blocked, non-HTML, 404/500, network failure, ...).
 // A sentinel rather than a plain Error so the shared in-flight promise's rejection can still be
@@ -70,6 +71,19 @@ export function createBookmarksRouter(): Router {
       } catch (error) {
         throw new SummaryStorageError(error)
       }
+
+      // Labels are strictly best-effort: generated after the summary is stored so a labels
+      // failure can never cost the already-paid summary, and swallowed so the endpoint's
+      // contract doesn't change. The existing-labels list feeds the "prefer reusing labels"
+      // instruction; failures here are logged with the bookmark id, same as summary failures.
+      try {
+        const existingLabels = await db.listAllLabels()
+        const labels = await generateLabels(bookmark.title, text, existingLabels)
+        await db.updateLabels(bookmark.id, labels)
+      } catch (error) {
+        console.error(`label generation failed for bookmark ${bookmark.id}:`, error)
+      }
+
       return summary
     })()
 

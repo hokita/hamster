@@ -7,6 +7,8 @@ vi.mock('../services/firestore', () => ({
   createBookmark: vi.fn(),
   getBookmark: vi.fn(),
   updateSummary: vi.fn(),
+  updateLabels: vi.fn(),
+  listAllLabels: vi.fn(),
 }))
 vi.mock('../services/metadataFetcher', () => ({
   fetchMetadata: vi.fn(),
@@ -23,12 +25,16 @@ vi.mock('../services/summarizer', async () => {
     SummarizerUnavailableError: actual.SummarizerUnavailableError,
   }
 })
+vi.mock('../services/labeler', () => ({
+  generateLabels: vi.fn(),
+}))
 
 import { createBookmarksRouter } from './bookmarks'
 import * as db from '../services/firestore'
 import { fetchMetadata } from '../services/metadataFetcher'
 import { fetchArticleText } from '../services/articleFetcher'
 import { summarize, isSummarizerConfigured, SummarizerUnavailableError } from '../services/summarizer'
+import { generateLabels } from '../services/labeler'
 
 const app = express()
 app.use(express.json())
@@ -448,5 +454,71 @@ describe('POST /api/bookmarks/:id/summary — concurrent dedup', () => {
     const [res1, res2] = await Promise.all([req1, req2])
     expect(res1.status).toBe(502)
     expect(res2.status).toBe(502)
+  })
+})
+
+describe('POST /api/bookmarks/:id/summary — labels', () => {
+  const bookmark = {
+    id: 'abc',
+    url: 'https://example.com',
+    title: 'Example',
+    createdAt: '2024-01-01T00:00:00.000Z',
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(db.getBookmark).mockResolvedValue(bookmark)
+    vi.mocked(isSummarizerConfigured).mockReturnValue(true)
+    vi.mocked(fetchArticleText).mockResolvedValue('Article text')
+    vi.mocked(summarize).mockResolvedValue('A summary.')
+    vi.mocked(db.updateSummary).mockResolvedValue(undefined)
+    vi.mocked(db.listAllLabels).mockResolvedValue(['react'])
+    vi.mocked(generateLabels).mockResolvedValue(['typescript'])
+    vi.mocked(db.updateLabels).mockResolvedValue(undefined)
+  })
+
+  it('generates labels from the same article text and stores them', async () => {
+    const res = await request(app).post('/api/bookmarks/abc/summary')
+    expect(res.status).toBe(200)
+    expect(generateLabels).toHaveBeenCalledWith('Example', 'Article text', ['react'])
+    expect(db.updateLabels).toHaveBeenCalledWith('abc', ['typescript'])
+  })
+
+  it('stores the summary before generating labels, so a labels failure cannot cost it', async () => {
+    await request(app).post('/api/bookmarks/abc/summary')
+    const summaryOrder = vi.mocked(db.updateSummary).mock.invocationCallOrder[0]
+    const labelsOrder = vi.mocked(generateLabels).mock.invocationCallOrder[0]
+    expect(summaryOrder).toBeLessThan(labelsOrder)
+  })
+
+  it('still returns 200 with the summary when label generation fails', async () => {
+    vi.mocked(generateLabels).mockRejectedValue(new Error('flash-lite down'))
+    const res = await request(app).post('/api/bookmarks/abc/summary')
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual({ summary: 'A summary.' })
+    expect(db.updateLabels).not.toHaveBeenCalled()
+    expect(consoleError).toHaveBeenCalled()
+  })
+
+  it('still returns 200 when listing the existing labels fails', async () => {
+    vi.mocked(db.listAllLabels).mockRejectedValue(new Error('firestore down'))
+    const res = await request(app).post('/api/bookmarks/abc/summary')
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual({ summary: 'A summary.' })
+    expect(generateLabels).not.toHaveBeenCalled()
+  })
+
+  it('still returns 200 when storing the labels fails', async () => {
+    vi.mocked(db.updateLabels).mockRejectedValue(new Error('firestore down'))
+    const res = await request(app).post('/api/bookmarks/abc/summary')
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual({ summary: 'A summary.' })
+  })
+
+  it('never calls the labeler when the summary fails', async () => {
+    vi.mocked(summarize).mockRejectedValue(new Error('gemini down'))
+    const res = await request(app).post('/api/bookmarks/abc/summary')
+    expect(res.status).toBe(502)
+    expect(generateLabels).not.toHaveBeenCalled()
   })
 })
