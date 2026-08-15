@@ -265,9 +265,16 @@ export function createBookmarksRouter(): Router {
 }
 
 // Bounds generous enough that a real conversation never hits them; what they rule out is a
-// runaway or hostile client streaming unbounded payload into a paid Gemini call.
+// runaway or hostile client streaming unbounded payload into a paid Gemini call (express.json()'s
+// 100kb body limit already bounds the total — these keep any single turn sane).
+//
+// The caps differ by role: a user turn is a typed question, but a model turn is a stored answer
+// coming back as history, and the answer budget is 8192 output tokens — around 33k chars of
+// English at the worst. Holding model turns to the user cap wedged real conversations: one long
+// answer and every follow-up was rejected for resending it.
 const MAX_CHAT_MESSAGES = 40
-const MAX_CHAT_MESSAGE_CHARS = 4000
+const MAX_CHAT_USER_MESSAGE_CHARS = 4000
+const MAX_CHAT_MODEL_MESSAGE_CHARS = 40_000
 
 // Returns the validated conversation, or null when the body is not one. The last turn must be
 // the user's — this endpoint answers a pending question, and a history ending in a model turn
@@ -282,7 +289,8 @@ function parseChatMessages(body: unknown): ChatMessage[] | null {
     const { role, text } = message as { role?: unknown; text?: unknown }
     if (role !== 'user' && role !== 'model') return null
     if (typeof text !== 'string' || !text.trim()) return null
-    if (text.length > MAX_CHAT_MESSAGE_CHARS) return null
+    const maxChars = role === 'model' ? MAX_CHAT_MODEL_MESSAGE_CHARS : MAX_CHAT_USER_MESSAGE_CHARS
+    if (text.length > maxChars) return null
   }
   const last = messages[messages.length - 1] as ChatMessage
   if (last.role !== 'user') return null

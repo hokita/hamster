@@ -669,10 +669,39 @@ describe('POST /api/bookmarks/:id/chat', () => {
     expect(answerQuestion).not.toHaveBeenCalled()
   })
 
-  it('caps the length of a single message', async () => {
+  it('caps the length of a user message', async () => {
     const res = await request(app)
       .post('/api/bookmarks/1/chat')
       .send({ messages: [{ role: 'user', text: 'x'.repeat(4001) }] })
+    expect(res.status).toBe(400)
+    expect(answerQuestion).not.toHaveBeenCalled()
+  })
+
+  it('accepts a model turn longer than the user cap, since answers can legitimately be', async () => {
+    // The answer budget is 8192 output tokens — far past 4000 chars. A stored long answer comes
+    // back as history with the next follow-up; rejecting it there would wedge the conversation.
+    const res = await request(app)
+      .post('/api/bookmarks/1/chat')
+      .send({
+        messages: [
+          { role: 'user', text: 'Question?' },
+          { role: 'model', text: 'y'.repeat(30_000) },
+          { role: 'user', text: 'Follow-up?' },
+        ],
+      })
+    expect(res.status).toBe(200)
+  })
+
+  it('still bounds a model turn, just generously', async () => {
+    const res = await request(app)
+      .post('/api/bookmarks/1/chat')
+      .send({
+        messages: [
+          { role: 'user', text: 'Question?' },
+          { role: 'model', text: 'y'.repeat(40_001) },
+          { role: 'user', text: 'Follow-up?' },
+        ],
+      })
     expect(res.status).toBe(400)
     expect(answerQuestion).not.toHaveBeenCalled()
   })
