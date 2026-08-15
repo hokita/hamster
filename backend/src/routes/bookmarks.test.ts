@@ -652,6 +652,33 @@ describe('POST /api/bookmarks/:id/chat', () => {
     expect(res.status).toBe(400)
   })
 
+  it('returns 400 when the history does not alternate user/model turns', async () => {
+    // Gemini rejects consecutive same-role turns; catching the shape here answers with a
+    // validation error instead of fetching the article and surfacing a misleading 502.
+    const res = await request(app)
+      .post('/api/bookmarks/1/chat')
+      .send({
+        messages: [
+          { role: 'user', text: 'One?' },
+          { role: 'user', text: 'Two?' },
+        ],
+      })
+    expect(res.status).toBe(400)
+    expect(fetchArticleText).not.toHaveBeenCalled()
+  })
+
+  it('returns 400 when the history starts with a model turn', async () => {
+    const res = await request(app)
+      .post('/api/bookmarks/1/chat')
+      .send({
+        messages: [
+          { role: 'model', text: 'Answer.' },
+          { role: 'user', text: 'Question?' },
+        ],
+      })
+    expect(res.status).toBe(400)
+  })
+
   it('returns 400 when a message text is blank', async () => {
     const res = await request(app)
       .post('/api/bookmarks/1/chat')

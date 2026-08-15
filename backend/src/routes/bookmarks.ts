@@ -276,18 +276,20 @@ const MAX_CHAT_MESSAGES = 40
 const MAX_CHAT_USER_MESSAGE_CHARS = 4000
 const MAX_CHAT_MODEL_MESSAGE_CHARS = 40_000
 
-// Returns the validated conversation, or null when the body is not one. The last turn must be
-// the user's — this endpoint answers a pending question, and a history ending in a model turn
-// has none.
+// Returns the validated conversation, or null when the body is not one. Roles must alternate
+// starting from a user turn — Gemini rejects consecutive same-role turns, and catching the shape
+// here answers 400 instead of fetching the article and surfacing that rejection as a 502 — and
+// the last turn must also be the user's: this endpoint answers a pending question, and a history
+// ending in a model turn has none.
 function parseChatMessages(body: unknown): ChatMessage[] | null {
   if (typeof body !== 'object' || body === null) return null
   const { messages } = body as { messages?: unknown }
   if (!Array.isArray(messages) || messages.length === 0) return null
   if (messages.length > MAX_CHAT_MESSAGES) return null
-  for (const message of messages) {
+  for (const [index, message] of messages.entries()) {
     if (typeof message !== 'object' || message === null) return null
     const { role, text } = message as { role?: unknown; text?: unknown }
-    if (role !== 'user' && role !== 'model') return null
+    if (role !== (index % 2 === 0 ? 'user' : 'model')) return null
     if (typeof text !== 'string' || !text.trim()) return null
     const maxChars = role === 'model' ? MAX_CHAT_MODEL_MESSAGE_CHARS : MAX_CHAT_USER_MESSAGE_CHARS
     if (text.length > maxChars) return null
