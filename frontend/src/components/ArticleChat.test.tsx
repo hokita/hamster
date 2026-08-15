@@ -185,6 +185,18 @@ describe('ArticleChat', () => {
     expect(screen.getByRole('button', { name: 'Ask' })).toBeDisabled()
   })
 
+  it('announces a failed request, not just the waiting status vanishing', async () => {
+    // The role="status" spinner disappears when the request settles; without an alert a
+    // screen-reader user hears silence where a sighted one sees the error and Retry.
+    vi.mocked(api.askQuestion).mockRejectedValue(new Error('API error: 502'))
+    render(<ArticleChat bookmarkId="1" />)
+
+    ask('A question?')
+    await screen.findByText("Couldn't answer that question.")
+
+    expect(screen.getByRole('alert')).toHaveTextContent("Couldn't answer that question.")
+  })
+
   it('marks each message with its own language, so screen readers pronounce it right', async () => {
     // index.html declares lang="en" for the document; without an override a Japanese answer is
     // read with English pronunciation rules. Same derivation the summary uses, but per message —

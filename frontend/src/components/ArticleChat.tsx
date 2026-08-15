@@ -105,7 +105,9 @@ export default function ArticleChat({ bookmarkId }: { bookmarkId: string }) {
 
       {askFailed && (
         <div className="mb-3 flex items-center gap-3">
-          <p className="m-0 flex items-center gap-2 text-sm text-red-700">
+          {/* role="alert": the waiting status vanishing is the only other signal a failure
+              gives, and a screen reader hears nothing in it. */}
+          <p role="alert" className="m-0 flex items-center gap-2 text-sm text-red-700">
             <FontAwesomeIcon icon={faTriangleExclamation} aria-hidden="true" />
             Couldn&apos;t answer that question.
           </p>
