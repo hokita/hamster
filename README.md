@@ -54,6 +54,19 @@ lighter `gemini-3.5-flash-lite` model from the same page content. Labels appear 
 in the list and on each bookmark's page. They are best-effort: a labelling failure never
 blocks the summary, and regenerating a summary regenerates the labels too.
 
+## Asking about an article
+
+Each bookmark's page has an "Ask about this article" box under the summary. Questions are
+answered by the same Gemini model from the article's fetched text, in the language the question
+was asked in, and only from what the article actually says — when it doesn't cover the question,
+the answer says so instead of guessing. Follow-up questions see the earlier exchange, so "why?"
+after an answer works. The conversation is not saved anywhere: it lives on the page and is gone
+on navigation, and the backend refetches the article for every question rather than holding any
+state. A failed question stays in the chat with a Retry button next to the error.
+
+Like summaries, asking needs `GEMINI_API_KEY`; without it the box answers every question with
+the failure state.
+
 ## Local development
 
 **1. Start the Firebase emulators (Auth + Firestore)**
@@ -100,7 +113,7 @@ Open http://localhost:5173 and sign in — locally, sign-in goes through the Aut
 | `FIREBASE_PROJECT_ID` | Firebase project ID (`demo-hamster` for local dev — no real GCP project needed) |
 | `FRONTEND_URL` | Frontend origin for CORS |
 | `PORT` | Port the backend listens on |
-| `GEMINI_API_KEY` | Gemini API key used to generate bookmark summaries (summarization is disabled when unset) |
+| `GEMINI_API_KEY` | Gemini API key used to generate bookmark summaries and answer questions about articles (both are disabled when unset) |
 | `FIRESTORE_EMULATOR_HOST` | Host:port of the Firestore emulator (routes the Admin SDK to it instead of production) |
 | `FIREBASE_AUTH_EMULATOR_HOST` | Host:port of the Auth emulator (routes the Admin SDK to it instead of production) |
 

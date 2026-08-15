@@ -17,6 +17,7 @@ import type { Bookmark } from '../api'
 import { formatRelativeTime } from '../relativeTime'
 import { describeBookmark } from '../bookmarkLabel'
 import DeleteBookmarkButton from '../components/DeleteBookmarkButton'
+import ArticleChat from '../components/ArticleChat'
 
 // Generation of the new whole-article summaries can take up to the backend's 45s timeout.
 // Polling every 2 seconds for up to 60 seconds (30 attempts) ensures the window outlives
@@ -470,6 +471,10 @@ export default function BookmarkPage() {
           </button>
         </div>
       )}
+
+      {/* Keyed by id: React Router reuses this page component across /bookmarks/:id navigations,
+          and the key remounts the chat so one article's conversation never carries onto another. */}
+      <ArticleChat key={bookmark.id} bookmarkId={bookmark.id} />
 
       {/* Kept below the summary and behind a rule: it is the one irreversible action on the page,
           so it sits away from the buttons a reader reaches for repeatedly. */}

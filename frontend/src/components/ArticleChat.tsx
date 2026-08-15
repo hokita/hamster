@@ -1,0 +1,122 @@
+import { useState } from 'react'
+import type { FormEvent } from 'react'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import {
+  faPaperPlane,
+  faRotate,
+  faSpinner,
+  faTriangleExclamation,
+} from '@fortawesome/free-solid-svg-icons'
+import { api } from '../api'
+import type { ChatMessage } from '../api'
+
+// The chat is deliberately not persisted: it lives in this component's state and is gone on
+// navigation. The parent mounts this with key={bookmark.id}, so switching bookmarks resets it
+// instead of carrying one article's conversation onto another.
+export default function ArticleChat({ bookmarkId }: { bookmarkId: string }) {
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [question, setQuestion] = useState('')
+  const [isAsking, setIsAsking] = useState(false)
+  const [askFailed, setAskFailed] = useState(false)
+
+  // Sends a history whose last turn is the pending user question — the shape the endpoint
+  // requires. Shared by submit (which appends the new question first) and Retry (which resends
+  // the history as it stands).
+  async function send(conversation: ChatMessage[]) {
+    setIsAsking(true)
+    setAskFailed(false)
+    try {
+      const { answer } = await api.askQuestion(bookmarkId, conversation)
+      setMessages([...conversation, { role: 'model', text: answer }])
+    } catch {
+      // The unanswered question stays in the list so Retry can resend the same conversation.
+      setAskFailed(true)
+    } finally {
+      setIsAsking(false)
+    }
+  }
+
+  function handleSubmit(event: FormEvent) {
+    event.preventDefault()
+    const text = question.trim()
+    if (!text || isAsking) return
+    const conversation = [...messages, { role: 'user' as const, text }]
+    setMessages(conversation)
+    setQuestion('')
+    void send(conversation)
+  }
+
+  return (
+    <div className="mt-10">
+      <h2 className="mt-0 mb-3 text-sm font-semibold uppercase tracking-wide text-gray-400">
+        Ask about this article
+      </h2>
+
+      {messages.length > 0 && (
+        <ul className="m-0 mb-3 flex list-none flex-col gap-2 p-0">
+          {messages.map((message, index) => (
+            <li
+              key={index}
+              className={
+                message.role === 'user'
+                  ? 'ml-8 self-end rounded-lg bg-amber-50 px-3 py-2 text-sm text-gray-800'
+                  : 'mr-8 self-start whitespace-pre-wrap rounded-lg bg-gray-100 px-3 py-2 text-sm text-gray-800'
+              }
+            >
+              {message.text}
+            </li>
+          ))}
+          {isAsking && (
+            <li
+              role="status"
+              aria-label="Waiting for the answer"
+              className="mr-8 self-start rounded-lg bg-gray-100 px-3 py-2 text-sm text-gray-400"
+            >
+              <FontAwesomeIcon icon={faSpinner} spin aria-hidden="true" />
+            </li>
+          )}
+        </ul>
+      )}
+
+      {askFailed && (
+        <div className="mb-3 flex items-center gap-3">
+          <p className="m-0 flex items-center gap-2 text-sm text-red-700">
+            <FontAwesomeIcon icon={faTriangleExclamation} aria-hidden="true" />
+            Couldn&apos;t answer that question.
+          </p>
+          <button
+            onClick={() => void send(messages)}
+            disabled={isAsking}
+            className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-800 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+          >
+            <FontAwesomeIcon icon={faRotate} aria-hidden="true" />
+            Retry
+          </button>
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit} className="flex items-start gap-2">
+        <textarea
+          aria-label="Ask a question about this article"
+          value={question}
+          onChange={(event) => setQuestion(event.target.value)}
+          placeholder="e.g. What is the main argument?"
+          rows={2}
+          className="min-w-0 flex-1 resize-y rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-800 placeholder:text-gray-400 focus:border-amber-700 focus:outline-none"
+        />
+        <button
+          type="submit"
+          disabled={isAsking || !question.trim()}
+          className="inline-flex items-center gap-2 rounded-md bg-amber-700 px-3 py-2 text-sm font-medium text-white hover:bg-amber-800 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+        >
+          <FontAwesomeIcon
+            icon={isAsking ? faSpinner : faPaperPlane}
+            spin={isAsking}
+            aria-hidden="true"
+          />
+          Ask
+        </button>
+      </form>
+    </div>
+  )
+}
