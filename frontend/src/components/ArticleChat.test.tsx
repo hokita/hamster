@@ -149,6 +149,22 @@ describe('ArticleChat', () => {
     ).toHaveAttribute('maxLength', '4000')
   })
 
+  it('closes the form before the conversation outgrows the backend body limit', async () => {
+    // express.json() rejects bodies over 100kb before the route's own validation runs, and by
+    // then the oversized history is retained — not even Discard can shrink it. A few long
+    // answers get there while every individual turn is valid, so the form has to close while
+    // one more full-size question still fits.
+    vi.mocked(api.askQuestion).mockResolvedValue({ answer: 'y'.repeat(80_000) })
+    render(<ArticleChat bookmarkId="1" />)
+
+    ask('A question?')
+
+    expect(await screen.findByText(/conversation is full/i)).toBeInTheDocument()
+    expect(
+      screen.getByRole('textbox', { name: 'Ask a question about this article' })
+    ).toBeDisabled()
+  })
+
   it('stops accepting questions once the conversation reaches the backend cap', async () => {
     // The backend 400s a conversation over 40 messages; the 21st question would push it to 41
     // and every ask from there would fail. Close the input at the cap instead.

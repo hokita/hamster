@@ -57,8 +57,9 @@ blocks the summary, and regenerating a summary regenerates the labels too.
 ## Asking about an article
 
 Each bookmark's page has an "Ask about this article" box under the summary. Questions are
-answered by the same Gemini model from the article's fetched text, in the language the question
-was asked in, and only from what the article actually says — when it doesn't cover the question,
+answered by the same Gemini model from the article's fetched text — in the question's language
+when that is English or Japanese, in English otherwise, same policy as summaries — and only
+from what the article actually says — when it doesn't cover the question,
 the answer says so instead of guessing. Follow-up questions see the earlier exchange, so "why?"
 after an answer works. The conversation is not saved anywhere: it lives on the page and is gone
 on navigation, and the backend refetches the article for every question rather than holding any

@@ -17,6 +17,12 @@ import { textLanguage } from '../textLanguage'
 // would leave the chat failing forever with no way out short of navigating away.
 const MAX_MESSAGES = 40
 const MAX_QUESTION_CHARS = 4000
+// The backend's express.json() rejects bodies over 100kb before the route's own validation runs,
+// and by then the oversized history is retained — not even Discard can shrink it. A few long
+// answers get there while every individual turn stays valid, so the history is also bounded in
+// bytes (what the limit is measured in — Japanese runs 3 bytes a char), with room left for one
+// full-size question (4000 chars ≤ 16kb) plus JSON overhead under the 100kb line.
+const MAX_HISTORY_BYTES = 70_000
 
 // The chat is deliberately not persisted: it lives in this component's state and is gone on
 // navigation. The parent mounts this with key={bookmark.id}, so switching bookmarks resets it
@@ -27,8 +33,11 @@ export default function ArticleChat({ bookmarkId }: { bookmarkId: string }) {
   const [isAsking, setIsAsking] = useState(false)
   const [askFailed, setAskFailed] = useState(false)
 
-  // A new question appends one user turn, so the conversation is full once it holds MAX_MESSAGES.
-  const isFull = messages.length >= MAX_MESSAGES
+  // A new question appends one user turn, so the conversation is full once it holds MAX_MESSAGES
+  // — or once its serialized size leaves no safe room for that turn.
+  const isFull =
+    messages.length >= MAX_MESSAGES ||
+    new TextEncoder().encode(JSON.stringify(messages)).length >= MAX_HISTORY_BYTES
 
   // Sends a history whose last turn is the pending user question — the shape the endpoint
   // requires. Shared by submit (which appends the new question first) and Retry (which resends

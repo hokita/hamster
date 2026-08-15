@@ -77,12 +77,18 @@ describe('answerQuestion', () => {
     expect(systemInstruction).toContain('does not cover')
   })
 
-  it('asks for the answer in the language the question was asked in', async () => {
+  it('asks for the answer in the question language, falling back to English', async () => {
+    // Same policy as the summarizer: the app renders English and Japanese (its lang derivation
+    // knows only those two scripts), so the prompt must not promise other languages — an answer
+    // in one would be marked lang="en" and mispronounced by screen readers.
     mockGenerateContent.mockResolvedValue({ text: 'ok' })
     await answerQuestion('My Title', 'The article body text', question)
     const systemInstruction = mockGenerateContent.mock.calls[0][0].config
       .systemInstruction as string
     expect(systemInstruction).toContain('language the question was asked in')
+    expect(systemInstruction).toContain('English or')
+    expect(systemInstruction).toContain('Japanese')
+    expect(systemInstruction).toContain('any other language, answer in English')
   })
 
   it('sends the fenced article in the first user turn, then the conversation turns', async () => {
