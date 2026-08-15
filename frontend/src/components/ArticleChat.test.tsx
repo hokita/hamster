@@ -215,6 +215,23 @@ describe('ArticleChat', () => {
     expect(screen.getByText('What does the article say?')).toHaveAttribute('lang', 'en')
   })
 
+  it('constrains bubbles to the content width and breaks unbroken tokens', async () => {
+    // A 4000-char unbroken question or a long URL in an answer would otherwise set the flex
+    // item's intrinsic width and drag the whole page into horizontal overflow. jsdom computes no
+    // layout, so this pins the classes that prevent it.
+    vi.mocked(api.askQuestion).mockResolvedValue({ answer: 'x'.repeat(500) })
+    render(<ArticleChat bookmarkId="1" />)
+
+    ask('y'.repeat(500))
+
+    const answer = await screen.findByText('x'.repeat(500))
+    const question = screen.getByText('y'.repeat(500))
+    for (const bubble of [answer, question]) {
+      expect(bubble.className).toContain('max-w-full')
+      expect(bubble.className).toContain('break-words')
+    }
+  })
+
   it('exposes the conversation as a log, so arriving answers are announced', async () => {
     // Without a live region a screen-reader user hears the waiting status appear and vanish, and
     // then nothing: the answer lands in an ordinary list, unannounced. role="log" is the chat
