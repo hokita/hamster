@@ -42,7 +42,7 @@ describe('summarize', () => {
     expect(mockGenerateContent).toHaveBeenCalledWith(
       expect.objectContaining({
         model: 'gemini-3.7-flash',
-        config: expect.objectContaining({ maxOutputTokens: 8192 }),
+        config: expect.objectContaining({ maxOutputTokens: 16384 }),
       })
     )
   })
@@ -84,16 +84,29 @@ describe('summarize', () => {
   })
 
   it('asks for a summary long enough to be worth reading', async () => {
-    // The first version asked for three sentences and three bullets, which read as a teaser rather
-    // than a summary. Two paragraphs around four to six substantive bullets is the shape now.
+    // The summary must be readable INSTEAD of the article, not as a teaser for it. Eight to twelve
+    // substantive bullets carrying the article's actual content is the shape; the old four-to-six
+    // digest is the thing the user rejected as "too short and less information".
     mockGenerateContent.mockResolvedValue({ text: 'ok' })
     await summarize('My Title', 'The article body text')
     const systemInstruction = mockGenerateContent.mock.calls[0][0].config
       .systemInstruction as string
     expect(systemInstruction).toContain('three to five sentences')
-    expect(systemInstruction).toContain('four to six bullet points')
+    expect(systemInstruction).toContain('eight to twelve bullet points')
+    expect(systemInstruction).toContain('two to four complete sentences')
     expect(systemInstruction).toContain('two or three sentences')
-    expect(systemInstruction).not.toContain('exactly three bullet points')
+    expect(systemInstruction).not.toContain('four to six bullet points')
+  })
+
+  it('states the replace-reading goal and demands full coverage of the article', async () => {
+    mockGenerateContent.mockResolvedValue({ text: 'ok' })
+    await summarize('My Title', 'The article body text')
+    const systemInstruction = mockGenerateContent.mock.calls[0][0].config
+      .systemInstruction as string
+    expect(systemInstruction).toContain('full substance without opening it')
+    expect(systemInstruction).toContain('every major claim')
+    // The old goal framed the summary as a read-it-or-not teaser.
+    expect(systemInstruction).not.toContain('deciding whether to read it')
   })
 
   it('asks for Markdown, restricted to the constructs the page renders', async () => {
