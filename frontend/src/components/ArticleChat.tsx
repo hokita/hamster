@@ -9,6 +9,7 @@ import {
 } from '@fortawesome/free-solid-svg-icons'
 import { api } from '../api'
 import type { ChatMessage } from '../api'
+import { textLanguage } from '../textLanguage'
 
 // Mirrors of the backend's chat bounds (parseChatMessages in backend/src/routes/bookmarks.ts).
 // They must be enforced here too: a failed turn deliberately stays in the history so Retry can
@@ -49,7 +50,7 @@ export default function ArticleChat({ bookmarkId }: { bookmarkId: string }) {
   function handleSubmit(event: FormEvent) {
     event.preventDefault()
     const text = question.trim()
-    if (!text || isAsking || isFull || text.length > MAX_QUESTION_CHARS) return
+    if (!text || isAsking || isFull || askFailed || text.length > MAX_QUESTION_CHARS) return
     const conversation = [...messages, { role: 'user' as const, text }]
     setMessages(conversation)
     setQuestion('')
@@ -63,10 +64,15 @@ export default function ArticleChat({ bookmarkId }: { bookmarkId: string }) {
       </h2>
 
       {messages.length > 0 && (
-        <ul className="m-0 mb-3 flex list-none flex-col gap-2 p-0">
+        // role="log" is the chat semantic: an implicit polite live region that announces
+        // additions — each arriving answer — without re-reading the whole history.
+        <ul role="log" aria-label="Conversation" className="m-0 mb-3 flex list-none flex-col gap-2 p-0">
           {messages.map((message, index) => (
             <li
               key={index}
+              // Per message, not per conversation: a question in one language can get context
+              // from turns in another, so each bubble carries its own derived lang.
+              lang={textLanguage(message.text)}
               className={
                 message.role === 'user'
                   ? 'ml-8 self-end rounded-lg bg-amber-50 px-3 py-2 text-sm text-gray-800'
@@ -102,6 +108,18 @@ export default function ArticleChat({ bookmarkId }: { bookmarkId: string }) {
             <FontAwesomeIcon icon={faRotate} aria-hidden="true" />
             Retry
           </button>
+          {/* The way out when retrying keeps failing: drops the unanswered turn so the form,
+              closed while a failed turn is pending, opens again. */}
+          <button
+            onClick={() => {
+              setMessages(messages.slice(0, -1))
+              setAskFailed(false)
+            }}
+            disabled={isAsking}
+            className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-800 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+          >
+            Discard
+          </button>
         </div>
       )}
 
@@ -119,12 +137,14 @@ export default function ArticleChat({ bookmarkId }: { bookmarkId: string }) {
           placeholder="e.g. What is the main argument?"
           rows={2}
           maxLength={MAX_QUESTION_CHARS}
-          disabled={isFull}
+          // Closed while a failed turn is pending: another question would append a second
+          // consecutive user turn, and the one answer would read as a reply to both.
+          disabled={isFull || askFailed}
           className="min-w-0 flex-1 resize-y rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-800 placeholder:text-gray-400 focus:border-amber-700 focus:outline-none disabled:bg-gray-50 disabled:cursor-not-allowed"
         />
         <button
           type="submit"
-          disabled={isAsking || isFull || !question.trim()}
+          disabled={isAsking || isFull || askFailed || !question.trim()}
           className="inline-flex items-center gap-2 rounded-md bg-amber-700 px-3 py-2 text-sm font-medium text-white hover:bg-amber-800 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
         >
           <FontAwesomeIcon
