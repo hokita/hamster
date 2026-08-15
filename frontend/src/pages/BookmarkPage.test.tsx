@@ -525,7 +525,7 @@ describe('BookmarkPage summary polling', () => {
       await vi.advanceTimersByTimeAsync(60000)
     })
 
-    expect(vi.mocked(api.getBookmark).mock.calls.length).toBe(countAfterFailure + 15) // poll budget
+    expect(vi.mocked(api.getBookmark).mock.calls.length).toBe(countAfterFailure + 30) // poll budget
     expect(screen.getByText('First take.')).toBeInTheDocument()
     expect(screen.getByText(/Couldn't regenerate the summary/)).toBeInTheDocument()
   })
@@ -555,10 +555,10 @@ describe('BookmarkPage summary polling', () => {
     expect(api.getBookmark).toHaveBeenCalledTimes(1)
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(30000)
+      await vi.advanceTimersByTimeAsync(60000)
     })
     const countAtBudget = vi.mocked(api.getBookmark).mock.calls.length
-    expect(countAtBudget).toBe(16) // 1 initial load + 15 polls
+    expect(countAtBudget).toBe(31) // 1 initial load + 30 polls
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10000)
