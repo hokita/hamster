@@ -78,16 +78,23 @@ export async function answerQuestion(
 
   const ai = new GoogleGenAI({ apiKey })
   const signal = AbortSignal.timeout(TIMEOUT_MS)
+  // The article rides in the user channel rather than the system instruction: it is untrusted
+  // page content, and the system channel is reserved for the trusted rules above. It cannot be
+  // its own leading turn, though — the route guarantees messages starts with a user turn, and
+  // Gemini's multi-turn contract wants user/model roles alternating, so a separate article turn
+  // followed by the first question would be two consecutive user contents. Instead the article is
+  // an extra part of the first user turn: same channel, same fencing, valid alternation. The rest
+  // of the conversation follows as its own turns, so a follow-up sees the exchanges before it.
+  const [firstMessage, ...laterMessages] = messages
   const response = await withSignal(
     ai.models.generateContent({
       model: MODEL,
-      // The article rides in a leading user turn rather than the system instruction: it is
-      // untrusted page content, and the system channel is reserved for the trusted rules above.
-      // The conversation follows as alternating user/model turns, so a follow-up question sees
-      // the exchanges before it.
       contents: [
-        { role: 'user', parts: [{ text: buildArticleTurn(title, text) }] },
-        ...messages.map((message) => ({
+        {
+          role: 'user',
+          parts: [{ text: buildArticleTurn(title, text) }, { text: firstMessage.text }],
+        },
+        ...laterMessages.map((message) => ({
           role: message.role,
           parts: [{ text: message.text }],
         })),

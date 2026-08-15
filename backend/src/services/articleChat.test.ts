@@ -91,7 +91,11 @@ describe('answerQuestion', () => {
     expect(systemInstruction).toContain('any other language, answer in English')
   })
 
-  it('sends the fenced article in the first user turn, then the conversation turns', async () => {
+  it('merges the fenced article and the first question into one user turn, so roles alternate', async () => {
+    // Gemini's multi-turn contract is alternating user/model roles; a separate leading article
+    // turn followed by the first question is two consecutive user contents, which the API can
+    // reject. The article rides as an extra part of the first user turn instead — same channel,
+    // same fencing, valid alternation.
     mockGenerateContent.mockResolvedValue({ text: 'ok' })
     const conversation: ChatMessage[] = [
       { role: 'user', text: 'First question?' },
@@ -103,14 +107,15 @@ describe('answerQuestion', () => {
       role: string
       parts: { text: string }[]
     }[]
-    expect(contents).toHaveLength(4)
-    expect(contents[0].role).toBe('user')
+    expect(contents).toHaveLength(3)
+    expect(contents.map((content) => content.role)).toEqual(['user', 'model', 'user'])
+    expect(contents[0].parts).toHaveLength(2)
     expect(contents[0].parts[0].text).toMatch(/"""\s*My Title\s*"""/)
     expect(contents[0].parts[0].text).toMatch(/"""\s*The article body text\s*"""/)
     expect(contents[0].parts[0].text).toContain('Untrusted')
-    expect(contents[1]).toEqual({ role: 'user', parts: [{ text: 'First question?' }] })
-    expect(contents[2]).toEqual({ role: 'model', parts: [{ text: 'First answer.' }] })
-    expect(contents[3]).toEqual({ role: 'user', parts: [{ text: 'Follow-up question?' }] })
+    expect(contents[0].parts[1]).toEqual({ text: 'First question?' })
+    expect(contents[1]).toEqual({ role: 'model', parts: [{ text: 'First answer.' }] })
+    expect(contents[2]).toEqual({ role: 'user', parts: [{ text: 'Follow-up question?' }] })
   })
 
   it('keeps the rules out of the article turn', async () => {
