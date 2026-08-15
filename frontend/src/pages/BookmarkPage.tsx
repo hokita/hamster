@@ -18,13 +18,13 @@ import { formatRelativeTime } from '../relativeTime'
 import { describeBookmark } from '../bookmarkLabel'
 import DeleteBookmarkButton from '../components/DeleteBookmarkButton'
 
-// Summary generation typically takes 10-25 seconds in the background (article fetch + Gemini
-// call). Polling every 2 seconds for up to 30 seconds (15 attempts) covers the normal case
-// without polling indefinitely; once the budget is spent the existing Generate button remains
-// as the fallback. The endpoint this polls is a cheap Firestore read, not a Gemini call, so
-// polling costs nothing but a handful of extra reads.
+// Generation of the new whole-article summaries can take up to the backend's 45s timeout.
+// Polling every 2 seconds for up to 60 seconds (30 attempts) ensures the window outlives
+// the backend's worst case without polling indefinitely; once the budget is spent the existing
+// Generate button remains as a fallback. The endpoint this polls is a cheap Firestore read,
+// not a Gemini call, so polling costs nothing but a handful of extra reads.
 const POLL_INTERVAL_MS = 2000
-const MAX_POLL_ATTEMPTS = 15
+const MAX_POLL_ATTEMPTS = 30
 
 // Label equality, treating absent and present-but-different alike: the poll below adopts any
 // content change, including labels disappearing (the atomic clear that starts a regeneration).
@@ -224,7 +224,7 @@ export default function BookmarkPage() {
   // the constants above for why a fresh budget on resume is fine.
   //
   // Accepted cost: a legacy bookmark with a summary but no labels polls out its bounded budget
-  // (15 cheap reads) once per visit and stops; the Regenerate button is its backfill path.
+  // (30 cheap reads) once per visit and stops; the Regenerate button is its backfill path.
   useEffect(() => {
     if (!id) return
     if (!bookmark) return

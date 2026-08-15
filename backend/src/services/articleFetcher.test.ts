@@ -67,10 +67,44 @@ describe('fetchArticleText', () => {
     await expect(fetchArticleText('https://example.com')).resolves.toBe('one two')
   })
 
-  it('truncates the text to 20000 characters', async () => {
-    allow(`<body><p>${'a'.repeat(30000)}</p></body>`)
+  it('truncates the text to 200000 characters', async () => {
+    allow(`<body><p>${'a'.repeat(250_000)}</p></body>`)
     const text = await fetchArticleText('https://example.com')
-    expect(text).toHaveLength(20000)
+    expect(text).toHaveLength(200_000)
+  })
+
+  it('keeps the bytes already read when the stream dies mid-body', async () => {
+    // Raising MAX_BYTES means a slow large page can still be mid-read when the 8s fetch deadline
+    // aborts the stream. The bytes already delivered are a perfectly good truncated article — they
+    // must survive as a truncation (which the two-pass strip already handles), not be discarded
+    // wholesale by the outer catch.
+    const bytes = new TextEncoder().encode(
+      '<body><p>Delivered before the deadline</p><div class="rest'
+    )
+    let calls = 0
+    vi.mocked(fetchAllowedUrl).mockResolvedValue({
+      response: {
+        status: 200,
+        headers: {
+          get: (name: string) =>
+            name.toLowerCase() === 'content-type' ? 'text/html; charset=utf-8' : null,
+        },
+        body: {
+          getReader: () => ({
+            read: async () => {
+              calls++
+              if (calls === 1) return { done: false, value: bytes }
+              throw new DOMException('The operation was aborted.', 'AbortError')
+            },
+            cancel: async () => {},
+          }),
+        },
+      } as unknown as Response,
+      finalUrl: 'https://example.com',
+    })
+    await expect(fetchArticleText('https://example.com')).resolves.toBe(
+      'Delivered before the deadline'
+    )
   })
 
   it('returns null when the content type is not HTML', async () => {

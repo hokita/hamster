@@ -9,10 +9,14 @@ import {
 
 // The whole page body is read here, not just the head, so the bound is larger than
 // metadataFetcher's — but still bounded: a runaway response must not be able to exhaust memory.
-const MAX_BYTES = 300_000
-// Matches eagle's maxPromptChars. Well past the length of any article worth summarizing, and
-// short enough to keep one request's token cost predictable.
-const MAX_CHARS = 20_000
+// 300KB of fetched HTML (markup overhead, 3-bytes-per-char Japanese) often yields far less text
+// than MAX_CHARS below; the byte cap must stay comfortably ahead of it or it silently becomes the
+// real limit. Still bounded: this is the network/memory guard, not the text-length guard.
+const MAX_BYTES = 1_500_000
+// The summary is meant to replace reading the article, so the model has to see the whole thing.
+// 200k chars ≈ 50k tokens — well inside gemini-3.7-flash's 1M context; covers all but
+// book-length pages.
+const MAX_CHARS = 200_000
 const FETCH_TIMEOUT_MS = 8000
 
 async function readBoundedBytes(response: Response): Promise<Uint8Array> {
@@ -21,8 +25,18 @@ async function readBoundedBytes(response: Response): Promise<Uint8Array> {
   const chunks: Uint8Array[] = []
   let bytesRead = 0
   while (bytesRead < MAX_BYTES) {
-    const { done, value } = await reader.read()
-    if (done) break
+    let result: { done: boolean; value?: Uint8Array }
+    try {
+      result = await reader.read()
+    } catch {
+      // A mid-body failure — most often FETCH_TIMEOUT_MS aborting a slow stream now that the byte
+      // cap is large enough to outlast it. The bytes already delivered are a valid truncated page
+      // (the two-pass strip handles a cut-off tag); losing them because the tail never arrived
+      // would fail pages the smaller cap used to fetch fine.
+      break
+    }
+    if (result.done || !result.value) break
+    const value = result.value
     const remaining = MAX_BYTES - bytesRead
     const chunk = value.byteLength > remaining ? value.subarray(0, remaining) : value
     chunks.push(chunk)

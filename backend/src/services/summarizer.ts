@@ -6,20 +6,23 @@ import { withSignal } from './safeFetch'
 // ListModels on 2026-08-15 — never extrapolate Gemini ids from family patterns (the labeler
 // shipped a nonexistent one that way).
 const MODEL = 'gemini-3.7-flash'
-const TIMEOUT_MS = 20_000
-// The prompt asks for two paragraphs plus four to six bullets, but nothing stops the model from
-// ignoring that. The input side is bounded by articleFetcher; the output side is bounded here.
+const TIMEOUT_MS = 45_000
+// a ~2k-token summary of a ~50k-token input fits well inside 45s at Flash speeds, but not always
+// inside the old 20s.
+// The prompt asks for eight to twelve bullets, but nothing stops the model from ignoring that.
+// The input side is bounded by articleFetcher; the output side is bounded here.
 //
 // This budget also has to cover the model's thinking tokens, which are drawn from the same pool.
 // eagle's 1024 was sized for flash-lite, which barely thinks; on gemini-3.6-flash it was not enough
 // to reach the first output token, so every request died on the MAX_TOKENS check below. Sized for
-// the ~600 tokens the prompt actually asks for — Japanese output costs more tokens per sentence
-// than English, so budget for the expensive language — plus ample headroom for reasoning.
-const MAX_OUTPUT_TOKENS = 8192
+// the ~1.5–2.5k tokens the prompt now asks for in Japanese — Japanese output costs more tokens
+// per sentence than English, so budget for the expensive language — plus ample headroom for
+// LOW-thinking overhead.
+const MAX_OUTPUT_TOKENS = 16384
 // Deciding what a page says is a reading task, not a reasoning one, so buy the least thinking on
 // offer: it keeps latency and per-summary cost down and leaves the budget above to the summary
 // itself. Belt and braces with MAX_OUTPUT_TOKENS — either alone fixes the truncation, but low
-// thinking also stops a pathological page from quietly costing 8k output tokens of reasoning.
+// thinking also stops a pathological page from quietly costing 16k output tokens of reasoning.
 // gemini-3.7-flash rejects MINIMAL with 400 INVALID_ARGUMENT (verified live 2026-08-15); LOW is
 // the least it accepts.
 const THINKING_LEVEL = ThinkingLevel.LOW
@@ -44,7 +47,7 @@ export function isSummarizerConfigured(): boolean {
 // a guarantee: it raises the bar for a hostile page to override these rules, it does not eliminate
 // the possibility. The realistic worst case if it's bypassed is a misleading summary, not a breach.
 const SYSTEM_INSTRUCTION = [
-  'Summarize the following web page for someone deciding whether to read it.',
+  'Summarize the following web page so the reader gets the article\'s full substance without opening it.',
   '',
   'Write the summary in Markdown, using only these constructs: paragraphs, "## " section headings,',
   '"- " bullet lists, and **bold** for emphasis. Never use links, images, tables, code blocks,',
@@ -59,10 +62,12 @@ const SYSTEM_INSTRUCTION = [
   '  or navigation label in another language.',
   '- Start with an overview paragraph of three to five sentences: what the article covers and what',
   '  it argues or concludes. No heading above it.',
-  '- Then a "## " heading meaning "Key points", followed by four to six bullet points, each on its',
-  '  own line starting with "- ". Open each bullet with a two-to-four word summary of the point in',
-  '  bold, then " — ", then one or two complete sentences carrying a concrete detail — a fact, a',
-  '  figure, a step, an argument — rather than a bare topic label.',
+  '- Then a "## " heading meaning "Key points", followed by eight to twelve bullet points, each on',
+  '  its own line starting with "- ". Open each bullet with a two-to-four word summary of the point',
+  '  in bold, then " — ", then two to four complete sentences carrying the article\'s concrete',
+  '  substance — facts, figures, names, steps, arguments — rather than a bare topic label.',
+  '- Between them, the bullets must cover every major claim, result, or step in the article; a',
+  '  reader of the summary alone should not miss anything important.',
   '- Finish with a "## " heading meaning "Takeaway", then a closing paragraph of',
   '  two or three sentences covering the main takeaway and who the article is most useful to.',
   '- Bold sparingly outside the bullet lead-ins: a handful of key terms or figures at most, so the',
@@ -112,8 +117,8 @@ export async function summarize(title: string, text: string): Promise<string> {
     signal
   )
 
-  // The prompt asks for two paragraphs plus a handful of bullets — roughly 600 tokens — so hitting
-  // the cap above means the model went badly off-script, not that it needed the room. A response
+  // The prompt asks for eight to twelve substantive bullets — roughly 1.5–2.5k tokens — so hitting
+  // the 16384 cap still means the model went badly off-script, not that it needed the room. A response
   // truncated there ends mid-sentence with no indication; storing and rendering it as if it were the
   // whole summary would silently mislead. Surfacing that as a retryable failure is better.
   if (response.candidates?.[0]?.finishReason === 'MAX_TOKENS') {

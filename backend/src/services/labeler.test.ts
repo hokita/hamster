@@ -47,6 +47,17 @@ describe('generateLabels', () => {
     expect(call.config.abortSignal).toBeInstanceOf(AbortSignal)
   })
 
+  it('bounds the page text it sends, independent of the article fetcher cap', async () => {
+    // The fetcher now returns whole articles (up to 200k chars) so the summarizer can replace
+    // reading them. Labels only need the gist: passing the whole article multiplies paid input
+    // tokens and crowds the 10s timeout for no better labels, so the labeler keeps its own bound.
+    mockGenerateContent.mockResolvedValue({ text: '["a"]' })
+    await generateLabels('Title', 'x'.repeat(30_000), [])
+    const contents = mockGenerateContent.mock.calls[0][0].contents as string
+    expect(contents).toContain('x'.repeat(20_000))
+    expect(contents).not.toContain('x'.repeat(20_001))
+  })
+
   it('puts the trusted rules in systemInstruction, asking for lowercase English labels', async () => {
     mockGenerateContent.mockResolvedValue({ text: '["a"]' })
     await generateLabels('Title', 'Body', [])
