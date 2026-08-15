@@ -224,7 +224,7 @@ export default function BookmarkPage() {
   // the constants above for why a fresh budget on resume is fine.
   //
   // Accepted cost: a legacy bookmark with a summary but no labels polls out its bounded budget
-  // (15 cheap reads) once per visit and stops; the Regenerate button is its backfill path.
+  // (30 cheap reads) once per visit and stops; the Regenerate button is its backfill path.
   useEffect(() => {
     if (!id) return
     if (!bookmark) return

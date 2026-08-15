@@ -22,7 +22,7 @@ const MAX_OUTPUT_TOKENS = 16384
 // Deciding what a page says is a reading task, not a reasoning one, so buy the least thinking on
 // offer: it keeps latency and per-summary cost down and leaves the budget above to the summary
 // itself. Belt and braces with MAX_OUTPUT_TOKENS — either alone fixes the truncation, but low
-// thinking also stops a pathological page from quietly costing 8k output tokens of reasoning.
+// thinking also stops a pathological page from quietly costing 16k output tokens of reasoning.
 // gemini-3.7-flash rejects MINIMAL with 400 INVALID_ARGUMENT (verified live 2026-08-15); LOW is
 // the least it accepts.
 const THINKING_LEVEL = ThinkingLevel.LOW
@@ -117,8 +117,8 @@ export async function summarize(title: string, text: string): Promise<string> {
     signal
   )
 
-  // The prompt asks for two paragraphs plus a handful of bullets — roughly 600 tokens — so hitting
-  // the cap above means the model went badly off-script, not that it needed the room. A response
+  // The prompt asks for eight to twelve substantive bullets — roughly 1.5–2.5k tokens — so hitting
+  // the 16384 cap still means the model went badly off-script, not that it needed the room. A response
   // truncated there ends mid-sentence with no indication; storing and rendering it as if it were the
   // whole summary would silently mislead. Surfacing that as a retryable failure is better.
   if (response.candidates?.[0]?.finishReason === 'MAX_TOKENS') {
