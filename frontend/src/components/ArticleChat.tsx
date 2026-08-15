@@ -10,6 +10,13 @@ import {
 import { api } from '../api'
 import type { ChatMessage } from '../api'
 
+// Mirrors of the backend's chat bounds (parseChatMessages in backend/src/routes/bookmarks.ts).
+// They must be enforced here too: a failed turn deliberately stays in the history so Retry can
+// resend it, so a request the backend will always 400 — an over-long question, a 41st message —
+// would leave the chat failing forever with no way out short of navigating away.
+const MAX_MESSAGES = 40
+const MAX_QUESTION_CHARS = 4000
+
 // The chat is deliberately not persisted: it lives in this component's state and is gone on
 // navigation. The parent mounts this with key={bookmark.id}, so switching bookmarks resets it
 // instead of carrying one article's conversation onto another.
@@ -18,6 +25,9 @@ export default function ArticleChat({ bookmarkId }: { bookmarkId: string }) {
   const [question, setQuestion] = useState('')
   const [isAsking, setIsAsking] = useState(false)
   const [askFailed, setAskFailed] = useState(false)
+
+  // A new question appends one user turn, so the conversation is full once it holds MAX_MESSAGES.
+  const isFull = messages.length >= MAX_MESSAGES
 
   // Sends a history whose last turn is the pending user question — the shape the endpoint
   // requires. Shared by submit (which appends the new question first) and Retry (which resends
@@ -39,7 +49,7 @@ export default function ArticleChat({ bookmarkId }: { bookmarkId: string }) {
   function handleSubmit(event: FormEvent) {
     event.preventDefault()
     const text = question.trim()
-    if (!text || isAsking) return
+    if (!text || isAsking || isFull || text.length > MAX_QUESTION_CHARS) return
     const conversation = [...messages, { role: 'user' as const, text }]
     setMessages(conversation)
     setQuestion('')
@@ -95,6 +105,12 @@ export default function ArticleChat({ bookmarkId }: { bookmarkId: string }) {
         </div>
       )}
 
+      {isFull && (
+        <p className="m-0 mb-3 text-sm text-gray-500">
+          This conversation is full — leave the page and come back to start a fresh one.
+        </p>
+      )}
+
       <form onSubmit={handleSubmit} className="flex items-start gap-2">
         <textarea
           aria-label="Ask a question about this article"
@@ -102,11 +118,13 @@ export default function ArticleChat({ bookmarkId }: { bookmarkId: string }) {
           onChange={(event) => setQuestion(event.target.value)}
           placeholder="e.g. What is the main argument?"
           rows={2}
-          className="min-w-0 flex-1 resize-y rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-800 placeholder:text-gray-400 focus:border-amber-700 focus:outline-none"
+          maxLength={MAX_QUESTION_CHARS}
+          disabled={isFull}
+          className="min-w-0 flex-1 resize-y rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-800 placeholder:text-gray-400 focus:border-amber-700 focus:outline-none disabled:bg-gray-50 disabled:cursor-not-allowed"
         />
         <button
           type="submit"
-          disabled={isAsking || !question.trim()}
+          disabled={isAsking || isFull || !question.trim()}
           className="inline-flex items-center gap-2 rounded-md bg-amber-700 px-3 py-2 text-sm font-medium text-white hover:bg-amber-800 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
         >
           <FontAwesomeIcon

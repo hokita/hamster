@@ -110,6 +110,35 @@ describe('ArticleChat', () => {
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
   })
 
+  it('caps the question length at the backend limit, so a long paste cannot wedge the chat', () => {
+    // The backend 400s a message over 4000 chars, and a failed turn stays in the history for
+    // Retry — so an over-long question would leave the chat failing forever. Never let one in.
+    render(<ArticleChat bookmarkId="1" />)
+    expect(
+      screen.getByRole('textbox', { name: 'Ask a question about this article' })
+    ).toHaveAttribute('maxLength', '4000')
+  })
+
+  it('stops accepting questions once the conversation reaches the backend cap', async () => {
+    // The backend 400s a conversation over 40 messages; the 21st question would push it to 41
+    // and every ask from there would fail. Close the input at the cap instead.
+    for (let i = 1; i <= 20; i++) {
+      vi.mocked(api.askQuestion).mockResolvedValueOnce({ answer: `Answer ${i}.` })
+    }
+    render(<ArticleChat bookmarkId="1" />)
+
+    for (let i = 1; i <= 20; i++) {
+      ask(`Question ${i}?`)
+      await screen.findByText(`Answer ${i}.`)
+    }
+
+    expect(
+      screen.getByRole('textbox', { name: 'Ask a question about this article' })
+    ).toBeDisabled()
+    expect(screen.getByText(/conversation is full/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Ask' })).toBeDisabled()
+  })
+
   it('retries with the same conversation and clears the error on success', async () => {
     vi.mocked(api.askQuestion).mockRejectedValueOnce(new Error('API error: 502'))
     vi.mocked(api.askQuestion).mockResolvedValueOnce({ answer: 'Recovered answer.' })
