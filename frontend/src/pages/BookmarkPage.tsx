@@ -15,8 +15,10 @@ import {
 import { api } from '../api'
 import type { Bookmark } from '../api'
 import { formatRelativeTime } from '../relativeTime'
+import { textLanguage } from '../textLanguage'
 import { describeBookmark } from '../bookmarkLabel'
 import DeleteBookmarkButton from '../components/DeleteBookmarkButton'
+import ArticleChat from '../components/ArticleChat'
 
 // Generation of the new whole-article summaries can take up to the backend's 45s timeout.
 // Polling every 2 seconds for up to 60 seconds (30 attempts) ensures the window outlives
@@ -39,24 +41,6 @@ function hostnameOf(url: string): string | null {
   } catch {
     return null
   }
-}
-
-// The summary follows the article's own language when that language is Japanese, but index.html
-// declares the document lang="en" — so without an override a screen reader reads Japanese text with
-// English pronunciation rules and, often, an English voice. The backend does not record which
-// language the model picked, so derive it here: the prompt only ever produces English or Japanese,
-// and the two are far apart by script. A Japanese summary is nearly all kana and kanji, while an
-// English one carries at most a quoted term or a name, so a share test separates them without
-// taking on a language-detection dependency.
-// Hiragana and katakana, CJK ideographs (kanji) and their extension A, and halfwidth katakana.
-const JAPANESE_SCRIPT = /[぀-ヿ㐀-䶿一-鿿ｦ-ﾟ]/g
-const JAPANESE_SHARE = 0.2
-
-function summaryLanguage(summary: string): 'ja' | 'en' {
-  const characters = summary.replace(/\s/g, '')
-  if (!characters) return 'en'
-  const japanese = characters.match(JAPANESE_SCRIPT)?.length ?? 0
-  return japanese / characters.length >= JAPANESE_SHARE ? 'ja' : 'en'
 }
 
 // The summary arrives as Markdown (see the prompt in backend/src/services/summarizer.ts), so it is
@@ -139,7 +123,7 @@ function SummaryBody({ summary }: { summary: string }) {
     // gap-3 spaces the blocks, so every child above resets its own margin to zero rather than
     // stacking browser defaults on top of it.
     <div
-      lang={summaryLanguage(summary)}
+      lang={textLanguage(summary)}
       className="flex flex-col gap-3 text-gray-700 leading-relaxed"
     >
       <Markdown
@@ -470,6 +454,10 @@ export default function BookmarkPage() {
           </button>
         </div>
       )}
+
+      {/* Keyed by id: React Router reuses this page component across /bookmarks/:id navigations,
+          and the key remounts the chat so one article's conversation never carries onto another. */}
+      <ArticleChat key={bookmark.id} bookmarkId={bookmark.id} />
 
       {/* Kept below the summary and behind a rule: it is the one irreversible action on the page,
           so it sits away from the buttons a reader reaches for repeatedly. */}

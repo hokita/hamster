@@ -118,6 +118,29 @@ describe('api.deleteBookmark', () => {
   })
 })
 
+describe('api.askQuestion', () => {
+  it('posts the conversation to the chat endpoint and returns the answer', async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({ answer: 'The article says X.' }) })
+    const messages = [{ role: 'user' as const, text: 'What does it say?' }]
+    const result = await api.askQuestion('1', messages)
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/bookmarks/1/chat'),
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ messages }),
+      })
+    )
+    expect(result.answer).toBe('The article says X.')
+  })
+
+  it('throws when answering fails', async () => {
+    mockFetch.mockResolvedValue({ ok: false, status: 502 })
+    await expect(
+      api.askQuestion('1', [{ role: 'user', text: 'Question?' }])
+    ).rejects.toThrow('API error: 502')
+  })
+})
+
 describe('api.generateSummary', () => {
   it('posts to the summary endpoint and returns the summary', async () => {
     mockFetch.mockResolvedValue({ ok: true, json: async () => ({ summary: 'A summary.' }) })

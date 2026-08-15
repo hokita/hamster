@@ -10,6 +10,11 @@ export interface Bookmark {
   createdAt: string
 }
 
+export interface ChatMessage {
+  role: 'user' | 'model'
+  text: string
+}
+
 const BASE_URL = import.meta.env.VITE_API_URL ?? ''
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -41,5 +46,10 @@ export const api = {
   generateSummary: (id: string) =>
     request<{ summary: string; labels?: string[] }>(`/api/bookmarks/${id}/summary`, {
       method: 'POST',
+    }),
+  askQuestion: (id: string, messages: ChatMessage[]) =>
+    request<{ answer: string }>(`/api/bookmarks/${id}/chat`, {
+      method: 'POST',
+      body: JSON.stringify({ messages }),
     }),
 }

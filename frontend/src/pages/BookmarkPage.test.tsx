@@ -7,6 +7,7 @@ vi.mock('../api', () => ({
     getBookmark: vi.fn(),
     generateSummary: vi.fn(),
     deleteBookmark: vi.fn(),
+    askQuestion: vi.fn(),
   },
 }))
 
@@ -713,5 +714,34 @@ describe('labels', () => {
     expect(await screen.findByText('New summary.')).toBeInTheDocument()
     expect(screen.queryByText('old-topic')).not.toBeInTheDocument()
     expect(screen.queryByTestId('bookmark-labels')).not.toBeInTheDocument()
+  })
+})
+
+describe('article chat', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(api.getBookmark).mockResolvedValue(bookmark)
+  })
+
+  it('offers a question box once the bookmark has loaded', async () => {
+    renderPage()
+    expect(
+      await screen.findByRole('textbox', { name: 'Ask a question about this article' })
+    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Ask' })).toBeInTheDocument()
+  })
+
+  it('asks about this bookmark, not some other one', async () => {
+    vi.mocked(api.askQuestion).mockResolvedValue({ answer: 'An answer.' })
+    renderPage()
+
+    fireEvent.change(
+      await screen.findByRole('textbox', { name: 'Ask a question about this article' }),
+      { target: { value: 'A question?' } }
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Ask' }))
+
+    await screen.findByText('An answer.')
+    expect(api.askQuestion).toHaveBeenCalledWith('1', [{ role: 'user', text: 'A question?' }])
   })
 })

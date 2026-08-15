@@ -6,6 +6,8 @@ import { fetchMetadata } from '../services/metadataFetcher'
 import { fetchArticleText } from '../services/articleFetcher'
 import { summarize, isSummarizerConfigured, SummarizerUnavailableError } from '../services/summarizer'
 import { generateLabels } from '../services/labeler'
+import { answerQuestion, isChatConfigured, ChatUnavailableError } from '../services/articleChat'
+import type { ChatMessage } from '../services/articleChat'
 
 // Thrown when the linked page could not be read (blocked, non-HTML, 404/500, network failure, ...).
 // A sentinel rather than a plain Error so the shared in-flight promise's rejection can still be
@@ -203,5 +205,96 @@ export function createBookmarksRouter(): Router {
     }
   })
 
+  // The chat is not persisted, so the client sends the whole conversation each time and this
+  // endpoint stays stateless — no cache to invalidate, and it works the same across Cloud Run
+  // instances. The article is refetched per question; an 8s fetch plus one Flash call per
+  // question is a fine price for a single-user app.
+  router.post('/:id/chat', async (req: Request, res: Response) => {
+    const messages = parseChatMessages(req.body)
+    if (!messages) {
+      res.status(400).json({ error: 'messages must be a non-empty list of chat turns' })
+      return
+    }
+
+    let bookmark
+    try {
+      bookmark = await db.getBookmark(req.params.id)
+    } catch {
+      res.status(500).json({ error: 'Failed to load bookmark' })
+      return
+    }
+    if (!bookmark) {
+      res.status(404).json({ error: 'Bookmark not found' })
+      return
+    }
+
+    // Same reasoning as the summary route: without a key the request can never succeed, so
+    // checking before the article fetch avoids burning up to 8 seconds on it and keeps the
+    // deterministic 503 from turning into a misleading 502 when the page is also unreachable.
+    if (!isChatConfigured()) {
+      res.status(503).json({ error: 'Chat is not configured' })
+      return
+    }
+
+    let text: string | null
+    try {
+      text = await fetchArticleText(bookmark.url)
+    } catch {
+      text = null
+    }
+    if (!text) {
+      res.status(502).json({ error: 'Could not read the linked page' })
+      return
+    }
+
+    try {
+      const answer = await answerQuestion(bookmark.title, text, messages)
+      res.json({ answer })
+    } catch (error) {
+      // Vague bodies, logged cause — same contract as the summary route, for the same reason.
+      console.error(`chat answer failed for bookmark ${bookmark.id}:`, error)
+      if (error instanceof ChatUnavailableError) {
+        res.status(503).json({ error: 'Chat is not configured' })
+      } else {
+        res.status(502).json({ error: 'Failed to answer the question' })
+      }
+    }
+  })
+
   return router
+}
+
+// Bounds generous enough that a real conversation never hits them; what they rule out is a
+// runaway or hostile client streaming unbounded payload into a paid Gemini call (express.json()'s
+// 100kb body limit already bounds the total — these keep any single turn sane).
+//
+// The caps differ by role: a user turn is a typed question, but a model turn is a stored answer
+// coming back as history, and the answer budget is 8192 output tokens — around 33k chars of
+// English at the worst. Holding model turns to the user cap wedged real conversations: one long
+// answer and every follow-up was rejected for resending it.
+const MAX_CHAT_MESSAGES = 40
+const MAX_CHAT_USER_MESSAGE_CHARS = 4000
+const MAX_CHAT_MODEL_MESSAGE_CHARS = 40_000
+
+// Returns the validated conversation, or null when the body is not one. Roles must alternate
+// starting from a user turn — Gemini rejects consecutive same-role turns, and catching the shape
+// here answers 400 instead of fetching the article and surfacing that rejection as a 502 — and
+// the last turn must also be the user's: this endpoint answers a pending question, and a history
+// ending in a model turn has none.
+function parseChatMessages(body: unknown): ChatMessage[] | null {
+  if (typeof body !== 'object' || body === null) return null
+  const { messages } = body as { messages?: unknown }
+  if (!Array.isArray(messages) || messages.length === 0) return null
+  if (messages.length > MAX_CHAT_MESSAGES) return null
+  for (const [index, message] of messages.entries()) {
+    if (typeof message !== 'object' || message === null) return null
+    const { role, text } = message as { role?: unknown; text?: unknown }
+    if (role !== (index % 2 === 0 ? 'user' : 'model')) return null
+    if (typeof text !== 'string' || !text.trim()) return null
+    const maxChars = role === 'model' ? MAX_CHAT_MODEL_MESSAGE_CHARS : MAX_CHAT_USER_MESSAGE_CHARS
+    if (text.length > maxChars) return null
+  }
+  const last = messages[messages.length - 1] as ChatMessage
+  if (last.role !== 'user') return null
+  return messages as ChatMessage[]
 }

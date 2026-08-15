@@ -29,6 +29,15 @@ vi.mock('../services/summarizer', async () => {
 vi.mock('../services/labeler', () => ({
   generateLabels: vi.fn(),
 }))
+vi.mock('../services/articleChat', async () => {
+  const actual =
+    await vi.importActual<typeof import('../services/articleChat')>('../services/articleChat')
+  return {
+    answerQuestion: vi.fn(),
+    isChatConfigured: vi.fn(),
+    ChatUnavailableError: actual.ChatUnavailableError,
+  }
+})
 
 import { createBookmarksRouter } from './bookmarks'
 import * as db from '../services/firestore'
@@ -36,6 +45,7 @@ import { fetchMetadata } from '../services/metadataFetcher'
 import { fetchArticleText } from '../services/articleFetcher'
 import { summarize, isSummarizerConfigured, SummarizerUnavailableError } from '../services/summarizer'
 import { generateLabels } from '../services/labeler'
+import { answerQuestion, isChatConfigured, ChatUnavailableError } from '../services/articleChat'
 
 const app = express()
 app.use(express.json())
@@ -557,5 +567,205 @@ describe('POST /api/bookmarks/:id/summary — labels', () => {
     const res = await request(app).post('/api/bookmarks/abc/summary')
     expect(res.status).toBe(502)
     expect(generateLabels).not.toHaveBeenCalled()
+  })
+})
+
+describe('POST /api/bookmarks/:id/chat', () => {
+  const chatBookmark = {
+    id: '1',
+    url: 'https://example.com',
+    title: 'Example',
+    createdAt: '2024-01-01T00:00:00.000Z',
+  }
+  const messages = [{ role: 'user', text: 'What is the main argument?' }]
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(isChatConfigured).mockReturnValue(true)
+    vi.mocked(db.getBookmark).mockResolvedValue(chatBookmark)
+    vi.mocked(fetchArticleText).mockResolvedValue('Article body')
+    vi.mocked(answerQuestion).mockResolvedValue('The article argues X.')
+  })
+
+  it('answers a question from the fetched article', async () => {
+    const res = await request(app).post('/api/bookmarks/1/chat').send({ messages })
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual({ answer: 'The article argues X.' })
+    expect(fetchArticleText).toHaveBeenCalledWith('https://example.com')
+    expect(answerQuestion).toHaveBeenCalledWith('Example', 'Article body', messages)
+  })
+
+  it('passes the whole conversation through, so follow-ups see earlier turns', async () => {
+    const conversation = [
+      { role: 'user', text: 'First question?' },
+      { role: 'model', text: 'First answer.' },
+      { role: 'user', text: 'Follow-up?' },
+    ]
+    const res = await request(app).post('/api/bookmarks/1/chat').send({ messages: conversation })
+    expect(res.status).toBe(200)
+    expect(answerQuestion).toHaveBeenCalledWith('Example', 'Article body', conversation)
+  })
+
+  it('returns 404 for an unknown id', async () => {
+    vi.mocked(db.getBookmark).mockResolvedValue(null)
+    const res = await request(app).post('/api/bookmarks/nope/chat').send({ messages })
+    expect(res.status).toBe(404)
+    expect(fetchArticleText).not.toHaveBeenCalled()
+  })
+
+  it('returns 400 when messages is missing or not an array', async () => {
+    for (const body of [{}, { messages: 'hi' }, { messages: null }]) {
+      const res = await request(app).post('/api/bookmarks/1/chat').send(body)
+      expect(res.status).toBe(400)
+    }
+    expect(answerQuestion).not.toHaveBeenCalled()
+  })
+
+  it('returns 400 when messages is empty', async () => {
+    const res = await request(app).post('/api/bookmarks/1/chat').send({ messages: [] })
+    expect(res.status).toBe(400)
+  })
+
+  it('returns 400 when a message has a bad role or a non-string text', async () => {
+    for (const bad of [
+      [{ role: 'system', text: 'hi' }],
+      [{ role: 'user', text: 42 }],
+      [{ role: 'user' }],
+      ['hi'],
+    ]) {
+      const res = await request(app).post('/api/bookmarks/1/chat').send({ messages: bad })
+      expect(res.status).toBe(400)
+    }
+    expect(answerQuestion).not.toHaveBeenCalled()
+  })
+
+  it('returns 400 when the last message is not from the user', async () => {
+    // The endpoint answers a pending question; a history ending in a model turn has none.
+    const res = await request(app)
+      .post('/api/bookmarks/1/chat')
+      .send({
+        messages: [
+          { role: 'user', text: 'Question?' },
+          { role: 'model', text: 'Answer.' },
+        ],
+      })
+    expect(res.status).toBe(400)
+  })
+
+  it('returns 400 when the history does not alternate user/model turns', async () => {
+    // Gemini rejects consecutive same-role turns; catching the shape here answers with a
+    // validation error instead of fetching the article and surfacing a misleading 502.
+    const res = await request(app)
+      .post('/api/bookmarks/1/chat')
+      .send({
+        messages: [
+          { role: 'user', text: 'One?' },
+          { role: 'user', text: 'Two?' },
+        ],
+      })
+    expect(res.status).toBe(400)
+    expect(fetchArticleText).not.toHaveBeenCalled()
+  })
+
+  it('returns 400 when the history starts with a model turn', async () => {
+    const res = await request(app)
+      .post('/api/bookmarks/1/chat')
+      .send({
+        messages: [
+          { role: 'model', text: 'Answer.' },
+          { role: 'user', text: 'Question?' },
+        ],
+      })
+    expect(res.status).toBe(400)
+  })
+
+  it('returns 400 when a message text is blank', async () => {
+    const res = await request(app)
+      .post('/api/bookmarks/1/chat')
+      .send({ messages: [{ role: 'user', text: '   ' }] })
+    expect(res.status).toBe(400)
+  })
+
+  it('caps the number of messages', async () => {
+    const tooMany = Array.from({ length: 41 }, (_, i) => ({
+      role: i % 2 === 0 ? 'user' : 'model',
+      text: 'turn',
+    }))
+    const res = await request(app).post('/api/bookmarks/1/chat').send({ messages: tooMany })
+    expect(res.status).toBe(400)
+    expect(answerQuestion).not.toHaveBeenCalled()
+  })
+
+  it('caps the length of a user message', async () => {
+    const res = await request(app)
+      .post('/api/bookmarks/1/chat')
+      .send({ messages: [{ role: 'user', text: 'x'.repeat(4001) }] })
+    expect(res.status).toBe(400)
+    expect(answerQuestion).not.toHaveBeenCalled()
+  })
+
+  it('accepts a model turn longer than the user cap, since answers can legitimately be', async () => {
+    // The answer budget is 8192 output tokens — far past 4000 chars. A stored long answer comes
+    // back as history with the next follow-up; rejecting it there would wedge the conversation.
+    const res = await request(app)
+      .post('/api/bookmarks/1/chat')
+      .send({
+        messages: [
+          { role: 'user', text: 'Question?' },
+          { role: 'model', text: 'y'.repeat(30_000) },
+          { role: 'user', text: 'Follow-up?' },
+        ],
+      })
+    expect(res.status).toBe(200)
+  })
+
+  it('still bounds a model turn, just generously', async () => {
+    const res = await request(app)
+      .post('/api/bookmarks/1/chat')
+      .send({
+        messages: [
+          { role: 'user', text: 'Question?' },
+          { role: 'model', text: 'y'.repeat(40_001) },
+          { role: 'user', text: 'Follow-up?' },
+        ],
+      })
+    expect(res.status).toBe(400)
+    expect(answerQuestion).not.toHaveBeenCalled()
+  })
+
+  it('returns 503 when chat is not configured, before fetching the article', async () => {
+    vi.mocked(isChatConfigured).mockReturnValue(false)
+    const res = await request(app).post('/api/bookmarks/1/chat').send({ messages })
+    expect(res.status).toBe(503)
+    expect(fetchArticleText).not.toHaveBeenCalled()
+  })
+
+  it('returns 502 when the article cannot be fetched', async () => {
+    vi.mocked(fetchArticleText).mockResolvedValue(null)
+    const res = await request(app).post('/api/bookmarks/1/chat').send({ messages })
+    expect(res.status).toBe(502)
+    expect(answerQuestion).not.toHaveBeenCalled()
+  })
+
+  it('returns 502 when Gemini fails, and logs the cause with the bookmark id', async () => {
+    vi.mocked(answerQuestion).mockRejectedValue(new Error('429 rate limited'))
+    const res = await request(app).post('/api/bookmarks/1/chat').send({ messages })
+    expect(res.status).toBe(502)
+    expect(consoleError).toHaveBeenCalled()
+    const logged = consoleError.mock.calls[0].map(String).join(' ')
+    expect(logged).toContain('429 rate limited')
+    expect(logged).toContain('1')
+  })
+
+  it('returns 503 when answerQuestion itself reports the key missing', async () => {
+    vi.mocked(answerQuestion).mockRejectedValue(new ChatUnavailableError())
+    const res = await request(app).post('/api/bookmarks/1/chat').send({ messages })
+    expect(res.status).toBe(503)
+  })
+
+  it('returns 500 when loading the bookmark fails', async () => {
+    vi.mocked(db.getBookmark).mockRejectedValue(new Error('firestore down'))
+    const res = await request(app).post('/api/bookmarks/1/chat').send({ messages })
+    expect(res.status).toBe(500)
   })
 })
