@@ -88,6 +88,11 @@ function normalize(labels: string[]): string[] {
   return [...seen]
 }
 
+// The article fetcher hands over whole articles (up to 200k chars) so the summarizer can replace
+// reading them. Labeling only needs the gist, and this model runs on a 10s timeout — so the
+// labeler keeps its own input bound at the pre-expansion cap instead of inheriting the fetcher's.
+const MAX_INPUT_CHARS = 20_000
+
 export async function generateLabels(
   title: string,
   text: string,
@@ -95,6 +100,7 @@ export async function generateLabels(
 ): Promise<string[]> {
   const apiKey = process.env.GEMINI_API_KEY
   if (!apiKey) throw new LabelerUnavailableError()
+  text = text.slice(0, MAX_INPUT_CHARS)
 
   const ai = new GoogleGenAI({ apiKey })
   const signal = AbortSignal.timeout(TIMEOUT_MS)

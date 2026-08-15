@@ -25,8 +25,18 @@ async function readBoundedBytes(response: Response): Promise<Uint8Array> {
   const chunks: Uint8Array[] = []
   let bytesRead = 0
   while (bytesRead < MAX_BYTES) {
-    const { done, value } = await reader.read()
-    if (done) break
+    let result: { done: boolean; value?: Uint8Array }
+    try {
+      result = await reader.read()
+    } catch {
+      // A mid-body failure — most often FETCH_TIMEOUT_MS aborting a slow stream now that the byte
+      // cap is large enough to outlast it. The bytes already delivered are a valid truncated page
+      // (the two-pass strip handles a cut-off tag); losing them because the tail never arrived
+      // would fail pages the smaller cap used to fetch fine.
+      break
+    }
+    if (result.done || !result.value) break
+    const value = result.value
     const remaining = MAX_BYTES - bytesRead
     const chunk = value.byteLength > remaining ? value.subarray(0, remaining) : value
     chunks.push(chunk)
