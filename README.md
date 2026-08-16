@@ -25,10 +25,10 @@ hamster/
 ## Marking as read
 
 Every row in the list carries a check button that marks its bookmark read, and each bookmark's
-page has the same control spelled out under its details. A read bookmark's title dims and its row
-says "Read", so a glance down the list picks out what is still waiting — nothing is hidden or
-filtered away. The same button undoes it: read state is one click in either direction, so unlike
-deleting it asks nothing first.
+page has the same control spelled out under its summary, where a reader ends up once they have
+read it. A read bookmark's title dims and its row says "Read", so a glance down the list picks out
+what is still waiting — nothing is hidden or filtered away. The same button undoes it: read state
+is one click in either direction, so unlike deleting it asks nothing first.
 
 `PUT /api/bookmarks/:id/read` takes `{ "isRead": true }` or `false` — the state to store, not
 "flip it", so a retried request after a dropped response cannot land the bookmark on the opposite

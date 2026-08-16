@@ -447,26 +447,6 @@ export default function BookmarkPage() {
         </div>
       )}
 
-      {/* Above the summary, next to the article's own details: read state is about the article,
-          and the reader decides it either before opening the link or right after coming back. */}
-      <div className="mt-4 flex flex-col items-start gap-2">
-        <ReadToggleButton
-          // Same descriptor the list and the delete control build, so one convention names a
-          // bookmark everywhere a control acts on it.
-          label={describeBookmark(bookmark)}
-          isRead={bookmark.isRead}
-          isPending={isTogglingRead}
-          onToggle={handleToggleRead}
-          variant="labeled"
-        />
-        {readToggleFailed && (
-          <p className="m-0 flex items-center gap-2 text-sm text-red-700">
-            <FontAwesomeIcon icon={faTriangleExclamation} aria-hidden="true" />
-            Couldn&apos;t save the read state.
-          </p>
-        )}
-      </div>
-
       <h2 className="mt-8 mb-3 text-sm font-semibold uppercase tracking-wide text-gray-400">
         Summary
       </h2>
@@ -519,6 +499,27 @@ export default function BookmarkPage() {
           </button>
         </div>
       )}
+
+      {/* Under the summary, where the reader ends up once they have read it — marking something
+          read is the last thing done on this page, not the first. It sits above the chat and well
+          clear of the delete rule below, so the two are never reached for by mistake. */}
+      <div className="mt-6 flex flex-col items-start gap-2">
+        <ReadToggleButton
+          // Same descriptor the list and the delete control build, so one convention names a
+          // bookmark everywhere a control acts on it.
+          label={describeBookmark(bookmark)}
+          isRead={bookmark.isRead}
+          isPending={isTogglingRead}
+          onToggle={handleToggleRead}
+          variant="labeled"
+        />
+        {readToggleFailed && (
+          <p className="m-0 flex items-center gap-2 text-sm text-red-700">
+            <FontAwesomeIcon icon={faTriangleExclamation} aria-hidden="true" />
+            Couldn&apos;t save the read state.
+          </p>
+        )}
+      </div>
 
       {/* Keyed by id: React Router reuses this page component across /bookmarks/:id navigations,
           and the key remounts the chat so one article's conversation never carries onto another. */}
