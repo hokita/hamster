@@ -912,6 +912,38 @@ describe('BookmarksPage read flag', () => {
     expect(screen.getByRole('button', { name: /Example Site.* as unread/ })).toBeInTheDocument()
   })
 
+  it('keeps a flag a refresh already confirmed when the write then reports failure', async () => {
+    // The write committed and only its response was lost. The refresh that landed in the
+    // meantime already showed the stored flag, so flipping the row back would contradict it.
+    const newSite: Bookmark = { ...unread, id: '2', title: 'New Site' }
+    let failWrite!: (error: Error) => void
+    vi.mocked(api.setReadState).mockReturnValue(
+      new Promise<void>((_resolve, reject) => {
+        failWrite = reject
+      })
+    )
+    vi.mocked(api.generateSummary).mockReturnValue(new Promise(() => {}))
+    vi.mocked(api.listBookmarks)
+      .mockResolvedValueOnce([unread])
+      .mockResolvedValueOnce([{ ...unread, isRead: true }, newSite])
+    vi.mocked(api.createBookmark).mockResolvedValue(newSite)
+
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: /Example Site.* as read/ }))
+    await waitFor(() => expect(api.setReadState).toHaveBeenCalledWith('1', true))
+
+    fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
+    await screen.findByRole('link', { name: /New Site/ })
+
+    await act(async () => {
+      failWrite(new Error('API error: 500'))
+    })
+
+    expect(screen.getByRole('button', { name: /Example Site.* as unread/ })).toBeInTheDocument()
+    expect(screen.queryByText('Failed to mark as read.')).not.toBeInTheDocument()
+  })
+
   it('believes a fetch issued after the write, even when it disagrees', async () => {
     // A flag changed somewhere else — another tab — never agrees with the override, so retiring
     // only on agreement would mask it on every response for the rest of this mount.

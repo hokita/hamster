@@ -883,6 +883,88 @@ describe('BookmarkPage read flag', () => {
     }
   })
 
+  it('keeps a flag a poll already confirmed when the write then reports failure', async () => {
+    vi.useFakeTimers()
+    try {
+      // The write committed and only its response was lost. A poll has already reported the
+      // stored flag back, so rolling back here would contradict the server.
+      vi.mocked(api.getBookmark).mockResolvedValue(bookmark)
+      let failWrite!: (error: Error) => void
+      vi.mocked(api.setReadState).mockReturnValue(
+        new Promise<void>((_resolve, reject) => {
+          failWrite = reject
+        })
+      )
+
+      render(
+        <MemoryRouter initialEntries={['/bookmarks/1']}>
+          <Routes>
+            <Route path="/bookmarks/:id" element={<BookmarkPage />} />
+          </Routes>
+        </MemoryRouter>
+      )
+      await act(async () => {})
+
+      fireEvent.click(screen.getByRole('button', { name: /as read/ }))
+      await act(async () => {})
+
+      // The poll sees the flag the write stored, which retires the override.
+      vi.mocked(api.getBookmark).mockResolvedValue({ ...bookmark, isRead: true })
+      await act(async () => {
+        vi.advanceTimersByTime(2000)
+      })
+
+      await act(async () => {
+        failWrite(new Error('API error: 500'))
+      })
+
+      expect(screen.getByRole('button', { name: /as unread/ })).toBeInTheDocument()
+      expect(screen.queryByText("Couldn't save the read state.")).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shows the stored flag when the write settles after a trip away and back', async () => {
+    // This bookmark has its summary and labels, so nothing polls: if the write's own settling
+    // does not put the flag on screen, nothing else will for the rest of the visit.
+    const complete = { ...bookmark, summary: 'A summary.', labels: ['react'] }
+    const second = { ...complete, id: '2', title: 'Second Article' }
+    vi.mocked(api.getBookmark).mockImplementation((requested: string) =>
+      Promise.resolve(requested === '1' ? complete : second)
+    )
+    let settleWrite!: () => void
+    vi.mocked(api.setReadState).mockReturnValue(
+      new Promise<void>((resolve) => {
+        settleWrite = resolve
+      })
+    )
+
+    render(
+      <MemoryRouter initialEntries={['/bookmarks/1']}>
+        <Link to="/bookmarks/2">Bookmark 2</Link>
+        <Link to="/bookmarks/1">Bookmark 1</Link>
+        <Routes>
+          <Route path="/bookmarks/:id" element={<BookmarkPage />} />
+        </Routes>
+      </MemoryRouter>
+    )
+    fireEvent.click(await screen.findByRole('button', { name: /Example Article.* as read/ }))
+
+    // Away and back, which clears the override and re-reads the still-unread document.
+    fireEvent.click(screen.getByRole('link', { name: 'Bookmark 2' }))
+    await screen.findByRole('heading', { name: 'Second Article' })
+    fireEvent.click(screen.getByRole('link', { name: 'Bookmark 1' }))
+    await screen.findByRole('heading', { name: 'Example Article' })
+    expect(screen.getByRole('button', { name: /as read/ })).toBeInTheDocument()
+
+    await act(async () => {
+      settleWrite()
+    })
+
+    expect(screen.getByRole('button', { name: /as unread/ })).toBeInTheDocument()
+  })
+
   it('ignores a stale toggle failure once a newer toggle owns the button', async () => {
     // A's first write is still in flight when the reader leaves and comes back, then toggles
     // again. The old request failing says nothing about the new one: rolling back here would

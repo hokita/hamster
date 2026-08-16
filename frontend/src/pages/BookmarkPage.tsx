@@ -407,17 +407,31 @@ export default function BookmarkPage() {
       // The override deliberately survives a successful write — a re-read issued before the
       // write committed can still be in flight — but from here on every re-read reads committed
       // data, so stamp the point after which a response can retire it. See adopt().
-      if (pendingRead.current?.token === token) {
-        pendingRead.current.settledAtFetchId = bookmarkFetchId.current
+      //
+      // Re-established rather than only stamped, because it may be gone: leaving this bookmark
+      // and coming back clears the override and re-reads the document, and that read can still
+      // predate the commit. Then nothing on screen would say what was stored, and a bookmark
+      // that already has its summary and labels does not poll, so it would stay wrong for the
+      // rest of the visit. Writing the flag through as well is what corrects that; both are
+      // skipped when a newer toggle has taken over, or the reader is on another bookmark.
+      if (readToggleToken.current === token && requestedId === latestId.current) {
+        pendingRead.current = { token, isRead, settledAtFetchId: bookmarkFetchId.current }
+        setBookmark((previous) =>
+          previous && previous.id === requestedId && previous.isRead !== isRead
+            ? { ...previous, isRead }
+            : previous
+        )
       }
     } catch {
-      // A newer toggle owns the button now — the reader left this bookmark and came back, or
-      // simply clicked again — so this failure is about optimistic state that no longer exists.
-      // Rolling back here would undo the newer write's state instead of this one's, and report a
-      // failure for a request that is still running.
-      if (readToggleToken.current !== token) return
+      // Only this toggle's own, still-standing override may be rolled back. It is gone in every
+      // case where rolling back would be wrong: a newer toggle replaced it and owns the button
+      // now, the reader navigated away, or — the case a failure alone cannot tell apart — a
+      // re-read already reported this very flag back from the server. That last one means the
+      // write committed and only its response was lost, so reverting would contradict storage
+      // and report a failure for something that did happen.
+      if (pendingRead.current?.token !== token) return
       // Nothing was stored, so there is no longer anything to protect a response from.
-      if (pendingRead.current?.token === token) pendingRead.current = null
+      pendingRead.current = null
       if (requestedId !== latestId.current) return
       setBookmark((previous) => (previous ? { ...previous, isRead: !isRead } : previous))
       setReadToggleFailed(true)

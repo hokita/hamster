@@ -229,12 +229,16 @@ export default function BookmarksPage() {
       if (entry?.isRead === isRead) entry.settledAtFetchId = fetchId.current
       if (requestNo === requestId.current) setError(null)
     } catch {
+      // Roll back only while this toggle's own override is still standing. It is already gone
+      // when a list response reported this very flag back from the server — which means the
+      // write committed and only its response was lost. Reverting the row then would contradict
+      // what the list itself just showed, and the error would describe a failure that, as far as
+      // storage is concerned, did not happen.
+      if (pendingReadStates.current.get(id)?.isRead !== isRead) return
       // Nothing was stored, so the optimistic row is now a lie: put it back rather than leave the
       // user believing a flag was saved. Dropping the override too, so a list response is free to
       // report whatever the server actually holds.
-      if (pendingReadStates.current.get(id)?.isRead === isRead) {
-        pendingReadStates.current.delete(id)
-      }
+      pendingReadStates.current.delete(id)
       setBookmarks((previous) =>
         previous.map((bookmark) =>
           bookmark.id === id ? { ...bookmark, isRead: !isRead } : bookmark
