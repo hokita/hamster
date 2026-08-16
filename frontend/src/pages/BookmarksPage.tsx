@@ -19,35 +19,56 @@ function withoutDeleted(list: Bookmark[], deleted: ReadonlySet<string>): Bookmar
   return deleted.size > 0 ? list.filter((bookmark) => !deleted.has(bookmark.id)) : list
 }
 
+// A read flag set on this page, with the fetch ordering that says when the server's own answer
+// can be believed again.
+interface PendingRead {
+  isRead: boolean
+  // fetchId at the moment the write settled, or null while it is still in flight. Every list
+  // fetch ISSUED after that point reads data the write had already committed, so its answer
+  // supersedes this override — even when the two disagree, which is exactly what a change made
+  // somewhere else (another tab, another device) looks like from here.
+  settledAtFetchId: number | null
+}
+
 // The same idea as withoutDeleted, for read flags: a list response assembled before a toggle was
 // written still carries the old flag, and letting it land would flip the row back under the user
 // seconds after they marked it.
 //
-// Unlike deletions these overrides are not kept forever — each is dropped as soon as a response
-// agrees with it, which is the point at which the server has become the better source of truth.
-// Keeping them would mask a change made anywhere else (the bookmark's own page in another tab)
-// for the rest of the session. Prunes the map it is given, which is why it takes the mutable Map
-// rather than a ReadonlyMap.
-function withPendingReadStates(list: Bookmark[], pending: Map<string, boolean>): Bookmark[] {
+// Unlike deletions these overrides are not kept forever. One is retired as soon as a response
+// agrees with it, or as soon as any response arrives that the server answered after the write —
+// see settledAtFetchId. Agreement alone would not be enough: a flag changed elsewhere never
+// agrees, so the override would mask every response carrying it for the rest of this mount.
+// Prunes the map it is given, which is why it takes the mutable Map rather than a ReadonlyMap.
+function withPendingReadStates(
+  list: Bookmark[],
+  pending: Map<string, PendingRead>,
+  issuedFetchId: number
+): Bookmark[] {
   if (pending.size === 0) return list
   for (const bookmark of list) {
-    if (pending.get(bookmark.id) === bookmark.isRead) pending.delete(bookmark.id)
+    const entry = pending.get(bookmark.id)
+    if (!entry) continue
+    const answeredAfterWrite =
+      entry.settledAtFetchId !== null && issuedFetchId > entry.settledAtFetchId
+    if (answeredAfterWrite || entry.isRead === bookmark.isRead) pending.delete(bookmark.id)
   }
   if (pending.size === 0) return list
   return list.map((bookmark) => {
-    const isRead = pending.get(bookmark.id)
-    return isRead === undefined ? bookmark : { ...bookmark, isRead }
+    const entry = pending.get(bookmark.id)
+    return entry === undefined ? bookmark : { ...bookmark, isRead: entry.isRead }
   })
 }
 
 // Every place a list response reaches state applies both corrections, in this order: a deleted
-// bookmark is gone whatever its flag says.
+// bookmark is gone whatever its flag says. issuedFetchId is the fetchId of the fetch this result
+// came from — the read overrides need it to tell a pre-write answer from a post-write one.
 function reconcile(
   list: Bookmark[],
   deleted: ReadonlySet<string>,
-  pendingReads: Map<string, boolean>
+  pendingReads: Map<string, PendingRead>,
+  issuedFetchId: number
 ): Bookmark[] {
-  return withPendingReadStates(withoutDeleted(list, deleted), pendingReads)
+  return withPendingReadStates(withoutDeleted(list, deleted), pendingReads, issuedFetchId)
 }
 
 export default function BookmarksPage() {
@@ -90,7 +111,7 @@ export default function BookmarksPage() {
   // Read flags set on this page that a list response may not reflect yet — see
   // withPendingReadStates. A ref, not state: it corrects data on its way into `bookmarks` and
   // must never itself trigger a render.
-  const pendingReadStates = useRef<Map<string, boolean>>(new Map())
+  const pendingReadStates = useRef<Map<string, PendingRead>>(new Map())
 
   const refresh = useCallback(async (options?: { background?: boolean }) => {
     // A background refresh (the one that follows a summary landing) must not touch error state:
@@ -104,7 +125,7 @@ export default function BookmarksPage() {
       const result = await api.listBookmarks()
       if (fid > appliedFetchId.current) {
         appliedFetchId.current = fid
-        setBookmarks(reconcile(result, deletedIds.current, pendingReadStates.current))
+        setBookmarks(reconcile(result, deletedIds.current, pendingReadStates.current, fid))
         setHasLoadedOnce(true)
       }
       if (id !== null && id === requestId.current) setError(null)
@@ -124,7 +145,7 @@ export default function BookmarksPage() {
       .then((result) => {
         if (cancelled) return
         if (fid === fetchId.current) {
-          setBookmarks(reconcile(result, deletedIds.current, pendingReadStates.current))
+          setBookmarks(reconcile(result, deletedIds.current, pendingReadStates.current, fid))
           setHasLoadedOnce(true)
         }
         if (id === requestId.current) setError(null)
@@ -192,19 +213,28 @@ export default function BookmarksPage() {
     // Applied before the request, not after it: marking something read is a glance-and-move-on
     // gesture, and a row that only changes a round trip later reads as a click that missed. The
     // write is what makes it true — see the catch block for the row going back if it fails.
-    pendingReadStates.current.set(id, isRead)
+    pendingReadStates.current.set(id, { isRead, settledAtFetchId: null })
     setReadPendingIds((previous) => new Set(previous).add(id))
     setBookmarks((previous) =>
       previous.map((bookmark) => (bookmark.id === id ? { ...bookmark, isRead } : bookmark))
     )
     try {
       await api.setReadState(id, isRead)
+      // The write is committed, so every fetch issued from here on can answer for this flag —
+      // including answering that it is now something else entirely. Stamped rather than deleted:
+      // a fetch already in flight was assembled before the write and still needs the override.
+      // Guarded on the entry still being this toggle's, so an older write cannot stamp a newer
+      // one's override.
+      const entry = pendingReadStates.current.get(id)
+      if (entry?.isRead === isRead) entry.settledAtFetchId = fetchId.current
       if (requestNo === requestId.current) setError(null)
     } catch {
       // Nothing was stored, so the optimistic row is now a lie: put it back rather than leave the
       // user believing a flag was saved. Dropping the override too, so a list response is free to
       // report whatever the server actually holds.
-      pendingReadStates.current.delete(id)
+      if (pendingReadStates.current.get(id)?.isRead === isRead) {
+        pendingReadStates.current.delete(id)
+      }
       setBookmarks((previous) =>
         previous.map((bookmark) =>
           bookmark.id === id ? { ...bookmark, isRead: !isRead } : bookmark

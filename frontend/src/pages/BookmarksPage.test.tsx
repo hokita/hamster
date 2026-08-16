@@ -878,10 +878,16 @@ describe('BookmarksPage read flag', () => {
     expect(await screen.findByText('Failed to mark as unread.')).toBeInTheDocument()
   })
 
-  it('keeps the flag when a list response assembled before the write lands afterwards', async () => {
-    // The refresh that follows an add is the one that does this in practice: it was issued while
-    // the bookmark was still unread, so its payload would otherwise flip the row back.
+  it('keeps the flag when a response from a fetch issued before the write lands afterwards', async () => {
+    // The refresh that follows an add is the one that does this in practice: issued while the
+    // write was still in flight, so its payload predates the flag and would flip the row back.
     const newSite: Bookmark = { ...unread, id: '2', title: 'New Site' }
+    let resolveWrite!: () => void
+    vi.mocked(api.setReadState).mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveWrite = resolve
+      })
+    )
     // Left pending so the add's own refresh is the only list response in this test.
     vi.mocked(api.generateSummary).mockReturnValue(new Promise(() => {}))
     vi.mocked(api.listBookmarks)
@@ -898,6 +904,37 @@ describe('BookmarksPage read flag', () => {
     await screen.findByRole('link', { name: /New Site/ })
 
     expect(screen.getByRole('button', { name: /Example Site.* as unread/ })).toBeInTheDocument()
+
+    // The write settling does not undo that: the stale response is already on screen, corrected.
+    await act(async () => {
+      resolveWrite()
+    })
+    expect(screen.getByRole('button', { name: /Example Site.* as unread/ })).toBeInTheDocument()
+  })
+
+  it('believes a fetch issued after the write, even when it disagrees', async () => {
+    // A flag changed somewhere else — another tab — never agrees with the override, so retiring
+    // only on agreement would mask it on every response for the rest of this mount.
+    const newSite: Bookmark = { ...unread, id: '2', title: 'New Site' }
+    vi.mocked(api.generateSummary).mockReturnValue(new Promise(() => {}))
+    vi.mocked(api.listBookmarks)
+      .mockResolvedValueOnce([unread])
+      // Issued after the write committed, and reporting it unread again.
+      .mockResolvedValue([unread, newSite])
+    vi.mocked(api.createBookmark).mockResolvedValue(newSite)
+
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: /Example Site.* as read/ }))
+    await waitFor(() => expect(api.setReadState).toHaveBeenCalledWith('1', true))
+    expect(screen.getByRole('button', { name: /Example Site.* as unread/ })).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
+    await screen.findByRole('link', { name: /New Site/ })
+
+    expect(
+      await screen.findByRole('button', { name: /Example Site.* as read/ })
+    ).toBeInTheDocument()
   })
 
   it('lets the server win again once a response agrees with what was stored', async () => {
