@@ -18,6 +18,7 @@ import { formatRelativeTime } from '../relativeTime'
 import { textLanguage } from '../textLanguage'
 import { describeBookmark } from '../bookmarkLabel'
 import DeleteBookmarkButton from '../components/DeleteBookmarkButton'
+import ReadToggleButton from '../components/ReadToggleButton'
 import ArticleChat from '../components/ArticleChat'
 
 // Generation of the new whole-article summaries can take up to the backend's 45s timeout.
@@ -147,6 +148,8 @@ export default function BookmarkPage() {
   const [generateFailed, setGenerateFailed] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
   const [deleteFailed, setDeleteFailed] = useState(false)
+  const [isTogglingRead, setIsTogglingRead] = useState(false)
+  const [readToggleFailed, setReadToggleFailed] = useState(false)
   // The summary on screen when a generation request failed without proving the write never
   // happened. Express does not abort a handler when the client goes away, so the backend keeps
   // generating and may persist a summary seconds after the request died. Holding the old text here
@@ -154,6 +157,11 @@ export default function BookmarkPage() {
   // sit on a superseded summary until a manual reload, because polling otherwise stops the moment
   // any summary is present. Cleared as soon as something replaces it.
   const [supersededSummary, setSupersededSummary] = useState<string | null>(null)
+  // The read state this page has asked the backend to store, while that request is in flight.
+  // The poll below re-reads the whole bookmark, and a snapshot taken before the write landed
+  // still carries the old flag — adopting it wholesale would flip the button back under the user.
+  // Everything else in a polled result is fresher than what is on screen; this one field is not.
+  const pendingRead = useRef<boolean | null>(null)
   // React Router reuses this component instance across `/bookmarks/:id` navigations, so state
   // from the previous bookmark would otherwise leak into the next one. Resetting it here (during
   // render, gated on the id actually changing) is React's documented pattern for this — it avoids
@@ -170,6 +178,8 @@ export default function BookmarkPage() {
     setSupersededSummary(null)
     setIsDeleting(false)
     setDeleteFailed(false)
+    setIsTogglingRead(false)
+    setReadToggleFailed(false)
   }
 
   // Tracks the id the route is currently on, so a generation request kicked off for a bookmark
@@ -178,7 +188,18 @@ export default function BookmarkPage() {
   const latestId = useRef(id)
   useEffect(() => {
     latestId.current = id
+    // A toggle still in flight for the bookmark just navigated away from has nothing to say
+    // about this one. Cleared here rather than in the reset block above, which runs during
+    // render — where writing a ref is not allowed.
+    pendingRead.current = null
   }, [id])
+
+  // Every re-read of the bookmark goes through this, so the one field the server may not know
+  // about yet survives — see pendingRead. Not a hook: it reads a ref at call time and is used
+  // inside effects and handlers alike, so wrapping it in useCallback would only add a dependency.
+  function adopt(result: Bookmark): Bookmark {
+    return pendingRead.current === null ? result : { ...result, isRead: pendingRead.current }
+  }
 
   useEffect(() => {
     if (!id) return
@@ -186,7 +207,7 @@ export default function BookmarkPage() {
     api
       .getBookmark(id)
       .then((result) => {
-        if (!cancelled) setBookmark(result)
+        if (!cancelled) setBookmark(adopt(result))
       })
       .catch(() => {
         if (!cancelled) setLoadError(true)
@@ -238,7 +259,7 @@ export default function BookmarkPage() {
           )
           const labelsAdvanced = !sameLabels(result.labels, bookmark.labels)
           if (!summaryAdvanced && !labelsAdvanced) return
-          setBookmark(result)
+          setBookmark(adopt(result))
           if (summaryAdvanced || (labelsAdvanced && result.labels)) {
             // A fresh labels write proves a generation run completed server-side even when the
             // summary text came out identical — the failure banner and the superseded watch no
@@ -294,7 +315,7 @@ export default function BookmarkPage() {
         const refreshed = await api.getBookmark(requestedId)
         if (requestedId !== latestId.current) return
         if (refreshed.summary && refreshed.summary !== summaryBefore) {
-          setBookmark(refreshed)
+          setBookmark(adopt(refreshed))
           return
         }
       } catch {
@@ -311,6 +332,30 @@ export default function BookmarkPage() {
       if (summaryBefore) setSupersededSummary(summaryBefore)
     } finally {
       if (requestedId === latestId.current) setIsGenerating(false)
+    }
+  }
+
+  // Optimistic for the same reason the list's toggle is: this is a one-click gesture, and a
+  // button that only changes a round trip later reads as a click that missed. pendingRead keeps
+  // the poll from overwriting it in the meantime; the catch puts it back if nothing was stored.
+  async function handleToggleRead(isRead: boolean) {
+    if (!id) return
+    const requestedId = id
+    pendingRead.current = isRead
+    setIsTogglingRead(true)
+    setReadToggleFailed(false)
+    setBookmark((previous) => (previous ? { ...previous, isRead } : previous))
+    try {
+      await api.setReadState(requestedId, isRead)
+    } catch {
+      if (requestedId !== latestId.current) return
+      setBookmark((previous) => (previous ? { ...previous, isRead: !isRead } : previous))
+      setReadToggleFailed(true)
+    } finally {
+      // Cleared whichever bookmark is displayed now: this request has settled, so it has nothing
+      // left to protect, and a stale override would follow the reader to the next bookmark.
+      pendingRead.current = null
+      if (requestedId === latestId.current) setIsTogglingRead(false)
     }
   }
 
@@ -401,6 +446,26 @@ export default function BookmarkPage() {
           ))}
         </div>
       )}
+
+      {/* Above the summary, next to the article's own details: read state is about the article,
+          and the reader decides it either before opening the link or right after coming back. */}
+      <div className="mt-4 flex flex-col items-start gap-2">
+        <ReadToggleButton
+          // Same descriptor the list and the delete control build, so one convention names a
+          // bookmark everywhere a control acts on it.
+          label={describeBookmark(bookmark)}
+          isRead={bookmark.isRead}
+          isPending={isTogglingRead}
+          onToggle={handleToggleRead}
+          variant="labeled"
+        />
+        {readToggleFailed && (
+          <p className="m-0 flex items-center gap-2 text-sm text-red-700">
+            <FontAwesomeIcon icon={faTriangleExclamation} aria-hidden="true" />
+            Couldn&apos;t save the read state.
+          </p>
+        )}
+      </div>
 
       <h2 className="mt-8 mb-3 text-sm font-semibold uppercase tracking-wide text-gray-400">
         Summary

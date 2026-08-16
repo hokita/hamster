@@ -72,6 +72,48 @@ test.describe('bookmarks', () => {
     await expect(page.getByText('No bookmarks yet — paste a URL above to add one.')).toBeVisible()
   })
 
+  test('marks a bookmark as read, and the flag outlives a reload', async ({ page }) => {
+    await page.getByLabel('URL').fill('https://example.com')
+    await page.getByRole('button', { name: 'Add bookmark' }).click()
+    await expect(page.getByRole('link', { name: /Example Domain/ })).toBeVisible()
+
+    await page.getByRole('button', { name: 'Mark Example Domain on example.com as read' }).click()
+    // The control now offers the undo, and the row says so in words.
+    await expect(
+      page.getByRole('button', { name: 'Mark Example Domain on example.com as unread' })
+    ).toBeVisible()
+    await expect(page.getByRole('link', { name: /Example Domain/ })).toContainText('Read')
+
+    // A reload proves the flag was stored rather than only shown optimistically.
+    await page.reload()
+    await expect(
+      page.getByRole('button', { name: 'Mark Example Domain on example.com as unread' })
+    ).toBeVisible()
+  })
+
+  test("unmarks from the bookmark's own page, and the list agrees", async ({ page }) => {
+    await page.getByLabel('URL').fill('https://example.com')
+    await page.getByRole('button', { name: 'Add bookmark' }).click()
+    await page.getByRole('button', { name: 'Mark Example Domain on example.com as read' }).click()
+    await expect(
+      page.getByRole('button', { name: 'Mark Example Domain on example.com as unread' })
+    ).toBeVisible()
+
+    await page.getByRole('link', { name: /Example Domain/ }).click()
+    await expect(page.getByRole('heading', { name: 'Example Domain' })).toBeVisible()
+    // The page opened on a bookmark that is already read, so it offers the same undo.
+    await page.getByRole('button', { name: 'Mark Example Domain on example.com as unread' }).click()
+    await expect(
+      page.getByRole('button', { name: 'Mark Example Domain on example.com as read' })
+    ).toBeVisible()
+
+    await page.getByRole('link', { name: 'Back to bookmarks' }).click()
+    await expect(
+      page.getByRole('button', { name: 'Mark Example Domain on example.com as read' })
+    ).toBeVisible()
+    await expect(page.getByRole('link', { name: /Example Domain/ })).not.toContainText('Read')
+  })
+
   test('persists bookmarks across a reload', async ({ page }) => {
     await page.getByLabel('URL').fill('https://example.com')
     await page.getByRole('button', { name: 'Add bookmark' }).click()

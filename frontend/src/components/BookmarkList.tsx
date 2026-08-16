@@ -6,6 +6,7 @@ import type { Bookmark } from '../api'
 import { formatRelativeTime } from '../relativeTime'
 import { describeBookmark } from '../bookmarkLabel'
 import DeleteBookmarkButton from './DeleteBookmarkButton'
+import ReadToggleButton from './ReadToggleButton'
 
 interface BookmarkListProps {
   bookmarks: Bookmark[]
@@ -13,6 +14,9 @@ interface BookmarkListProps {
   // Optional so a list can be rendered read-only; rows show no delete control without it.
   onDelete?: (id: string) => void
   deletingIds?: ReadonlySet<string>
+  // Optional for the same reason; without it rows still show read state, just no way to change it.
+  onToggleRead?: (id: string, isRead: boolean) => void
+  readPendingIds?: ReadonlySet<string>
 }
 
 function hostnameOf(url: string): string | null {
@@ -151,6 +155,8 @@ export default function BookmarkList({
   summarizingIds,
   onDelete,
   deletingIds,
+  onToggleRead,
+  readPendingIds,
 }: BookmarkListProps) {
   const items = Array.isArray(bookmarks) ? bookmarks : []
   const [failedIcons, setFailedIcons] = useState<ReadonlySet<string>>(new Set())
@@ -198,7 +204,12 @@ export default function BookmarkList({
                 </span>
                 <span className="flex-1 min-w-0">
                   <span
-                    className="block font-medium text-gray-900 truncate"
+                    // A read bookmark recedes: normal weight and a lighter grey, so a glance down
+                    // the list picks out what is still waiting to be read. Nothing is hidden —
+                    // the row stays fully legible and clickable.
+                    className={`block truncate ${
+                      bookmark.isRead ? 'font-normal text-gray-500' : 'font-medium text-gray-900'
+                    }`}
                     id={`bookmark-title-${bookmark.id}`}
                   >
                     {bookmark.title}
@@ -210,6 +221,10 @@ export default function BookmarkList({
                         ? 'Summarizing…'
                         : formatRelativeTime(bookmark.createdAt)}
                     </span>
+                    {/* Spelled out in the meta line rather than left to the dimmed title alone:
+                        colour and weight say nothing to a screen reader, and this line is part of
+                        the row link's accessible name (see aria-labelledby above). */}
+                    {bookmark.isRead && <span> · Read</span>}
                   </span>
                   {bookmark.labels && bookmark.labels.length > 0 && (
                     <span data-testid="bookmark-labels" className="mt-1 flex flex-wrap gap-1">
@@ -225,6 +240,16 @@ export default function BookmarkList({
                   )}
                 </span>
               </Link>
+              {onToggleRead && (
+                <ReadToggleButton
+                  // Same descriptor the delete control uses, so "which bookmark is this button
+                  // for" is answered the same way for every control in the row.
+                  label={describeBookmark(bookmark)}
+                  isRead={bookmark.isRead}
+                  isPending={readPendingIds?.has(bookmark.id)}
+                  onToggle={(isRead) => onToggleRead(bookmark.id, isRead)}
+                />
+              )}
               {/* Sibling of the Link, never nested inside it: nested anchors are invalid HTML.
                   Its accessible name uses the hostname rather than the title so it stays
                   distinguishable from the row link in queries and for screen readers. */}

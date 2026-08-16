@@ -163,6 +163,33 @@ export function createBookmarksRouter(): Router {
     }
   })
 
+  // PUT, not PATCH: the body carries this sub-resource's entire state, so repeating the request
+  // is a no-op. That matters for a control the user taps — a double click, a retried request
+  // after a dropped response, or the list and the bookmark's own page both settling their own
+  // toggle — none of which may flip the flag a second time. The desired state is sent explicitly
+  // for the same reason: a "toggle" endpoint would make the result depend on how many times the
+  // request arrived.
+  router.put('/:id/read', async (req: Request, res: Response) => {
+    const { isRead } = req.body as { isRead?: unknown }
+    if (typeof isRead !== 'boolean') {
+      res.status(400).json({ error: 'isRead must be a boolean' })
+      return
+    }
+    try {
+      const updated = await db.setReadState(req.params.id, isRead)
+      if (!updated) {
+        // Unlike DELETE above, a missing bookmark here is a real failure rather than a state that
+        // already holds: the caller asked to record something about a bookmark that is gone, and
+        // answering 204 would tell it a flag was stored when none was.
+        res.status(404).json({ error: 'Bookmark not found' })
+        return
+      }
+      res.status(204).end()
+    } catch {
+      res.status(500).json({ error: 'Failed to update the read state' })
+    }
+  })
+
   // Always regenerates rather than returning a stored summary, so this endpoint doubles as
   // "redo this summary" for the retry button.
   router.post('/:id/summary', async (req: Request, res: Response) => {

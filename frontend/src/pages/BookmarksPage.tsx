@@ -19,6 +19,37 @@ function withoutDeleted(list: Bookmark[], deleted: ReadonlySet<string>): Bookmar
   return deleted.size > 0 ? list.filter((bookmark) => !deleted.has(bookmark.id)) : list
 }
 
+// The same idea as withoutDeleted, for read flags: a list response assembled before a toggle was
+// written still carries the old flag, and letting it land would flip the row back under the user
+// seconds after they marked it.
+//
+// Unlike deletions these overrides are not kept forever — each is dropped as soon as a response
+// agrees with it, which is the point at which the server has become the better source of truth.
+// Keeping them would mask a change made anywhere else (the bookmark's own page in another tab)
+// for the rest of the session. Prunes the map it is given, which is why it takes the mutable Map
+// rather than a ReadonlyMap.
+function withPendingReadStates(list: Bookmark[], pending: Map<string, boolean>): Bookmark[] {
+  if (pending.size === 0) return list
+  for (const bookmark of list) {
+    if (pending.get(bookmark.id) === bookmark.isRead) pending.delete(bookmark.id)
+  }
+  if (pending.size === 0) return list
+  return list.map((bookmark) => {
+    const isRead = pending.get(bookmark.id)
+    return isRead === undefined ? bookmark : { ...bookmark, isRead }
+  })
+}
+
+// Every place a list response reaches state applies both corrections, in this order: a deleted
+// bookmark is gone whatever its flag says.
+function reconcile(
+  list: Bookmark[],
+  deleted: ReadonlySet<string>,
+  pendingReads: Map<string, boolean>
+): Bookmark[] {
+  return withPendingReadStates(withoutDeleted(list, deleted), pendingReads)
+}
+
 export default function BookmarksPage() {
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -26,6 +57,7 @@ export default function BookmarksPage() {
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false)
   const [summarizingIds, setSummarizingIds] = useState<ReadonlySet<string>>(new Set())
   const [deletingIds, setDeletingIds] = useState<ReadonlySet<string>>(new Set())
+  const [readPendingIds, setReadPendingIds] = useState<ReadonlySet<string>>(new Set())
   // Shared across the mount effect and refresh() so a slow, superseded request can't
   // overwrite state a newer request already applied.
   const requestId = useRef(0)
@@ -55,6 +87,10 @@ export default function BookmarksPage() {
   // Never pruned: Firestore does not reuse document ids, so an id in here can only ever match the
   // bookmark that was deleted, and one string per delete is nothing over a session.
   const deletedIds = useRef<Set<string>>(new Set())
+  // Read flags set on this page that a list response may not reflect yet — see
+  // withPendingReadStates. A ref, not state: it corrects data on its way into `bookmarks` and
+  // must never itself trigger a render.
+  const pendingReadStates = useRef<Map<string, boolean>>(new Map())
 
   const refresh = useCallback(async (options?: { background?: boolean }) => {
     // A background refresh (the one that follows a summary landing) must not touch error state:
@@ -68,7 +104,7 @@ export default function BookmarksPage() {
       const result = await api.listBookmarks()
       if (fid > appliedFetchId.current) {
         appliedFetchId.current = fid
-        setBookmarks(withoutDeleted(result, deletedIds.current))
+        setBookmarks(reconcile(result, deletedIds.current, pendingReadStates.current))
         setHasLoadedOnce(true)
       }
       if (id !== null && id === requestId.current) setError(null)
@@ -88,7 +124,7 @@ export default function BookmarksPage() {
       .then((result) => {
         if (cancelled) return
         if (fid === fetchId.current) {
-          setBookmarks(withoutDeleted(result, deletedIds.current))
+          setBookmarks(reconcile(result, deletedIds.current, pendingReadStates.current))
           setHasLoadedOnce(true)
         }
         if (id === requestId.current) setError(null)
@@ -150,6 +186,42 @@ export default function BookmarksPage() {
     }
   }
 
+  async function handleToggleRead(id: string, isRead: boolean) {
+    // A user action, so it owns the error banner the same way handleDelete does.
+    const requestNo = ++requestId.current
+    // Applied before the request, not after it: marking something read is a glance-and-move-on
+    // gesture, and a row that only changes a round trip later reads as a click that missed. The
+    // write is what makes it true — see the catch block for the row going back if it fails.
+    pendingReadStates.current.set(id, isRead)
+    setReadPendingIds((previous) => new Set(previous).add(id))
+    setBookmarks((previous) =>
+      previous.map((bookmark) => (bookmark.id === id ? { ...bookmark, isRead } : bookmark))
+    )
+    try {
+      await api.setReadState(id, isRead)
+      if (requestNo === requestId.current) setError(null)
+    } catch {
+      // Nothing was stored, so the optimistic row is now a lie: put it back rather than leave the
+      // user believing a flag was saved. Dropping the override too, so a list response is free to
+      // report whatever the server actually holds.
+      pendingReadStates.current.delete(id)
+      setBookmarks((previous) =>
+        previous.map((bookmark) =>
+          bookmark.id === id ? { ...bookmark, isRead: !isRead } : bookmark
+        )
+      )
+      // Same bump as handleAdd's: nothing else may clear this error out from under the user.
+      requestId.current++
+      setError(isRead ? 'Failed to mark as read.' : 'Failed to mark as unread.')
+    } finally {
+      setReadPendingIds((previous) => {
+        const next = new Set(previous)
+        next.delete(id)
+        return next
+      })
+    }
+  }
+
   async function generateSummaryFor(id: string) {
     setSummarizingIds((previous) => new Set(previous).add(id))
     try {
@@ -200,6 +272,8 @@ export default function BookmarksPage() {
             summarizingIds={summarizingIds}
             onDelete={handleDelete}
             deletingIds={deletingIds}
+            onToggleRead={handleToggleRead}
+            readPendingIds={readPendingIds}
           />
         )
       )}

@@ -157,3 +157,35 @@ describe('api.generateSummary', () => {
     await expect(api.generateSummary('1')).rejects.toThrow('API error: 502')
   })
 })
+
+describe('api.setReadState', () => {
+  it('puts the desired state and resolves on a 204 with no body', async () => {
+    // A 204 carries nothing to parse; res.json() on an empty body would reject and turn a
+    // successful write into a thrown error at the call site.
+    mockFetch.mockResolvedValue({ ok: true, status: 204 })
+
+    await expect(api.setReadState('1', true)).resolves.toBeUndefined()
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/bookmarks/1/read'),
+      expect.objectContaining({ method: 'PUT', body: JSON.stringify({ isRead: true }) })
+    )
+  })
+
+  it('sends the state to store rather than a bare toggle', async () => {
+    mockFetch.mockResolvedValue({ ok: true, status: 204 })
+
+    await api.setReadState('1', false)
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ body: JSON.stringify({ isRead: false }) })
+    )
+  })
+
+  it('throws when the response is not ok', async () => {
+    mockFetch.mockResolvedValue({ ok: false, status: 404 })
+
+    await expect(api.setReadState('gone', true)).rejects.toThrow('API error: 404')
+  })
+})

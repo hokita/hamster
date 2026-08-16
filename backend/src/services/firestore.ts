@@ -7,6 +7,10 @@ export interface BookmarkDoc {
   faviconUrl?: string
   summary?: string
   labels?: string[]
+  // Always present, unlike the optional fields above: a bookmark is either read or not, and
+  // "the field is missing" is not a third state a caller should have to think about. Documents
+  // written before this feature simply have no `isRead` key, which toBookmark reads as unread.
+  isRead: boolean
   createdAt: string
 }
 
@@ -19,8 +23,19 @@ export async function createBookmark(
   const now = Timestamp.now()
   // Firestore rejects undefined values, so the key is omitted rather than written as undefined.
   const favicon = faviconUrl ? { faviconUrl } : {}
-  const ref = await db.collection('bookmarks').add({ url, title, ...favicon, createdAt: now })
-  return { id: ref.id, url, title, ...favicon, createdAt: now.toDate().toISOString() }
+  // isRead is written explicitly rather than left implicit-by-absence: a stored field is what
+  // lets a future query filter on it, and Firestore cannot match documents that lack the key.
+  const ref = await db
+    .collection('bookmarks')
+    .add({ url, title, ...favicon, isRead: false, createdAt: now })
+  return {
+    id: ref.id,
+    url,
+    title,
+    ...favicon,
+    isRead: false,
+    createdAt: now.toDate().toISOString(),
+  }
 }
 
 // Shared by listBookmarks and getBookmark. Returns null for any document that doesn't carry the
@@ -32,6 +47,7 @@ function toBookmark(id: string, data: unknown): BookmarkDoc | null {
     faviconUrl?: unknown
     summary?: unknown
     labels?: unknown
+    isRead?: unknown
     createdAt?: { toDate?: () => Date }
   }
   if (
@@ -53,6 +69,11 @@ function toBookmark(id: string, data: unknown): BookmarkDoc | null {
     ...(Array.isArray(doc.labels) && doc.labels.every((label) => typeof label === 'string')
       ? { labels: doc.labels as string[] }
       : {}),
+    // Compared against true rather than coerced, so a document carrying anything other than a
+    // boolean here (a hand-edited field, a future migration mid-flight) reads as unread instead
+    // of as whatever that value happens to be truthy for. Absent — every bookmark saved before
+    // this feature — is unread, which is what "I haven't marked it read" means.
+    isRead: doc.isRead === true,
     createdAt: doc.createdAt.toDate().toISOString(),
   }
 }
@@ -80,6 +101,26 @@ export async function updateSummary(id: string, summary: string): Promise<void> 
   // That pairing is still both from the same, current regeneration attempt, never a previous page
   // version's labels, and it self-heals the next time either run's labels write lands.
   await db.collection('bookmarks').doc(id).update({ summary, labels: FieldValue.delete() })
+}
+
+// Firestore's status code for "no document to update" (google.rpc.Code.NOT_FOUND). update()
+// rejects with it rather than creating the document, which is what lets setReadState below report
+// a missing bookmark instead of resurrecting a deleted one as a document holding nothing but a
+// read flag — a row the list would then have to skip as malformed.
+const NOT_FOUND = 5
+
+// Returns false when the bookmark no longer exists. Reported from the write's own failure rather
+// than from a preceding existence check: one round trip instead of two, and no window in between
+// where a concurrent delete lands after the check said the document was there.
+export async function setReadState(id: string, isRead: boolean): Promise<boolean> {
+  const db = getFirestore()
+  try {
+    await db.collection('bookmarks').doc(id).update({ isRead })
+    return true
+  } catch (error) {
+    if ((error as { code?: unknown }).code === NOT_FOUND) return false
+    throw error
+  }
 }
 
 export async function updateLabels(id: string, labels: string[]): Promise<void> {
