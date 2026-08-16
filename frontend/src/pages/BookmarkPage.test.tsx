@@ -854,6 +854,62 @@ describe('BookmarkPage read flag', () => {
     }
   })
 
+  it("does not let another bookmark's write settle this one's override", async () => {
+    vi.useFakeTimers()
+    try {
+      // This page is reused across /bookmarks/:id navigations, so a write left behind on the
+      // previous bookmark can settle while the one now on screen has its own write in flight.
+      // Both went the same way here, which is what makes a flag-only guard unable to tell them
+      // apart — and stamping the wrong override lets a pre-write poll retire it.
+      const second = { ...bookmark, id: '2', title: 'Second Article' }
+      vi.mocked(api.getBookmark).mockImplementation((requested: string) =>
+        Promise.resolve(requested === '1' ? bookmark : second)
+      )
+      let settleFirstWrite!: () => void
+      vi.mocked(api.setReadState).mockReturnValueOnce(
+        new Promise<void>((resolve) => {
+          settleFirstWrite = resolve
+        })
+      )
+      // The second bookmark's write never settles, so anything that retires its override came
+      // from somewhere it should not have.
+      vi.mocked(api.setReadState).mockReturnValueOnce(new Promise(() => {}))
+
+      render(
+        <MemoryRouter initialEntries={['/bookmarks/1']}>
+          <Link to="/bookmarks/2">Bookmark 2</Link>
+          <Routes>
+            <Route path="/bookmarks/:id" element={<BookmarkPage />} />
+          </Routes>
+        </MemoryRouter>
+      )
+      await act(async () => {})
+
+      fireEvent.click(screen.getByRole('button', { name: /Example Article.* as read/ }))
+      await act(async () => {})
+
+      fireEvent.click(screen.getByRole('link', { name: 'Bookmark 2' }))
+      await act(async () => {})
+      fireEvent.click(screen.getByRole('button', { name: /Second Article.* as read/ }))
+      await act(async () => {})
+
+      // Bookmark 1's write lands now, with bookmark 2's still in flight.
+      await act(async () => {
+        settleFirstWrite()
+      })
+
+      // A poll for bookmark 2, whose snapshot predates its own write, must not be believed.
+      vi.mocked(api.getBookmark).mockResolvedValue({ ...second, summary: 'A summary.' })
+      await act(async () => {
+        vi.advanceTimersByTime(2000)
+      })
+
+      expect(screen.getByRole('button', { name: /Second Article.* as unread/ })).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('retires the override on a poll that agrees but advances nothing', async () => {
     vi.useFakeTimers()
     try {

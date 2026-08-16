@@ -40,6 +40,12 @@ function sameLabels(a?: string[], b?: string[]): boolean {
 // server's own answer can be believed again. Mirrors the list page's PendingRead: the two pages
 // solve the same race, so they solve it the same way.
 interface PendingRead {
+  // Identifies the toggle that created this override. React Router reuses this page across
+  // /bookmarks/:id navigations, so a write for the bookmark the reader has since left can settle
+  // while the one now on screen has a write of its own in flight — and if both went the same way,
+  // comparing the flag alone cannot tell them apart. The older write would then stamp (or clear)
+  // an override belonging to a write that has not committed yet.
+  token: number
   isRead: boolean
   // bookmarkFetchId at the moment the write settled, or null while it is still in flight.
   settledAtFetchId: number | null
@@ -171,6 +177,10 @@ export default function BookmarkPage() {
   // it wholesale would flip the button back under the user. Everything else in a polled result is
   // fresher than what is on screen; this one field is not.
   const pendingRead = useRef<PendingRead | null>(null)
+  // Hands each toggle its own identity for the guards above. A counter rather than the bookmark
+  // id: it also separates two toggles of the same bookmark, without having to argue that the
+  // disabled button makes those impossible.
+  const readToggleToken = useRef(0)
   // Orders bookmark re-reads by when they were ISSUED, the way the list page's fetchId orders its
   // own — every getBookmark call on this page takes the next value. A read override can only be
   // retired by a response whose request went out after the write was committed; an older one may
@@ -380,7 +390,8 @@ export default function BookmarkPage() {
   async function handleToggleRead(isRead: boolean) {
     if (!id) return
     const requestedId = id
-    pendingRead.current = { isRead, settledAtFetchId: null }
+    const token = ++readToggleToken.current
+    pendingRead.current = { token, isRead, settledAtFetchId: null }
     setIsTogglingRead(true)
     setReadToggleFailed(false)
     setBookmark((previous) => (previous ? { ...previous, isRead } : previous))
@@ -389,12 +400,12 @@ export default function BookmarkPage() {
       // The override deliberately survives a successful write — a re-read issued before the
       // write committed can still be in flight — but from here on every re-read reads committed
       // data, so stamp the point after which a response can retire it. See adopt().
-      if (pendingRead.current?.isRead === isRead) {
+      if (pendingRead.current?.token === token) {
         pendingRead.current.settledAtFetchId = bookmarkFetchId.current
       }
     } catch {
       // Nothing was stored, so there is no longer anything to protect a response from.
-      if (pendingRead.current?.isRead === isRead) pendingRead.current = null
+      if (pendingRead.current?.token === token) pendingRead.current = null
       if (requestedId !== latestId.current) return
       setBookmark((previous) => (previous ? { ...previous, isRead: !isRead } : previous))
       setReadToggleFailed(true)
