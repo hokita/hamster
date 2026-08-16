@@ -8,6 +8,7 @@ vi.mock('../api', () => ({
     createBookmark: vi.fn(),
     generateSummary: vi.fn(),
     deleteBookmark: vi.fn(),
+    setReadState: vi.fn(),
   },
 }))
 vi.mock('../firebase', () => ({ auth: {} }))
@@ -812,5 +813,191 @@ describe('BookmarksPage', () => {
 
     await waitFor(() => expect(api.generateSummary).toHaveBeenCalled())
     expect(screen.queryByText('Failed to add bookmark.')).not.toBeInTheDocument()
+  })
+})
+
+describe('BookmarksPage read flag', () => {
+  const unread: Bookmark = {
+    id: '1',
+    url: 'https://example.com',
+    title: 'Example Site',
+    isRead: false,
+    createdAt: '2024-01-01T00:00:00.000Z',
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(api.listBookmarks).mockResolvedValue([unread])
+    vi.mocked(api.setReadState).mockResolvedValue(undefined)
+    vi.mocked(api.generateSummary).mockResolvedValue({ summary: 'A summary.' })
+  })
+
+  it('stores the flag for the row that was clicked', async () => {
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: /as read/ }))
+    await waitFor(() => expect(api.setReadState).toHaveBeenCalledWith('1', true))
+  })
+
+  it('marks the row read straight away, before the write settles', async () => {
+    let resolveWrite!: () => void
+    vi.mocked(api.setReadState).mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveWrite = resolve
+      })
+    )
+
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: /as read/ }))
+
+    // The row already offers the undo, with the request still in flight.
+    expect(await screen.findByRole('button', { name: /as unread/ })).toBeInTheDocument()
+    await act(async () => {
+      resolveWrite()
+    })
+    expect(screen.getByRole('button', { name: /as unread/ })).toBeInTheDocument()
+  })
+
+  it('puts the row back and says so when the write fails', async () => {
+    vi.mocked(api.setReadState).mockRejectedValue(new Error('API error: 500'))
+
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: /as read/ }))
+
+    expect(await screen.findByText('Failed to mark as read.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /as read/ })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /Example Site/ })).not.toHaveTextContent('Read')
+  })
+
+  it('names the direction that failed when unmarking', async () => {
+    vi.mocked(api.listBookmarks).mockResolvedValue([{ ...unread, isRead: true }])
+    vi.mocked(api.setReadState).mockRejectedValue(new Error('API error: 500'))
+
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: /as unread/ }))
+
+    expect(await screen.findByText('Failed to mark as unread.')).toBeInTheDocument()
+  })
+
+  it('keeps the flag when a response from a fetch issued before the write lands afterwards', async () => {
+    // The refresh that follows an add is the one that does this in practice: issued while the
+    // write was still in flight, so its payload predates the flag and would flip the row back.
+    const newSite: Bookmark = { ...unread, id: '2', title: 'New Site' }
+    let resolveWrite!: () => void
+    vi.mocked(api.setReadState).mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveWrite = resolve
+      })
+    )
+    // Left pending so the add's own refresh is the only list response in this test.
+    vi.mocked(api.generateSummary).mockReturnValue(new Promise(() => {}))
+    vi.mocked(api.listBookmarks)
+      .mockResolvedValueOnce([unread])
+      .mockResolvedValueOnce([unread, newSite])
+    vi.mocked(api.createBookmark).mockResolvedValue(newSite)
+
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: /Example Site.* as read/ }))
+    await waitFor(() => expect(api.setReadState).toHaveBeenCalledWith('1', true))
+
+    fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
+    await screen.findByRole('link', { name: /New Site/ })
+
+    expect(screen.getByRole('button', { name: /Example Site.* as unread/ })).toBeInTheDocument()
+
+    // The write settling does not undo that: the stale response is already on screen, corrected.
+    await act(async () => {
+      resolveWrite()
+    })
+    expect(screen.getByRole('button', { name: /Example Site.* as unread/ })).toBeInTheDocument()
+  })
+
+  it('keeps a flag a refresh already confirmed when the write then reports failure', async () => {
+    // The write committed and only its response was lost. The refresh that landed in the
+    // meantime already showed the stored flag, so flipping the row back would contradict it.
+    const newSite: Bookmark = { ...unread, id: '2', title: 'New Site' }
+    let failWrite!: (error: Error) => void
+    vi.mocked(api.setReadState).mockReturnValue(
+      new Promise<void>((_resolve, reject) => {
+        failWrite = reject
+      })
+    )
+    vi.mocked(api.generateSummary).mockReturnValue(new Promise(() => {}))
+    vi.mocked(api.listBookmarks)
+      .mockResolvedValueOnce([unread])
+      .mockResolvedValueOnce([{ ...unread, isRead: true }, newSite])
+    vi.mocked(api.createBookmark).mockResolvedValue(newSite)
+
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: /Example Site.* as read/ }))
+    await waitFor(() => expect(api.setReadState).toHaveBeenCalledWith('1', true))
+
+    fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
+    await screen.findByRole('link', { name: /New Site/ })
+
+    await act(async () => {
+      failWrite(new Error('API error: 500'))
+    })
+
+    expect(screen.getByRole('button', { name: /Example Site.* as unread/ })).toBeInTheDocument()
+    expect(screen.queryByText('Failed to mark as read.')).not.toBeInTheDocument()
+  })
+
+  it('believes a fetch issued after the write, even when it disagrees', async () => {
+    // A flag changed somewhere else — another tab — never agrees with the override, so retiring
+    // only on agreement would mask it on every response for the rest of this mount.
+    const newSite: Bookmark = { ...unread, id: '2', title: 'New Site' }
+    vi.mocked(api.generateSummary).mockReturnValue(new Promise(() => {}))
+    vi.mocked(api.listBookmarks)
+      .mockResolvedValueOnce([unread])
+      // Issued after the write committed, and reporting it unread again.
+      .mockResolvedValue([unread, newSite])
+    vi.mocked(api.createBookmark).mockResolvedValue(newSite)
+
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: /Example Site.* as read/ }))
+    await waitFor(() => expect(api.setReadState).toHaveBeenCalledWith('1', true))
+    expect(screen.getByRole('button', { name: /Example Site.* as unread/ })).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
+    await screen.findByRole('link', { name: /New Site/ })
+
+    expect(
+      await screen.findByRole('button', { name: /Example Site.* as read/ })
+    ).toBeInTheDocument()
+  })
+
+  it('lets the server win again once a response agrees with what was stored', async () => {
+    // The override covers the write's own round trip and no longer. Holding it for the session
+    // would hide a change made anywhere else — the bookmark's own page in another tab.
+    const newSite: Bookmark = { ...unread, id: '2', title: 'New Site' }
+    const otherSite: Bookmark = { ...unread, id: '3', title: 'Other Site' }
+    vi.mocked(api.generateSummary).mockReturnValue(new Promise(() => {}))
+    vi.mocked(api.listBookmarks)
+      .mockResolvedValueOnce([unread])
+      // Agrees with the toggle, which retires the override...
+      .mockResolvedValueOnce([{ ...unread, isRead: true }, newSite])
+      // ...so this later response, reporting it unread again, is believed.
+      .mockResolvedValue([unread, newSite, otherSite])
+    vi.mocked(api.createBookmark).mockResolvedValueOnce(newSite).mockResolvedValueOnce(otherSite)
+
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: /Example Site.* as read/ }))
+    await waitFor(() => expect(api.setReadState).toHaveBeenCalledWith('1', true))
+
+    fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
+    await screen.findByRole('link', { name: /New Site/ })
+    expect(screen.getByRole('button', { name: /Example Site.* as unread/ })).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://other.com' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
+    await screen.findByRole('link', { name: /Other Site/ })
+
+    expect(
+      await screen.findByRole('button', { name: /Example Site.* as read/ })
+    ).toBeInTheDocument()
   })
 })

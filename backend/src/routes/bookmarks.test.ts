@@ -10,6 +10,7 @@ vi.mock('../services/firestore', () => ({
   updateLabels: vi.fn(),
   listAllLabels: vi.fn(),
   deleteBookmark: vi.fn(),
+  setReadState: vi.fn(),
 }))
 vi.mock('../services/metadataFetcher', () => ({
   fetchMetadata: vi.fn(),
@@ -240,6 +241,74 @@ describe('DELETE /api/bookmarks/:id', () => {
     vi.mocked(db.deleteBookmark).mockRejectedValue(new Error('firestore down'))
 
     const res = await request(app).delete('/api/bookmarks/1')
+
+    expect(res.status).toBe(500)
+    expect(res.body).toEqual({ error: expect.any(String) })
+  })
+})
+
+describe('PUT /api/bookmarks/:id/read', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('stores the flag and returns 204 with no body', async () => {
+    vi.mocked(db.setReadState).mockResolvedValue(true)
+
+    const res = await request(app).put('/api/bookmarks/1/read').send({ isRead: true })
+
+    expect(res.status).toBe(204)
+    expect(res.body).toEqual({})
+    expect(db.setReadState).toHaveBeenCalledWith('1', true)
+  })
+
+  it('stores false the same way, so unmarking goes through one endpoint', async () => {
+    vi.mocked(db.setReadState).mockResolvedValue(true)
+
+    const res = await request(app).put('/api/bookmarks/1/read').send({ isRead: false })
+
+    expect(res.status).toBe(204)
+    expect(db.setReadState).toHaveBeenCalledWith('1', false)
+  })
+
+  it('is idempotent: repeating the request stores the same state, never the opposite', async () => {
+    // The reason the body carries the desired state instead of meaning "toggle": a retried
+    // request after a dropped response must not land the bookmark on the wrong flag.
+    vi.mocked(db.setReadState).mockResolvedValue(true)
+
+    await request(app).put('/api/bookmarks/1/read').send({ isRead: true })
+    await request(app).put('/api/bookmarks/1/read').send({ isRead: true })
+
+    expect(db.setReadState).toHaveBeenNthCalledWith(1, '1', true)
+    expect(db.setReadState).toHaveBeenNthCalledWith(2, '1', true)
+  })
+
+  it('rejects a non-boolean isRead without touching the database', async () => {
+    const res = await request(app).put('/api/bookmarks/1/read').send({ isRead: 'yes' })
+
+    expect(res.status).toBe(400)
+    expect(res.body).toEqual({ error: expect.any(String) })
+    expect(db.setReadState).not.toHaveBeenCalled()
+  })
+
+  it('rejects a body with no isRead at all', async () => {
+    const res = await request(app).put('/api/bookmarks/1/read').send({})
+
+    expect(res.status).toBe(400)
+    expect(db.setReadState).not.toHaveBeenCalled()
+  })
+
+  it('returns 404 when the bookmark is gone, rather than reporting a flag it never stored', async () => {
+    vi.mocked(db.setReadState).mockResolvedValue(false)
+
+    const res = await request(app).put('/api/bookmarks/gone/read').send({ isRead: true })
+
+    expect(res.status).toBe(404)
+    expect(res.body).toEqual({ error: expect.any(String) })
+  })
+
+  it('returns 500 when the write rejects', async () => {
+    vi.mocked(db.setReadState).mockRejectedValue(new Error('firestore down'))
+
+    const res = await request(app).put('/api/bookmarks/1/read').send({ isRead: true })
 
     expect(res.status).toBe(500)
     expect(res.body).toEqual({ error: expect.any(String) })

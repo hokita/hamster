@@ -1,7 +1,8 @@
 # hamster
 
 Personal bookmark manager — save a URL and title, see them in a list, read an
-AI-generated summary of each saved page, and delete the ones you're done with.
+AI-generated summary of each saved page, mark off the ones you have read, and
+delete the ones you're done with.
 
 ## Stack
 
@@ -20,6 +21,21 @@ hamster/
 ├── backend/    # Express API
 └── e2e/        # Playwright end-to-end tests
 ```
+
+## Marking as read
+
+Every row in the list carries a check button that marks its bookmark read, and each bookmark's
+page has the same control spelled out under its summary, where a reader ends up once they have
+read it. A read bookmark's title dims and its row says "Read", so a glance down the list picks out
+what is still waiting — nothing is hidden or filtered away. The same button undoes it: read state
+is one click in either direction, so unlike deleting it asks nothing first.
+
+`PUT /api/bookmarks/:id/read` takes `{ "isRead": true }` or `false` — the state to store, not
+"flip it", so a retried request after a dropped response cannot land the bookmark on the opposite
+of what was asked for. It answers `204`, or `404` if the bookmark is gone: a flag recorded about
+something that no longer exists is a failure, not a state that already holds. Both places show
+the change immediately and put it back, with an error, if the write fails. Bookmarks saved before
+this feature carry no stored flag and read as unread.
 
 ## Deleting
 

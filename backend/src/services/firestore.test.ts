@@ -30,6 +30,7 @@ import {
   updateLabels,
   listAllLabels,
   deleteBookmark,
+  setReadState,
 } from './firestore'
 
 beforeEach(() => {
@@ -181,6 +182,7 @@ describe('getBookmark', () => {
       url: 'https://example.com',
       title: 'Example',
       summary: 'A summary.',
+      isRead: false,
       createdAt: '2024-01-01T00:00:00.000Z',
     })
   })
@@ -425,5 +427,98 @@ describe('bookmark labels handling', () => {
 
     expect(result).toHaveLength(1)
     expect(result[0]).not.toHaveProperty('labels')
+  })
+})
+
+describe('read flag', () => {
+  it('stores isRead: false on a new bookmark rather than leaving the field absent', async () => {
+    // Absence would read as unread too, but only a stored field can ever be queried on.
+    const result = await createBookmark('https://example.com', 'Example')
+
+    expect(mockAdd).toHaveBeenCalledWith(expect.objectContaining({ isRead: false }))
+    expect(result.isRead).toBe(false)
+  })
+
+  it('reads a stored isRead: true back', async () => {
+    mockDocGet.mockResolvedValue({
+      exists: true,
+      id: 'abc',
+      data: () => ({
+        url: 'https://example.com',
+        title: 'Example',
+        isRead: true,
+        createdAt: { toDate: () => fixedDate },
+      }),
+    })
+
+    await expect(getBookmark('abc')).resolves.toMatchObject({ isRead: true })
+  })
+
+  it('reports a document saved before the field existed as unread', async () => {
+    mockGet.mockResolvedValue({
+      docs: [
+        {
+          id: 'legacy',
+          data: () => ({
+            url: 'https://example.com',
+            title: 'Legacy',
+            createdAt: { toDate: () => fixedDate },
+          }),
+        },
+      ],
+    })
+
+    const result = await listBookmarks()
+
+    expect(result).toHaveLength(1)
+    expect(result[0].isRead).toBe(false)
+  })
+
+  it('reports a non-boolean isRead as unread rather than as whatever it is truthy for', async () => {
+    mockDocGet.mockResolvedValue({
+      exists: true,
+      id: 'weird',
+      data: () => ({
+        url: 'https://example.com',
+        title: 'Weird',
+        isRead: 'yes',
+        createdAt: { toDate: () => fixedDate },
+      }),
+    })
+
+    await expect(getBookmark('weird')).resolves.toMatchObject({ isRead: false })
+  })
+})
+
+describe('setReadState', () => {
+  it('writes the flag and reports success', async () => {
+    mockUpdate.mockResolvedValue(undefined)
+
+    await expect(setReadState('abc', true)).resolves.toBe(true)
+
+    expect(mockDoc).toHaveBeenCalledWith('abc')
+    expect(mockUpdate).toHaveBeenCalledWith({ isRead: true })
+  })
+
+  it('writes false as readily as true, so unmarking is the same one write', async () => {
+    mockUpdate.mockResolvedValue(undefined)
+
+    await expect(setReadState('abc', false)).resolves.toBe(true)
+
+    expect(mockUpdate).toHaveBeenCalledWith({ isRead: false })
+  })
+
+  it('reports a missing bookmark instead of throwing, from the write itself', async () => {
+    // Firestore's NOT_FOUND. update() rejects rather than creating the document, which is what
+    // keeps a bookmark deleted moments ago from coming back as a document holding only a flag.
+    mockUpdate.mockRejectedValue(Object.assign(new Error('no document to update'), { code: 5 }))
+
+    await expect(setReadState('gone', true)).resolves.toBe(false)
+  })
+
+  it('propagates any other Firestore failure rather than reporting it as missing', async () => {
+    mockUpdate.mockRejectedValue(Object.assign(new Error('permission denied'), { code: 7 }))
+
+    await expect(setReadState('abc', true)).rejects.toThrow('permission denied')
   })
 })

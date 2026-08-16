@@ -18,6 +18,7 @@ import { formatRelativeTime } from '../relativeTime'
 import { textLanguage } from '../textLanguage'
 import { describeBookmark } from '../bookmarkLabel'
 import DeleteBookmarkButton from '../components/DeleteBookmarkButton'
+import ReadToggleButton from '../components/ReadToggleButton'
 import ArticleChat from '../components/ArticleChat'
 
 // Generation of the new whole-article summaries can take up to the backend's 45s timeout.
@@ -33,6 +34,21 @@ const MAX_POLL_ATTEMPTS = 30
 function sameLabels(a?: string[], b?: string[]): boolean {
   if (!a || !b) return !a && !b
   return a.length === b.length && a.every((label, index) => label === b[index])
+}
+
+// A read state this page has asked the backend to store, with the ordering that says when the
+// server's own answer can be believed again. Mirrors the list page's PendingRead: the two pages
+// solve the same race, so they solve it the same way.
+interface PendingRead {
+  // Identifies the toggle that created this override. React Router reuses this page across
+  // /bookmarks/:id navigations, so a write for the bookmark the reader has since left can settle
+  // while the one now on screen has a write of its own in flight — and if both went the same way,
+  // comparing the flag alone cannot tell them apart. The older write would then stamp (or clear)
+  // an override belonging to a write that has not committed yet.
+  token: number
+  isRead: boolean
+  // bookmarkFetchId at the moment the write settled, or null while it is still in flight.
+  settledAtFetchId: number | null
 }
 
 function hostnameOf(url: string): string | null {
@@ -147,6 +163,8 @@ export default function BookmarkPage() {
   const [generateFailed, setGenerateFailed] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
   const [deleteFailed, setDeleteFailed] = useState(false)
+  const [isTogglingRead, setIsTogglingRead] = useState(false)
+  const [readToggleFailed, setReadToggleFailed] = useState(false)
   // The summary on screen when a generation request failed without proving the write never
   // happened. Express does not abort a handler when the client goes away, so the backend keeps
   // generating and may persist a summary seconds after the request died. Holding the old text here
@@ -154,6 +172,20 @@ export default function BookmarkPage() {
   // sit on a superseded summary until a manual reload, because polling otherwise stops the moment
   // any summary is present. Cleared as soon as something replaces it.
   const [supersededSummary, setSupersededSummary] = useState<string | null>(null)
+  // The read state this page has asked the backend to store. The poll below re-reads the whole
+  // bookmark, and a snapshot taken before the write landed still carries the old flag — adopting
+  // it wholesale would flip the button back under the user. Everything else in a polled result is
+  // fresher than what is on screen; this one field is not.
+  const pendingRead = useRef<PendingRead | null>(null)
+  // Hands each toggle its own identity for the guards above. A counter rather than the bookmark
+  // id: it also separates two toggles of the same bookmark, without having to argue that the
+  // disabled button makes those impossible.
+  const readToggleToken = useRef(0)
+  // Orders bookmark re-reads by when they were ISSUED, the way the list page's fetchId orders its
+  // own — every getBookmark call on this page takes the next value. A read override can only be
+  // retired by a response whose request went out after the write was committed; an older one may
+  // still be carrying a pre-write snapshot.
+  const bookmarkFetchId = useRef(0)
   // React Router reuses this component instance across `/bookmarks/:id` navigations, so state
   // from the previous bookmark would otherwise leak into the next one. Resetting it here (during
   // render, gated on the id actually changing) is React's documented pattern for this — it avoids
@@ -170,6 +202,8 @@ export default function BookmarkPage() {
     setSupersededSummary(null)
     setIsDeleting(false)
     setDeleteFailed(false)
+    setIsTogglingRead(false)
+    setReadToggleFailed(false)
   }
 
   // Tracks the id the route is currently on, so a generation request kicked off for a bookmark
@@ -178,15 +212,43 @@ export default function BookmarkPage() {
   const latestId = useRef(id)
   useEffect(() => {
     latestId.current = id
+    // A toggle still in flight for the bookmark just navigated away from has nothing to say
+    // about this one. Cleared here rather than in the reset block above, which runs during
+    // render — where writing a ref is not allowed.
+    pendingRead.current = null
   }, [id])
+
+  // Every re-read of the bookmark goes through this, so the one field the server may not know
+  // about yet survives — see pendingRead. Not a hook: it reads a ref at call time and is used
+  // inside effects and handlers alike, so wrapping it in useCallback would only add a dependency.
+  //
+  // The override is not retired when the write settles: a re-read issued before the write
+  // committed can still be in flight, and dropping the override at settle time would let exactly
+  // that response flip the button back while storage says the opposite. It is retired here, by a
+  // response that agrees with it, or by one from a request issued after the write committed —
+  // which supersedes it even when the two disagree, because that is what a change made somewhere
+  // else looks like from here. Same rule, and the same reasons, as the list page's
+  // withPendingReadStates.
+  function adopt(result: Bookmark, issuedFetchId: number): Bookmark {
+    const pending = pendingRead.current
+    if (pending === null) return result
+    const answeredAfterWrite =
+      pending.settledAtFetchId !== null && issuedFetchId > pending.settledAtFetchId
+    if (answeredAfterWrite || result.isRead === pending.isRead) {
+      pendingRead.current = null
+      return result
+    }
+    return { ...result, isRead: pending.isRead }
+  }
 
   useEffect(() => {
     if (!id) return
     let cancelled = false
+    const fid = ++bookmarkFetchId.current
     api
       .getBookmark(id)
       .then((result) => {
-        if (!cancelled) setBookmark(result)
+        if (!cancelled) setBookmark(adopt(result, fid))
       })
       .catch(() => {
         if (!cancelled) setLoadError(true)
@@ -223,23 +285,37 @@ export default function BookmarkPage() {
     const intervalId = setInterval(() => {
       attempts += 1
       if (attempts >= MAX_POLL_ATTEMPTS) clearInterval(intervalId)
+      const fid = ++bookmarkFetchId.current
       api
         .getBookmark(id)
         .then((result) => {
           if (cancelled || id !== latestId.current) return
+          // Reconciled before the advance check below, so every response gets the chance to
+          // retire a read override — including one that advances nothing, which is what most
+          // polls for a bookmark still being summarized return. Leaving those unprocessed kept
+          // an override alive long after the server had answered for it, and it would then go on
+          // correcting responses that were describing reality better than it was.
+          const reconciled = adopt(result, fid)
           // Only adopt a result that advances something: a new or replacement summary, or a
           // change in label content (including labels disappearing, which is the atomic clear a
           // regeneration starts with). Setting identical state would create a new object, re-run
           // this effect, and hand the poll a fresh budget — polling forever.
           const summaryAdvanced = Boolean(
-            result.summary &&
-              result.summary !== supersededSummary &&
-              result.summary !== bookmark.summary
+            reconciled.summary &&
+              reconciled.summary !== supersededSummary &&
+              reconciled.summary !== bookmark.summary
           )
-          const labelsAdvanced = !sameLabels(result.labels, bookmark.labels)
-          if (!summaryAdvanced && !labelsAdvanced) return
-          setBookmark(result)
-          if (summaryAdvanced || (labelsAdvanced && result.labels)) {
+          const labelsAdvanced = !sameLabels(reconciled.labels, bookmark.labels)
+          // The read flag counts as an advance in its own right. It is the one field a poll can
+          // report a change in while the summary and labels stand still — the bookmark was marked
+          // somewhere else — and discarding those responses would leave the button describing a
+          // state the server has already moved off, for the rest of the visit. It cannot cause
+          // the endless re-polling the check above guards against either: this compares values,
+          // so once applied, the next identical response is discarded as unchanged.
+          const readAdvanced = reconciled.isRead !== bookmark.isRead
+          if (!summaryAdvanced && !labelsAdvanced && !readAdvanced) return
+          setBookmark(reconciled)
+          if (summaryAdvanced || (labelsAdvanced && reconciled.labels)) {
             // A fresh labels write proves a generation run completed server-side even when the
             // summary text came out identical — the failure banner and the superseded watch no
             // longer describe reality. Labels merely disappearing proves only that a run started;
@@ -291,10 +367,11 @@ export default function BookmarkPage() {
       // polling effect cannot repair it because that only runs while there is no summary at all.
       // Retrying blind would also pay for a second generation to reproduce what already exists.
       try {
+        const fid = ++bookmarkFetchId.current
         const refreshed = await api.getBookmark(requestedId)
         if (requestedId !== latestId.current) return
         if (refreshed.summary && refreshed.summary !== summaryBefore) {
-          setBookmark(refreshed)
+          setBookmark(adopt(refreshed, fid))
           return
         }
       } catch {
@@ -311,6 +388,59 @@ export default function BookmarkPage() {
       if (summaryBefore) setSupersededSummary(summaryBefore)
     } finally {
       if (requestedId === latestId.current) setIsGenerating(false)
+    }
+  }
+
+  // Optimistic for the same reason the list's toggle is: this is a one-click gesture, and a
+  // button that only changes a round trip later reads as a click that missed. pendingRead keeps
+  // the poll from overwriting it in the meantime; the catch puts it back if nothing was stored.
+  async function handleToggleRead(isRead: boolean) {
+    if (!id) return
+    const requestedId = id
+    const token = ++readToggleToken.current
+    pendingRead.current = { token, isRead, settledAtFetchId: null }
+    setIsTogglingRead(true)
+    setReadToggleFailed(false)
+    setBookmark((previous) => (previous ? { ...previous, isRead } : previous))
+    try {
+      await api.setReadState(requestedId, isRead)
+      // The override deliberately survives a successful write — a re-read issued before the
+      // write committed can still be in flight — but from here on every re-read reads committed
+      // data, so stamp the point after which a response can retire it. See adopt().
+      //
+      // Re-established rather than only stamped, because it may be gone: leaving this bookmark
+      // and coming back clears the override and re-reads the document, and that read can still
+      // predate the commit. Then nothing on screen would say what was stored, and a bookmark
+      // that already has its summary and labels does not poll, so it would stay wrong for the
+      // rest of the visit. Writing the flag through as well is what corrects that; both are
+      // skipped when a newer toggle has taken over, or the reader is on another bookmark.
+      if (readToggleToken.current === token && requestedId === latestId.current) {
+        pendingRead.current = { token, isRead, settledAtFetchId: bookmarkFetchId.current }
+        setBookmark((previous) =>
+          previous && previous.id === requestedId && previous.isRead !== isRead
+            ? { ...previous, isRead }
+            : previous
+        )
+      }
+    } catch {
+      // Only this toggle's own, still-standing override may be rolled back. It is gone in every
+      // case where rolling back would be wrong: a newer toggle replaced it and owns the button
+      // now, the reader navigated away, or — the case a failure alone cannot tell apart — a
+      // re-read already reported this very flag back from the server. That last one means the
+      // write committed and only its response was lost, so reverting would contradict storage
+      // and report a failure for something that did happen.
+      if (pendingRead.current?.token !== token) return
+      // Nothing was stored, so there is no longer anything to protect a response from.
+      pendingRead.current = null
+      if (requestedId !== latestId.current) return
+      setBookmark((previous) => (previous ? { ...previous, isRead: !isRead } : previous))
+      setReadToggleFailed(true)
+    } finally {
+      // Same two owners: the newest toggle for the bookmark on screen is the one whose settling
+      // may put the button back in its resting state.
+      if (readToggleToken.current === token && requestedId === latestId.current) {
+        setIsTogglingRead(false)
+      }
     }
   }
 
@@ -454,6 +584,27 @@ export default function BookmarkPage() {
           </button>
         </div>
       )}
+
+      {/* Under the summary, where the reader ends up once they have read it — marking something
+          read is the last thing done on this page, not the first. It sits above the chat and well
+          clear of the delete rule below, so the two are never reached for by mistake. */}
+      <div className="mt-6 flex flex-col items-start gap-2">
+        <ReadToggleButton
+          // Same descriptor the list and the delete control build, so one convention names a
+          // bookmark everywhere a control acts on it.
+          label={describeBookmark(bookmark)}
+          isRead={bookmark.isRead}
+          isPending={isTogglingRead}
+          onToggle={handleToggleRead}
+          variant="labeled"
+        />
+        {readToggleFailed && (
+          <p className="m-0 flex items-center gap-2 text-sm text-red-700">
+            <FontAwesomeIcon icon={faTriangleExclamation} aria-hidden="true" />
+            Couldn&apos;t save the read state.
+          </p>
+        )}
+      </div>
 
       {/* Keyed by id: React Router reuses this page component across /bookmarks/:id navigations,
           and the key remounts the chat so one article's conversation never carries onto another. */}

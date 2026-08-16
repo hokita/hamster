@@ -7,6 +7,9 @@ export interface Bookmark {
   faviconUrl?: string
   summary?: string
   labels?: string[]
+  // Always sent by the backend, which reads a missing stored field as false — so the UI never has
+  // to treat "unknown" as a third state alongside read and unread.
+  isRead: boolean
   createdAt: string
 }
 
@@ -43,6 +46,13 @@ export const api = {
     }),
   getBookmark: (id: string) => request<Bookmark>(`/api/bookmarks/${id}`),
   deleteBookmark: (id: string) => request<void>(`/api/bookmarks/${id}`, { method: 'DELETE' }),
+  // Takes the state to store rather than "flip it", so a retry after a dropped response cannot
+  // land the bookmark on the opposite of what the user asked for.
+  setReadState: (id: string, isRead: boolean) =>
+    request<void>(`/api/bookmarks/${id}/read`, {
+      method: 'PUT',
+      body: JSON.stringify({ isRead }),
+    }),
   generateSummary: (id: string) =>
     request<{ summary: string; labels?: string[] }>(`/api/bookmarks/${id}/summary`, {
       method: 'POST',

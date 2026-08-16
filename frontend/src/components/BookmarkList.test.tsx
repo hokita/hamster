@@ -8,6 +8,7 @@ const bookmarks = [
     id: '1',
     url: 'https://example.com',
     title: 'Example Site',
+    isRead: false,
     createdAt: '2024-01-01T00:00:00.000Z',
   },
 ]
@@ -308,5 +309,62 @@ describe('labels', () => {
       ],
     })
     expect(screen.queryByTestId('bookmark-labels')).not.toBeInTheDocument()
+  })
+})
+
+describe('BookmarkList read flag', () => {
+  const read = [{ ...bookmarks[0], isRead: true }]
+
+  it('shows no read control when the list is rendered without a handler', () => {
+    renderList({ bookmarks })
+    expect(screen.queryByRole('button', { name: /Mark .* as read/ })).not.toBeInTheDocument()
+  })
+
+  it('offers to mark an unread row as read', () => {
+    renderList({ bookmarks, onToggleRead: vi.fn() })
+    expect(
+      screen.getByRole('button', { name: 'Mark Example Site on example.com as read' })
+    ).toBeInTheDocument()
+  })
+
+  it('reports the row id and the state to store', () => {
+    const onToggleRead = vi.fn()
+    renderList({ bookmarks, onToggleRead })
+    fireEvent.click(screen.getByRole('button', { name: /as read/ }))
+    expect(onToggleRead).toHaveBeenCalledWith('1', true)
+  })
+
+  it('offers to undo on a row that is already read', () => {
+    const onToggleRead = vi.fn()
+    renderList({ bookmarks: read, onToggleRead })
+    fireEvent.click(screen.getByRole('button', { name: /as unread/ }))
+    expect(onToggleRead).toHaveBeenCalledWith('1', false)
+  })
+
+  it("says a row is read in words, not only in the title's colour", () => {
+    // The dimmed title says nothing to a screen reader, and this line is part of the row link's
+    // accessible name — so the state travels with the row wherever the name is read out.
+    renderList({ bookmarks: read })
+    expect(screen.getByRole('link', { name: /Example Site/ })).toHaveTextContent('Read')
+  })
+
+  it('says nothing of the sort on an unread row', () => {
+    renderList({ bookmarks })
+    expect(screen.getByRole('link', { name: /Example Site/ })).not.toHaveTextContent('Read')
+  })
+
+  it('disables the control for a row whose write is still in flight', () => {
+    renderList({ bookmarks, onToggleRead: vi.fn(), readPendingIds: new Set(['1']) })
+    expect(screen.getByRole('button', { name: /as read/ })).toBeDisabled()
+  })
+
+  it('leaves other rows usable while one row is pending', () => {
+    const other = { ...bookmarks[0], id: '2', title: 'Other Site', url: 'https://other.com' }
+    renderList({
+      bookmarks: [bookmarks[0], other],
+      onToggleRead: vi.fn(),
+      readPendingIds: new Set(['1']),
+    })
+    expect(screen.getByRole('button', { name: /Other Site.* as read/ })).toBeEnabled()
   })
 })

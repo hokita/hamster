@@ -7,6 +7,7 @@ vi.mock('../api', () => ({
     getBookmark: vi.fn(),
     generateSummary: vi.fn(),
     deleteBookmark: vi.fn(),
+    setReadState: vi.fn(),
     askQuestion: vi.fn(),
   },
 }))
@@ -18,6 +19,7 @@ const bookmark = {
   id: '1',
   url: 'https://example.com/article',
   title: 'Example Article',
+  isRead: false,
   createdAt: '2024-01-01T00:00:00.000Z',
 }
 
@@ -743,5 +745,458 @@ describe('article chat', () => {
 
     await screen.findByText('An answer.')
     expect(api.askQuestion).toHaveBeenCalledWith('1', [{ role: 'user', text: 'A question?' }])
+  })
+})
+
+describe('BookmarkPage read flag', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(api.getBookmark).mockResolvedValue(bookmark)
+    vi.mocked(api.setReadState).mockResolvedValue(undefined)
+  })
+
+  it('offers to mark an unread bookmark as read', async () => {
+    renderPage()
+    expect(await screen.findByRole('button', { name: /as read/ })).toHaveTextContent('Mark as read')
+  })
+
+  it('stores the flag and flips the button without waiting for the write', async () => {
+    let resolveWrite!: () => void
+    vi.mocked(api.setReadState).mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveWrite = resolve
+      })
+    )
+
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: /as read/ }))
+
+    expect(await screen.findByRole('button', { name: /as unread/ })).toBeInTheDocument()
+    expect(api.setReadState).toHaveBeenCalledWith('1', true)
+    await act(async () => {
+      resolveWrite()
+    })
+    expect(screen.getByRole('button', { name: /as unread/ })).toBeEnabled()
+  })
+
+  it('unmarks a bookmark that is already read', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue({ ...bookmark, isRead: true })
+
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: /as unread/ }))
+
+    await waitFor(() => expect(api.setReadState).toHaveBeenCalledWith('1', false))
+    expect(await screen.findByRole('button', { name: /as read/ })).toBeInTheDocument()
+  })
+
+  it('puts the button back and reports a failed write', async () => {
+    vi.mocked(api.setReadState).mockRejectedValue(new Error('API error: 500'))
+
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: /as read/ }))
+
+    expect(await screen.findByText("Couldn't save the read state.")).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /as read/ })).toBeInTheDocument()
+  })
+
+  it('keeps the flag when a poll issued before the write resolves after it', async () => {
+    vi.useFakeTimers()
+    try {
+      // The real race: the poll's GET goes out while the write is still in flight, so it reads
+      // the document before the flag is committed, and only comes back once the write has
+      // settled. Retiring the override at settle time would let that answer flip the button back
+      // while storage says the opposite.
+      let resolveWrite!: () => void
+      vi.mocked(api.setReadState).mockReturnValue(
+        new Promise<void>((resolve) => {
+          resolveWrite = resolve
+        })
+      )
+      vi.mocked(api.getBookmark).mockResolvedValue(bookmark)
+
+      render(
+        <MemoryRouter initialEntries={['/bookmarks/1']}>
+          <Routes>
+            <Route path="/bookmarks/:id" element={<BookmarkPage />} />
+          </Routes>
+        </MemoryRouter>
+      )
+      await act(async () => {})
+
+      fireEvent.click(screen.getByRole('button', { name: /as read/ }))
+      await act(async () => {})
+
+      // The poll's request goes out here, still pre-write, and is held open...
+      let resolvePoll!: (value: Bookmark) => void
+      vi.mocked(api.getBookmark).mockReturnValue(
+        new Promise<Bookmark>((resolve) => {
+          resolvePoll = resolve
+        })
+      )
+      await act(async () => {
+        vi.advanceTimersByTime(2000)
+      })
+
+      // ...the write settles...
+      await act(async () => {
+        resolveWrite()
+      })
+
+      // ...and only then does that pre-write snapshot come back, carrying a summary so it is
+      // adopted rather than discarded as unchanged.
+      await act(async () => {
+        resolvePoll({ ...bookmark, summary: 'A summary.' })
+      })
+
+      expect(screen.getByRole('button', { name: /as unread/ })).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('applies a poll that changes only the read flag', async () => {
+    vi.useFakeTimers()
+    try {
+      // Marked somewhere else while this page is open: the poll's response advances neither the
+      // summary nor the labels, and discarding it would leave the button describing a state the
+      // server has already moved off.
+      vi.mocked(api.getBookmark).mockResolvedValue(bookmark)
+
+      render(
+        <MemoryRouter initialEntries={['/bookmarks/1']}>
+          <Routes>
+            <Route path="/bookmarks/:id" element={<BookmarkPage />} />
+          </Routes>
+        </MemoryRouter>
+      )
+      await act(async () => {})
+      expect(screen.getByRole('button', { name: /as read/ })).toBeInTheDocument()
+
+      vi.mocked(api.getBookmark).mockResolvedValue({ ...bookmark, isRead: true })
+      await act(async () => {
+        vi.advanceTimersByTime(2000)
+      })
+
+      expect(screen.getByRole('button', { name: /as unread/ })).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps a flag a poll already confirmed when the write then reports failure', async () => {
+    vi.useFakeTimers()
+    try {
+      // The write committed and only its response was lost. A poll has already reported the
+      // stored flag back, so rolling back here would contradict the server.
+      vi.mocked(api.getBookmark).mockResolvedValue(bookmark)
+      let failWrite!: (error: Error) => void
+      vi.mocked(api.setReadState).mockReturnValue(
+        new Promise<void>((_resolve, reject) => {
+          failWrite = reject
+        })
+      )
+
+      render(
+        <MemoryRouter initialEntries={['/bookmarks/1']}>
+          <Routes>
+            <Route path="/bookmarks/:id" element={<BookmarkPage />} />
+          </Routes>
+        </MemoryRouter>
+      )
+      await act(async () => {})
+
+      fireEvent.click(screen.getByRole('button', { name: /as read/ }))
+      await act(async () => {})
+
+      // The poll sees the flag the write stored, which retires the override.
+      vi.mocked(api.getBookmark).mockResolvedValue({ ...bookmark, isRead: true })
+      await act(async () => {
+        vi.advanceTimersByTime(2000)
+      })
+
+      await act(async () => {
+        failWrite(new Error('API error: 500'))
+      })
+
+      expect(screen.getByRole('button', { name: /as unread/ })).toBeInTheDocument()
+      expect(screen.queryByText("Couldn't save the read state.")).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shows the stored flag when the write settles after a trip away and back', async () => {
+    // This bookmark has its summary and labels, so nothing polls: if the write's own settling
+    // does not put the flag on screen, nothing else will for the rest of the visit.
+    const complete = { ...bookmark, summary: 'A summary.', labels: ['react'] }
+    const second = { ...complete, id: '2', title: 'Second Article' }
+    vi.mocked(api.getBookmark).mockImplementation((requested: string) =>
+      Promise.resolve(requested === '1' ? complete : second)
+    )
+    let settleWrite!: () => void
+    vi.mocked(api.setReadState).mockReturnValue(
+      new Promise<void>((resolve) => {
+        settleWrite = resolve
+      })
+    )
+
+    render(
+      <MemoryRouter initialEntries={['/bookmarks/1']}>
+        <Link to="/bookmarks/2">Bookmark 2</Link>
+        <Link to="/bookmarks/1">Bookmark 1</Link>
+        <Routes>
+          <Route path="/bookmarks/:id" element={<BookmarkPage />} />
+        </Routes>
+      </MemoryRouter>
+    )
+    fireEvent.click(await screen.findByRole('button', { name: /Example Article.* as read/ }))
+
+    // Away and back, which clears the override and re-reads the still-unread document.
+    fireEvent.click(screen.getByRole('link', { name: 'Bookmark 2' }))
+    await screen.findByRole('heading', { name: 'Second Article' })
+    fireEvent.click(screen.getByRole('link', { name: 'Bookmark 1' }))
+    await screen.findByRole('heading', { name: 'Example Article' })
+    expect(screen.getByRole('button', { name: /as read/ })).toBeInTheDocument()
+
+    await act(async () => {
+      settleWrite()
+    })
+
+    expect(screen.getByRole('button', { name: /as unread/ })).toBeInTheDocument()
+  })
+
+  it('ignores a stale toggle failure once a newer toggle owns the button', async () => {
+    // A's first write is still in flight when the reader leaves and comes back, then toggles
+    // again. The old request failing says nothing about the new one: rolling back here would
+    // undo the newer optimistic state and report a failure for a write that is still running.
+    const second = { ...bookmark, id: '2', title: 'Second Article' }
+    vi.mocked(api.getBookmark).mockImplementation((requested: string) =>
+      Promise.resolve(requested === '1' ? bookmark : second)
+    )
+    let failFirstWrite!: (error: Error) => void
+    vi.mocked(api.setReadState).mockReturnValueOnce(
+      new Promise<void>((_resolve, reject) => {
+        failFirstWrite = reject
+      })
+    )
+    vi.mocked(api.setReadState).mockReturnValueOnce(new Promise(() => {}))
+
+    render(
+      <MemoryRouter initialEntries={['/bookmarks/1']}>
+        <Link to="/bookmarks/2">Bookmark 2</Link>
+        <Link to="/bookmarks/1">Bookmark 1</Link>
+        <Routes>
+          <Route path="/bookmarks/:id" element={<BookmarkPage />} />
+        </Routes>
+      </MemoryRouter>
+    )
+    fireEvent.click(await screen.findByRole('button', { name: /Example Article.* as read/ }))
+
+    fireEvent.click(screen.getByRole('link', { name: 'Bookmark 2' }))
+    await screen.findByRole('heading', { name: 'Second Article' })
+    fireEvent.click(screen.getByRole('link', { name: 'Bookmark 1' }))
+    await screen.findByRole('heading', { name: 'Example Article' })
+
+    fireEvent.click(screen.getByRole('button', { name: /Example Article.* as read/ }))
+    const button = await screen.findByRole('button', { name: /Example Article.* as unread/ })
+
+    await act(async () => {
+      failFirstWrite(new Error('API error: 500'))
+    })
+
+    expect(screen.getByRole('button', { name: /Example Article.* as unread/ })).toBeInTheDocument()
+    expect(screen.queryByText("Couldn't save the read state.")).not.toBeInTheDocument()
+    // The newer write is still running, so its button is still the one waiting on it.
+    expect(button).toBeDisabled()
+  })
+
+  it("does not let another bookmark's write settle this one's override", async () => {
+    vi.useFakeTimers()
+    try {
+      // This page is reused across /bookmarks/:id navigations, so a write left behind on the
+      // previous bookmark can settle while the one now on screen has its own write in flight.
+      // Both went the same way here, which is what makes a flag-only guard unable to tell them
+      // apart — and stamping the wrong override lets a pre-write poll retire it.
+      const second = { ...bookmark, id: '2', title: 'Second Article' }
+      vi.mocked(api.getBookmark).mockImplementation((requested: string) =>
+        Promise.resolve(requested === '1' ? bookmark : second)
+      )
+      let settleFirstWrite!: () => void
+      vi.mocked(api.setReadState).mockReturnValueOnce(
+        new Promise<void>((resolve) => {
+          settleFirstWrite = resolve
+        })
+      )
+      // The second bookmark's write never settles, so anything that retires its override came
+      // from somewhere it should not have.
+      vi.mocked(api.setReadState).mockReturnValueOnce(new Promise(() => {}))
+
+      render(
+        <MemoryRouter initialEntries={['/bookmarks/1']}>
+          <Link to="/bookmarks/2">Bookmark 2</Link>
+          <Routes>
+            <Route path="/bookmarks/:id" element={<BookmarkPage />} />
+          </Routes>
+        </MemoryRouter>
+      )
+      await act(async () => {})
+
+      fireEvent.click(screen.getByRole('button', { name: /Example Article.* as read/ }))
+      await act(async () => {})
+
+      fireEvent.click(screen.getByRole('link', { name: 'Bookmark 2' }))
+      await act(async () => {})
+      fireEvent.click(screen.getByRole('button', { name: /Second Article.* as read/ }))
+      await act(async () => {})
+
+      // Bookmark 1's write lands now, with bookmark 2's still in flight.
+      await act(async () => {
+        settleFirstWrite()
+      })
+
+      // A poll for bookmark 2, whose snapshot predates its own write, must not be believed.
+      vi.mocked(api.getBookmark).mockResolvedValue({ ...second, summary: 'A summary.' })
+      await act(async () => {
+        vi.advanceTimersByTime(2000)
+      })
+
+      expect(screen.getByRole('button', { name: /Second Article.* as unread/ })).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('retires the override on a poll that agrees but advances nothing', async () => {
+    vi.useFakeTimers()
+    try {
+      // Most polls for a bookmark still being summarized report no content change at all. If
+      // those never retire the override, it outlives the server's own answer — and then masks a
+      // flag changed somewhere else on whichever response finally does advance something.
+      vi.mocked(api.getBookmark).mockResolvedValue(bookmark)
+      vi.mocked(api.setReadState).mockResolvedValue(undefined)
+
+      render(
+        <MemoryRouter initialEntries={['/bookmarks/1']}>
+          <Routes>
+            <Route path="/bookmarks/:id" element={<BookmarkPage />} />
+          </Routes>
+        </MemoryRouter>
+      )
+      await act(async () => {})
+
+      fireEvent.click(screen.getByRole('button', { name: /as read/ }))
+      await act(async () => {})
+
+      // A poll reports the stored flag back with no summary and no labels: nothing advanced.
+      vi.mocked(api.getBookmark).mockResolvedValue({ ...bookmark, isRead: true })
+      await act(async () => {
+        vi.advanceTimersByTime(2000)
+      })
+      expect(screen.getByRole('button', { name: /as unread/ })).toBeInTheDocument()
+
+      // Another tab now marks it unread, and the summary lands in the same response. With the
+      // override retired above, this is believed.
+      vi.mocked(api.getBookmark).mockResolvedValue({
+        ...bookmark,
+        isRead: false,
+        summary: 'A summary.',
+      })
+      await act(async () => {
+        vi.advanceTimersByTime(2000)
+      })
+
+      expect(screen.getByRole('button', { name: /as read/ })).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('lets the server win again once a response reports the stored flag back', async () => {
+    vi.useFakeTimers()
+    try {
+      // The override is retired by agreement, so it cannot mask a change made anywhere else —
+      // the list in another tab — for the rest of the visit.
+      vi.mocked(api.getBookmark).mockResolvedValue(bookmark)
+      vi.mocked(api.setReadState).mockResolvedValue(undefined)
+
+      render(
+        <MemoryRouter initialEntries={['/bookmarks/1']}>
+          <Routes>
+            <Route path="/bookmarks/:id" element={<BookmarkPage />} />
+          </Routes>
+        </MemoryRouter>
+      )
+      await act(async () => {})
+
+      fireEvent.click(screen.getByRole('button', { name: /as read/ }))
+      await act(async () => {})
+
+      // A poll agrees with the toggle, which retires the override...
+      vi.mocked(api.getBookmark).mockResolvedValue({
+        ...bookmark,
+        isRead: true,
+        summary: 'A summary.',
+      })
+      await act(async () => {
+        vi.advanceTimersByTime(2000)
+      })
+      expect(screen.getByRole('button', { name: /as unread/ })).toBeInTheDocument()
+
+      // ...so this later response, reporting it unread again, is believed.
+      vi.mocked(api.getBookmark).mockResolvedValue({
+        ...bookmark,
+        isRead: false,
+        summary: 'A summary.',
+        labels: ['react'],
+      })
+      await act(async () => {
+        vi.advanceTimersByTime(2000)
+      })
+
+      expect(screen.getByRole('button', { name: /as read/ })).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the flag when a poll snapshot taken before the write lands afterwards', async () => {
+    vi.useFakeTimers()
+    try {
+      // No summary yet, so the page polls. The first snapshot predates the toggle and still
+      // reports the bookmark unread; adopting that wholesale would flip the button back.
+      let resolveWrite!: () => void
+      vi.mocked(api.setReadState).mockReturnValue(
+        new Promise<void>((resolve) => {
+          resolveWrite = resolve
+        })
+      )
+      vi.mocked(api.getBookmark).mockResolvedValue(bookmark)
+
+      render(
+        <MemoryRouter initialEntries={['/bookmarks/1']}>
+          <Routes>
+            <Route path="/bookmarks/:id" element={<BookmarkPage />} />
+          </Routes>
+        </MemoryRouter>
+      )
+      await act(async () => {})
+
+      fireEvent.click(screen.getByRole('button', { name: /as read/ }))
+      await act(async () => {})
+
+      // A poll now returns the pre-toggle document, carrying a summary so the result is adopted.
+      vi.mocked(api.getBookmark).mockResolvedValue({ ...bookmark, summary: 'A summary.' })
+      await act(async () => {
+        vi.advanceTimersByTime(2000)
+      })
+
+      expect(screen.getByRole('button', { name: /as unread/ })).toBeInTheDocument()
+
+      await act(async () => {
+        resolveWrite()
+      })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
