@@ -799,6 +799,91 @@ describe('BookmarkPage read flag', () => {
     expect(screen.getByRole('button', { name: /as read/ })).toBeInTheDocument()
   })
 
+  it('keeps the flag when a stale poll snapshot lands after the write has already settled', async () => {
+    vi.useFakeTimers()
+    try {
+      // The window the override exists for is wider than the request itself: the poll re-reads on
+      // a timer, so a GET can be issued after the toggle, read the document before the write
+      // commits, and only resolve once the write has settled. Retiring the override at settle
+      // time would let that response flip the button back while storage says the opposite.
+      vi.mocked(api.getBookmark).mockResolvedValue(bookmark)
+      vi.mocked(api.setReadState).mockResolvedValue(undefined)
+
+      render(
+        <MemoryRouter initialEntries={['/bookmarks/1']}>
+          <Routes>
+            <Route path="/bookmarks/:id" element={<BookmarkPage />} />
+          </Routes>
+        </MemoryRouter>
+      )
+      await act(async () => {})
+
+      fireEvent.click(screen.getByRole('button', { name: /as read/ }))
+      // The write settles here, before the poll below ever fires.
+      await act(async () => {})
+      expect(api.setReadState).toHaveBeenCalledWith('1', true)
+
+      // That poll's snapshot predates the write: still unread, and carrying a summary so the
+      // result is adopted rather than discarded as unchanged.
+      vi.mocked(api.getBookmark).mockResolvedValue({ ...bookmark, summary: 'A summary.' })
+      await act(async () => {
+        vi.advanceTimersByTime(2000)
+      })
+
+      expect(screen.getByRole('button', { name: /as unread/ })).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('lets the server win again once a response reports the stored flag back', async () => {
+    vi.useFakeTimers()
+    try {
+      // The override is retired by agreement, so it cannot mask a change made anywhere else —
+      // the list in another tab — for the rest of the visit.
+      vi.mocked(api.getBookmark).mockResolvedValue(bookmark)
+      vi.mocked(api.setReadState).mockResolvedValue(undefined)
+
+      render(
+        <MemoryRouter initialEntries={['/bookmarks/1']}>
+          <Routes>
+            <Route path="/bookmarks/:id" element={<BookmarkPage />} />
+          </Routes>
+        </MemoryRouter>
+      )
+      await act(async () => {})
+
+      fireEvent.click(screen.getByRole('button', { name: /as read/ }))
+      await act(async () => {})
+
+      // A poll agrees with the toggle, which retires the override...
+      vi.mocked(api.getBookmark).mockResolvedValue({
+        ...bookmark,
+        isRead: true,
+        summary: 'A summary.',
+      })
+      await act(async () => {
+        vi.advanceTimersByTime(2000)
+      })
+      expect(screen.getByRole('button', { name: /as unread/ })).toBeInTheDocument()
+
+      // ...so this later response, reporting it unread again, is believed.
+      vi.mocked(api.getBookmark).mockResolvedValue({
+        ...bookmark,
+        isRead: false,
+        summary: 'A summary.',
+        labels: ['react'],
+      })
+      await act(async () => {
+        vi.advanceTimersByTime(2000)
+      })
+
+      expect(screen.getByRole('button', { name: /as read/ })).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('keeps the flag when a poll snapshot taken before the write lands afterwards', async () => {
     vi.useFakeTimers()
     try {

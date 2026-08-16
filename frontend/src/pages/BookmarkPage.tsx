@@ -197,8 +197,21 @@ export default function BookmarkPage() {
   // Every re-read of the bookmark goes through this, so the one field the server may not know
   // about yet survives — see pendingRead. Not a hook: it reads a ref at call time and is used
   // inside effects and handlers alike, so wrapping it in useCallback would only add a dependency.
+  //
+  // The override is retired here, when a response agrees with it — not when the write settles.
+  // The poll re-reads the whole bookmark on a timer, so a GET can be issued after the toggle,
+  // snapshot the document before the write commits, and only resolve once the write has settled;
+  // dropping the override at settle time would let exactly that response flip the button back
+  // while storage says the opposite. Waiting for agreement also keeps the server the source of
+  // truth, rather than masking a change made elsewhere for the rest of the visit — same rule the
+  // list page's withPendingReadStates follows.
   function adopt(result: Bookmark): Bookmark {
-    return pendingRead.current === null ? result : { ...result, isRead: pendingRead.current }
+    if (pendingRead.current === null) return result
+    if (result.isRead === pendingRead.current) {
+      pendingRead.current = null
+      return result
+    }
+    return { ...result, isRead: pendingRead.current }
   }
 
   useEffect(() => {
@@ -347,14 +360,16 @@ export default function BookmarkPage() {
     setBookmark((previous) => (previous ? { ...previous, isRead } : previous))
     try {
       await api.setReadState(requestedId, isRead)
+      // pendingRead deliberately survives a successful write: a re-read issued before the write
+      // committed can still be in flight, and adopt() is what retires the override — once a
+      // response actually reports the stored flag back. Navigating away clears it either way.
     } catch {
+      // Nothing was stored, so there is no longer anything to protect a response from.
+      pendingRead.current = null
       if (requestedId !== latestId.current) return
       setBookmark((previous) => (previous ? { ...previous, isRead: !isRead } : previous))
       setReadToggleFailed(true)
     } finally {
-      // Cleared whichever bookmark is displayed now: this request has settled, so it has nothing
-      // left to protect, and a stale override would follow the reader to the next bookmark.
-      pendingRead.current = null
       if (requestedId === latestId.current) setIsTogglingRead(false)
     }
   }
