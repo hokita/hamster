@@ -799,13 +799,67 @@ describe('BookmarkPage read flag', () => {
     expect(screen.getByRole('button', { name: /as read/ })).toBeInTheDocument()
   })
 
-  it('keeps the flag when a stale poll snapshot lands after the write has already settled', async () => {
+  it('keeps the flag when a poll issued before the write resolves after it', async () => {
     vi.useFakeTimers()
     try {
-      // The window the override exists for is wider than the request itself: the poll re-reads on
-      // a timer, so a GET can be issued after the toggle, read the document before the write
-      // commits, and only resolve once the write has settled. Retiring the override at settle
-      // time would let that response flip the button back while storage says the opposite.
+      // The real race: the poll's GET goes out while the write is still in flight, so it reads
+      // the document before the flag is committed, and only comes back once the write has
+      // settled. Retiring the override at settle time would let that answer flip the button back
+      // while storage says the opposite.
+      let resolveWrite!: () => void
+      vi.mocked(api.setReadState).mockReturnValue(
+        new Promise<void>((resolve) => {
+          resolveWrite = resolve
+        })
+      )
+      vi.mocked(api.getBookmark).mockResolvedValue(bookmark)
+
+      render(
+        <MemoryRouter initialEntries={['/bookmarks/1']}>
+          <Routes>
+            <Route path="/bookmarks/:id" element={<BookmarkPage />} />
+          </Routes>
+        </MemoryRouter>
+      )
+      await act(async () => {})
+
+      fireEvent.click(screen.getByRole('button', { name: /as read/ }))
+      await act(async () => {})
+
+      // The poll's request goes out here, still pre-write, and is held open...
+      let resolvePoll!: (value: Bookmark) => void
+      vi.mocked(api.getBookmark).mockReturnValue(
+        new Promise<Bookmark>((resolve) => {
+          resolvePoll = resolve
+        })
+      )
+      await act(async () => {
+        vi.advanceTimersByTime(2000)
+      })
+
+      // ...the write settles...
+      await act(async () => {
+        resolveWrite()
+      })
+
+      // ...and only then does that pre-write snapshot come back, carrying a summary so it is
+      // adopted rather than discarded as unchanged.
+      await act(async () => {
+        resolvePoll({ ...bookmark, summary: 'A summary.' })
+      })
+
+      expect(screen.getByRole('button', { name: /as unread/ })).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('retires the override on a poll that agrees but advances nothing', async () => {
+    vi.useFakeTimers()
+    try {
+      // Most polls for a bookmark still being summarized report no content change at all. If
+      // those never retire the override, it outlives the server's own answer — and then masks a
+      // flag changed somewhere else on whichever response finally does advance something.
       vi.mocked(api.getBookmark).mockResolvedValue(bookmark)
       vi.mocked(api.setReadState).mockResolvedValue(undefined)
 
@@ -819,18 +873,27 @@ describe('BookmarkPage read flag', () => {
       await act(async () => {})
 
       fireEvent.click(screen.getByRole('button', { name: /as read/ }))
-      // The write settles here, before the poll below ever fires.
       await act(async () => {})
-      expect(api.setReadState).toHaveBeenCalledWith('1', true)
 
-      // That poll's snapshot predates the write: still unread, and carrying a summary so the
-      // result is adopted rather than discarded as unchanged.
-      vi.mocked(api.getBookmark).mockResolvedValue({ ...bookmark, summary: 'A summary.' })
+      // A poll reports the stored flag back with no summary and no labels: nothing advanced.
+      vi.mocked(api.getBookmark).mockResolvedValue({ ...bookmark, isRead: true })
+      await act(async () => {
+        vi.advanceTimersByTime(2000)
+      })
+      expect(screen.getByRole('button', { name: /as unread/ })).toBeInTheDocument()
+
+      // Another tab now marks it unread, and the summary lands in the same response. With the
+      // override retired above, this is believed.
+      vi.mocked(api.getBookmark).mockResolvedValue({
+        ...bookmark,
+        isRead: false,
+        summary: 'A summary.',
+      })
       await act(async () => {
         vi.advanceTimersByTime(2000)
       })
 
-      expect(screen.getByRole('button', { name: /as unread/ })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /as read/ })).toBeInTheDocument()
     } finally {
       vi.useRealTimers()
     }
