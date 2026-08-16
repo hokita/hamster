@@ -854,6 +854,80 @@ describe('BookmarkPage read flag', () => {
     }
   })
 
+  it('applies a poll that changes only the read flag', async () => {
+    vi.useFakeTimers()
+    try {
+      // Marked somewhere else while this page is open: the poll's response advances neither the
+      // summary nor the labels, and discarding it would leave the button describing a state the
+      // server has already moved off.
+      vi.mocked(api.getBookmark).mockResolvedValue(bookmark)
+
+      render(
+        <MemoryRouter initialEntries={['/bookmarks/1']}>
+          <Routes>
+            <Route path="/bookmarks/:id" element={<BookmarkPage />} />
+          </Routes>
+        </MemoryRouter>
+      )
+      await act(async () => {})
+      expect(screen.getByRole('button', { name: /as read/ })).toBeInTheDocument()
+
+      vi.mocked(api.getBookmark).mockResolvedValue({ ...bookmark, isRead: true })
+      await act(async () => {
+        vi.advanceTimersByTime(2000)
+      })
+
+      expect(screen.getByRole('button', { name: /as unread/ })).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('ignores a stale toggle failure once a newer toggle owns the button', async () => {
+    // A's first write is still in flight when the reader leaves and comes back, then toggles
+    // again. The old request failing says nothing about the new one: rolling back here would
+    // undo the newer optimistic state and report a failure for a write that is still running.
+    const second = { ...bookmark, id: '2', title: 'Second Article' }
+    vi.mocked(api.getBookmark).mockImplementation((requested: string) =>
+      Promise.resolve(requested === '1' ? bookmark : second)
+    )
+    let failFirstWrite!: (error: Error) => void
+    vi.mocked(api.setReadState).mockReturnValueOnce(
+      new Promise<void>((_resolve, reject) => {
+        failFirstWrite = reject
+      })
+    )
+    vi.mocked(api.setReadState).mockReturnValueOnce(new Promise(() => {}))
+
+    render(
+      <MemoryRouter initialEntries={['/bookmarks/1']}>
+        <Link to="/bookmarks/2">Bookmark 2</Link>
+        <Link to="/bookmarks/1">Bookmark 1</Link>
+        <Routes>
+          <Route path="/bookmarks/:id" element={<BookmarkPage />} />
+        </Routes>
+      </MemoryRouter>
+    )
+    fireEvent.click(await screen.findByRole('button', { name: /Example Article.* as read/ }))
+
+    fireEvent.click(screen.getByRole('link', { name: 'Bookmark 2' }))
+    await screen.findByRole('heading', { name: 'Second Article' })
+    fireEvent.click(screen.getByRole('link', { name: 'Bookmark 1' }))
+    await screen.findByRole('heading', { name: 'Example Article' })
+
+    fireEvent.click(screen.getByRole('button', { name: /Example Article.* as read/ }))
+    const button = await screen.findByRole('button', { name: /Example Article.* as unread/ })
+
+    await act(async () => {
+      failFirstWrite(new Error('API error: 500'))
+    })
+
+    expect(screen.getByRole('button', { name: /Example Article.* as unread/ })).toBeInTheDocument()
+    expect(screen.queryByText("Couldn't save the read state.")).not.toBeInTheDocument()
+    // The newer write is still running, so its button is still the one waiting on it.
+    expect(button).toBeDisabled()
+  })
+
   it("does not let another bookmark's write settle this one's override", async () => {
     vi.useFakeTimers()
     try {

@@ -306,7 +306,14 @@ export default function BookmarkPage() {
               reconciled.summary !== bookmark.summary
           )
           const labelsAdvanced = !sameLabels(reconciled.labels, bookmark.labels)
-          if (!summaryAdvanced && !labelsAdvanced) return
+          // The read flag counts as an advance in its own right. It is the one field a poll can
+          // report a change in while the summary and labels stand still — the bookmark was marked
+          // somewhere else — and discarding those responses would leave the button describing a
+          // state the server has already moved off, for the rest of the visit. It cannot cause
+          // the endless re-polling the check above guards against either: this compares values,
+          // so once applied, the next identical response is discarded as unchanged.
+          const readAdvanced = reconciled.isRead !== bookmark.isRead
+          if (!summaryAdvanced && !labelsAdvanced && !readAdvanced) return
           setBookmark(reconciled)
           if (summaryAdvanced || (labelsAdvanced && reconciled.labels)) {
             // A fresh labels write proves a generation run completed server-side even when the
@@ -404,13 +411,22 @@ export default function BookmarkPage() {
         pendingRead.current.settledAtFetchId = bookmarkFetchId.current
       }
     } catch {
+      // A newer toggle owns the button now — the reader left this bookmark and came back, or
+      // simply clicked again — so this failure is about optimistic state that no longer exists.
+      // Rolling back here would undo the newer write's state instead of this one's, and report a
+      // failure for a request that is still running.
+      if (readToggleToken.current !== token) return
       // Nothing was stored, so there is no longer anything to protect a response from.
       if (pendingRead.current?.token === token) pendingRead.current = null
       if (requestedId !== latestId.current) return
       setBookmark((previous) => (previous ? { ...previous, isRead: !isRead } : previous))
       setReadToggleFailed(true)
     } finally {
-      if (requestedId === latestId.current) setIsTogglingRead(false)
+      // Same two owners: the newest toggle for the bookmark on screen is the one whose settling
+      // may put the button back in its resting state.
+      if (readToggleToken.current === token && requestedId === latestId.current) {
+        setIsTogglingRead(false)
+      }
     }
   }
 
