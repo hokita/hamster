@@ -101,9 +101,17 @@ test.describe('bookmarks', () => {
     await page.getByRole('button', { name: 'Unread', exact: true }).click()
     await expect(page.getByRole('link', { name: /Example Domain/ })).toBeVisible()
 
+    // Awaited before reloading, and captured before the click that causes it. Both assertions
+    // below are satisfied by the optimistic update alone, so neither says anything about the
+    // write: reloading on them alone would race the request and could abort it, leaving the
+    // bookmark unread and the final assertion flaky.
+    const readWritten = page.waitForResponse(
+      (response) => response.url().includes('/read') && response.request().method() === 'PUT'
+    )
     await page.getByRole('button', { name: 'Mark Example Domain on example.com as read' }).click()
     await expect(page.getByRole('link', { name: /Example Domain/ })).toHaveCount(0)
     await expect(page.getByText('Nothing unread.')).toBeVisible()
+    expect((await readWritten).status()).toBe(204)
 
     // A reload proves the row moved between the filters because the flag was stored, not because
     // the page hid it locally. The filter itself resets to All, as designed.
