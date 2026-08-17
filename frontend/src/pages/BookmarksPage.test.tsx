@@ -1154,3 +1154,28 @@ describe('BookmarksPage empty library under a filter', () => {
     expect(screen.queryByText('Nothing read yet.')).not.toBeInTheDocument()
   })
 })
+
+describe('BookmarksPage malformed list response', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  // BookmarkList has always guarded against this, and a test asserts it does. Filtering on the
+  // page reaches the value first, so the guard has to hold here too or the page renders blank.
+  it('renders the empty state when the API resolves with something that is not a list', async () => {
+    vi.mocked(api.listBookmarks).mockResolvedValue({ oops: true } as unknown as Bookmark[])
+    renderPage()
+
+    expect(
+      await screen.findByText('No bookmarks yet — paste a URL above to add one.')
+    ).toBeInTheDocument()
+  })
+
+  it('still filters without throwing on a malformed list', async () => {
+    vi.mocked(api.listBookmarks).mockResolvedValue({ oops: true } as unknown as Bookmark[])
+    renderPage()
+    await screen.findByText('No bookmarks yet — paste a URL above to add one.')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Unread' }))
+
+    expect(screen.getByText('No bookmarks yet — paste a URL above to add one.')).toBeInTheDocument()
+  })
+})

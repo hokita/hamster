@@ -297,6 +297,13 @@ export default function BookmarksPage() {
     }
   }
 
+  // A successful response carrying something that is not a list reaches state as-is (the
+  // reconcilers pass an untouched value straight through when nothing is pending or deleted).
+  // BookmarkList has always absorbed that and rendered its empty state; filtering here reaches
+  // the value first, so the same guard has to hold on this side or the page renders blank.
+  const items = Array.isArray(bookmarks) ? bookmarks : []
+  const visible = items.filter((bookmark) => matchesFilter(bookmark, filter))
+
   return (
     <div className="max-w-2xl mx-auto">
       <div className="flex items-center justify-between px-4 pt-6 pb-4 border-b border-gray-200">
@@ -350,7 +357,7 @@ export default function BookmarksPage() {
       ) : (
         !(error && !hasLoadedOnce) && (
           <BookmarkList
-            bookmarks={bookmarks.filter((bookmark) => matchesFilter(bookmark, filter))}
+            bookmarks={visible}
             summarizingIds={summarizingIds}
             onDelete={handleDelete}
             deletingIds={deletingIds}
@@ -359,7 +366,7 @@ export default function BookmarksPage() {
             // Only when a filter is what emptied the list. An empty library has its own empty
             // state — the one telling a first-time user how to add a bookmark — and a filter
             // must not be what hides the page's only instruction.
-            emptyMessage={bookmarks.length > 0 ? EMPTY_MESSAGES[filter] : undefined}
+            emptyMessage={items.length > 0 ? EMPTY_MESSAGES[filter] : undefined}
           />
         )
       )}
