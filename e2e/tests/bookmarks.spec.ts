@@ -91,6 +91,27 @@ test.describe('bookmarks', () => {
     ).toBeVisible()
   })
 
+  test('filters the list by read state', async ({ page }) => {
+    await page.getByLabel('URL').fill('https://example.com')
+    await page.getByRole('button', { name: 'Add bookmark' }).click()
+    await expect(page.getByRole('link', { name: /Example Domain/ })).toBeVisible()
+
+    // The filter names are matched exactly: Playwright's name matching is substring-based, and
+    // "Read" is also part of "Unread" and of every row's "Mark … as read" toggle.
+    await page.getByRole('button', { name: 'Unread', exact: true }).click()
+    await expect(page.getByRole('link', { name: /Example Domain/ })).toBeVisible()
+
+    await page.getByRole('button', { name: 'Mark Example Domain on example.com as read' }).click()
+    await expect(page.getByRole('link', { name: /Example Domain/ })).toHaveCount(0)
+    await expect(page.getByText('Nothing unread.')).toBeVisible()
+
+    // A reload proves the row moved between the filters because the flag was stored, not because
+    // the page hid it locally. The filter itself resets to All, as designed.
+    await page.reload()
+    await page.getByRole('button', { name: 'Read', exact: true }).click()
+    await expect(page.getByRole('link', { name: /Example Domain/ })).toBeVisible()
+  })
+
   test("unmarks from the bookmark's own page, and the list agrees", async ({ page }) => {
     await page.getByLabel('URL').fill('https://example.com')
     await page.getByRole('button', { name: 'Add bookmark' }).click()

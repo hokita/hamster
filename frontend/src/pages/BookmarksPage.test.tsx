@@ -1001,3 +1001,127 @@ describe('BookmarksPage read flag', () => {
     ).toBeInTheDocument()
   })
 })
+
+describe('BookmarksPage read filter', () => {
+  const unreadBookmark = {
+    id: '1',
+    url: 'https://example.com',
+    title: 'Unread Site',
+    isRead: false,
+    createdAt: '2024-01-01T00:00:00.000Z',
+  }
+  const readBookmark = {
+    id: '2',
+    url: 'https://other.example',
+    title: 'Read Site',
+    isRead: true,
+    createdAt: '2024-01-01T00:00:00.000Z',
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(api.listBookmarks).mockResolvedValue([unreadBookmark, readBookmark])
+    vi.mocked(api.setReadState).mockResolvedValue(undefined)
+  })
+
+  it('shows every bookmark under the All filter, which is where the page starts', async () => {
+    renderPage()
+
+    expect(await screen.findByRole('link', { name: /Unread Site/ })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /Read Site/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('hides read bookmarks under the Unread filter', async () => {
+    renderPage()
+    await screen.findByRole('link', { name: /Unread Site/ })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Unread' }))
+
+    expect(screen.getByRole('link', { name: /Unread Site/ })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Read Site/ })).not.toBeInTheDocument()
+  })
+
+  it('hides unread bookmarks under the Read filter', async () => {
+    renderPage()
+    await screen.findByRole('link', { name: /Unread Site/ })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Read' }))
+
+    expect(screen.getByRole('link', { name: /Read Site/ })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Unread Site/ })).not.toBeInTheDocument()
+  })
+
+  it('filters the list it already holds, without refetching', async () => {
+    renderPage()
+    await screen.findByRole('link', { name: /Unread Site/ })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Unread' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Read' }))
+
+    expect(api.listBookmarks).toHaveBeenCalledTimes(1)
+  })
+
+  it('tells the user the filter is empty rather than that they have no bookmarks', async () => {
+    vi.mocked(api.listBookmarks).mockResolvedValue([readBookmark])
+    renderPage()
+    await screen.findByRole('link', { name: /Read Site/ })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Unread' }))
+
+    expect(screen.getByText('Nothing unread.')).toBeInTheDocument()
+    expect(
+      screen.queryByText('No bookmarks yet — paste a URL above to add one.')
+    ).not.toBeInTheDocument()
+  })
+
+  it('says nothing is read yet under an empty Read filter', async () => {
+    vi.mocked(api.listBookmarks).mockResolvedValue([unreadBookmark])
+    renderPage()
+    await screen.findByRole('link', { name: /Unread Site/ })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Read' }))
+
+    expect(screen.getByText('Nothing read yet.')).toBeInTheDocument()
+  })
+
+  // The filter reads the same optimistically-updated list the row does, so a bookmark leaves the
+  // Unread view on the click rather than a round trip later.
+  it('drops a bookmark out of the Unread filter as soon as it is marked read', async () => {
+    renderPage()
+    await screen.findByRole('link', { name: /Unread Site/ })
+    fireEvent.click(screen.getByRole('button', { name: 'Unread' }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mark Unread Site on example.com as read' }))
+
+    await waitFor(() =>
+      expect(screen.queryByRole('link', { name: /Unread Site/ })).not.toBeInTheDocument()
+    )
+  })
+
+  it('brings the row back into the Unread filter when the write fails', async () => {
+    vi.mocked(api.setReadState).mockRejectedValue(new Error('API error: 500'))
+    renderPage()
+    await screen.findByRole('link', { name: /Unread Site/ })
+    fireEvent.click(screen.getByRole('button', { name: 'Unread' }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mark Unread Site on example.com as read' }))
+
+    expect(await screen.findByText('Failed to mark as read.')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /Unread Site/ })).toBeInTheDocument()
+  })
+
+  it('keeps the chosen filter across a list refresh', async () => {
+    renderPage()
+    await screen.findByRole('link', { name: /Unread Site/ })
+    fireEvent.click(screen.getByRole('button', { name: 'Read' }))
+
+    vi.mocked(api.createBookmark).mockResolvedValue(unreadBookmark)
+    fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
+
+    await waitFor(() => expect(api.listBookmarks).toHaveBeenCalledTimes(2))
+    expect(screen.getByRole('button', { name: 'Read' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByRole('link', { name: /Unread Site/ })).not.toBeInTheDocument()
+  })
+})

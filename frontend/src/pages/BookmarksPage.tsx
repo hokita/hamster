@@ -19,6 +19,27 @@ function withoutDeleted(list: Bookmark[], deleted: ReadonlySet<string>): Bookmar
   return deleted.size > 0 ? list.filter((bookmark) => !deleted.has(bookmark.id)) : list
 }
 
+type ReadFilter = 'all' | 'unread' | 'read'
+
+const FILTERS: { value: ReadFilter; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'unread', label: 'Unread' },
+  { value: 'read', label: 'Read' },
+]
+
+function matchesFilter(bookmark: Bookmark, filter: ReadFilter): boolean {
+  if (filter === 'all') return true
+  return bookmark.isRead === (filter === 'read')
+}
+
+// Says what is missing under this filter, so an empty list never tells someone with a full
+// library that they have no bookmarks and should paste a URL.
+const EMPTY_MESSAGES: Record<ReadFilter, string | undefined> = {
+  all: undefined,
+  unread: 'Nothing unread.',
+  read: 'Nothing read yet.',
+}
+
 // A read flag set on this page, with the fetch ordering that says when the server's own answer
 // can be believed again.
 interface PendingRead {
@@ -77,6 +98,10 @@ export default function BookmarksPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false)
   const [summarizingIds, setSummarizingIds] = useState<ReadonlySet<string>>(new Set())
+  // Deliberately not persisted and not in the URL: it is a view of the list this page already
+  // holds, and returning to All on a reload is the state that explains itself. It survives a
+  // refresh of the list itself, which is ordinary state, not a reset.
+  const [filter, setFilter] = useState<ReadFilter>('all')
   const [deletingIds, setDeletingIds] = useState<ReadonlySet<string>>(new Set())
   const [readPendingIds, setReadPendingIds] = useState<ReadonlySet<string>>(new Set())
   // Shared across the mount effect and refresh() so a slow, superseded request can't
@@ -291,6 +316,29 @@ export default function BookmarksPage() {
         </div>
       )}
       <BookmarkForm onAdd={handleAdd} />
+      {/* A group of toggle buttons rather than the ARIA tabs pattern: tabs promise arrow-key
+          navigation and an associated tabpanel, neither of which this is. */}
+      <div
+        role="group"
+        aria-label="Filter bookmarks by read state"
+        className="flex gap-1 px-4 pb-1"
+      >
+        {FILTERS.map(({ value, label }) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setFilter(value)}
+            aria-pressed={filter === value}
+            className={`rounded-full px-3 py-1 text-sm cursor-pointer ${
+              filter === value
+                ? 'bg-amber-700 text-white'
+                : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
       {isLoading ? (
         <div
           role="status"
@@ -302,12 +350,13 @@ export default function BookmarksPage() {
       ) : (
         !(error && !hasLoadedOnce) && (
           <BookmarkList
-            bookmarks={bookmarks}
+            bookmarks={bookmarks.filter((bookmark) => matchesFilter(bookmark, filter))}
             summarizingIds={summarizingIds}
             onDelete={handleDelete}
             deletingIds={deletingIds}
             onToggleRead={handleToggleRead}
             readPendingIds={readPendingIds}
+            emptyMessage={EMPTY_MESSAGES[filter]}
           />
         )
       )}

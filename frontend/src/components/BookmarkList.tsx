@@ -17,6 +17,9 @@ interface BookmarkListProps {
   // Optional for the same reason; without it rows still show read state, just no way to change it.
   onToggleRead?: (id: string, isRead: boolean) => void
   readPendingIds?: ReadonlySet<string>
+  // Replaces the "no bookmarks yet" copy when the list is empty because of a filter rather than
+  // because nothing has been saved — "paste a URL above" is wrong advice in that case.
+  emptyMessage?: string
 }
 
 function hostnameOf(url: string): string | null {
@@ -157,6 +160,7 @@ export default function BookmarkList({
   deletingIds,
   onToggleRead,
   readPendingIds,
+  emptyMessage,
 }: BookmarkListProps) {
   const items = Array.isArray(bookmarks) ? bookmarks : []
   const [failedIcons, setFailedIcons] = useState<ReadonlySet<string>>(new Set())
@@ -165,7 +169,9 @@ export default function BookmarkList({
     return (
       <div className="flex flex-col items-center gap-2 py-10 text-gray-500">
         <FontAwesomeIcon icon={faLink} size="lg" aria-hidden="true" />
-        <p className="m-0 text-sm">No bookmarks yet — paste a URL above to add one.</p>
+        <p className="m-0 text-sm">
+          {emptyMessage ?? 'No bookmarks yet — paste a URL above to add one.'}
+        </p>
       </div>
     )
   }

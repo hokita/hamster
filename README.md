@@ -27,8 +27,15 @@ hamster/
 Every row in the list carries a check button that marks its bookmark read, and each bookmark's
 page has the same control spelled out under its summary, where a reader ends up once they have
 read it. A read bookmark's title dims and its row says "Read", so a glance down the list picks out
-what is still waiting — nothing is hidden or filtered away. The same button undoes it: read state
-is one click in either direction, so unlike deleting it asks nothing first.
+what is still waiting. The same button undoes it: read state is one click in either direction, so
+unlike deleting it asks nothing first.
+
+Above the list, an All / Unread / Read filter narrows what is shown. It starts on All, so nothing
+is hidden until you ask for it, and it applies to the list the page already holds — switching
+costs no round trip, and a bookmark leaves the Unread view the moment it is marked, not a request
+later. The choice is not persisted: a reload opens on All again. When a filter matches nothing,
+the list says which filter is empty rather than offering the "paste a URL above" advice that
+belongs to a genuinely empty library.
 
 `PUT /api/bookmarks/:id/read` takes `{ "isRead": true }` or `false` — the state to store, not
 "flip it", so a retried request after a dropped response cannot land the bookmark on the opposite
