@@ -368,3 +368,14 @@ describe('BookmarkList read flag', () => {
     expect(screen.getByRole('button', { name: /Other Site.* as read/ })).toBeEnabled()
   })
 })
+
+describe('empty state', () => {
+  it('shows a caller-supplied message, so a filtered-empty list does not read as no bookmarks at all', () => {
+    renderList({ bookmarks: [], emptyMessage: 'Nothing unread.' })
+
+    expect(screen.getByText('Nothing unread.')).toBeInTheDocument()
+    expect(
+      screen.queryByText('No bookmarks yet — paste a URL above to add one.')
+    ).not.toBeInTheDocument()
+  })
+})
