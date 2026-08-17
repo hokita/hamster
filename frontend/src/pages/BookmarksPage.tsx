@@ -356,7 +356,10 @@ export default function BookmarksPage() {
             deletingIds={deletingIds}
             onToggleRead={handleToggleRead}
             readPendingIds={readPendingIds}
-            emptyMessage={EMPTY_MESSAGES[filter]}
+            // Only when a filter is what emptied the list. An empty library has its own empty
+            // state — the one telling a first-time user how to add a bookmark — and a filter
+            // must not be what hides the page's only instruction.
+            emptyMessage={bookmarks.length > 0 ? EMPTY_MESSAGES[filter] : undefined}
           />
         )
       )}

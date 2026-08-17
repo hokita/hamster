@@ -1125,3 +1125,32 @@ describe('BookmarksPage read filter', () => {
     expect(screen.queryByRole('link', { name: /Unread Site/ })).not.toBeInTheDocument()
   })
 })
+
+describe('BookmarksPage empty library under a filter', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(api.listBookmarks).mockResolvedValue([])
+  })
+
+  // "Nothing unread" is true of an empty library, but useless: the only instruction on the page
+  // is how to add a bookmark, and a filter must not be what hides it.
+  it('keeps the add-a-bookmark prompt when the library itself is empty', async () => {
+    renderPage()
+    await screen.findByText('No bookmarks yet — paste a URL above to add one.')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Unread' }))
+
+    expect(screen.getByText('No bookmarks yet — paste a URL above to add one.')).toBeInTheDocument()
+    expect(screen.queryByText('Nothing unread.')).not.toBeInTheDocument()
+  })
+
+  it('keeps it under the Read filter too', async () => {
+    renderPage()
+    await screen.findByText('No bookmarks yet — paste a URL above to add one.')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Read' }))
+
+    expect(screen.getByText('No bookmarks yet — paste a URL above to add one.')).toBeInTheDocument()
+    expect(screen.queryByText('Nothing read yet.')).not.toBeInTheDocument()
+  })
+})
