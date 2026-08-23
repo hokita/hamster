@@ -792,6 +792,43 @@ describe('BookmarkPage summary polling', () => {
     expect(screen.getByRole('button', { name: 'Translate to Japanese' })).toBeInTheDocument()
   })
 
+  it('does not report a translation failure against a summary it never attempted', async () => {
+    // Same interleaving as above, on the failure path: the poll installs a newer summary while
+    // the translation of the older one is in flight, and that request then fails. The error
+    // belongs to text no longer on screen — and if the newer summary arrived with labels the
+    // poll stops, so the complaint would sit under an untried summary for the rest of the visit.
+    vi.mocked(api.getBookmark)
+      .mockResolvedValueOnce({ ...bookmark, summary: 'Older English.' })
+      .mockResolvedValue({
+        ...bookmark,
+        summary: 'Newer English, regenerated elsewhere.',
+        labels: ['widgets'],
+      })
+    let rejectTranslation: (reason: Error) => void = () => {}
+    vi.mocked(api.translateSummary).mockReturnValue(
+      new Promise((_resolve, reject) => {
+        rejectTranslation = reject
+      })
+    )
+    renderPage()
+    await flush()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Translate to Japanese' }))
+    await flush()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+    expect(screen.getByText('Newer English, regenerated elsewhere.')).toBeInTheDocument()
+
+    await act(async () => {
+      rejectTranslation(new Error('API error: 502'))
+    })
+
+    expect(screen.queryByText(/Couldn't translate the summary/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Translate to Japanese' })).toBeEnabled()
+  })
+
   it('stops polling once the budget is exhausted', async () => {
     vi.mocked(api.getBookmark).mockResolvedValue(bookmark)
     renderPage()

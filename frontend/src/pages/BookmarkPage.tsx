@@ -175,7 +175,12 @@ export default function BookmarkPage() {
   const [translation, setTranslation] = useState<{ source: string; text: string } | null>(null)
   const [showTranslation, setShowTranslation] = useState(false)
   const [isTranslating, setIsTranslating] = useState(false)
-  const [translateFailed, setTranslateFailed] = useState(false)
+  // The summary a translation request failed for, rather than a bare flag. Retired the same way
+  // the translation above is: a poll can install a newer summary while a translation of the older
+  // one is in flight, and a complaint about text the reader can no longer see — under a summary
+  // nothing was ever attempted for — is worse than no complaint at all. With both a summary and
+  // labels present the poll stops, so nothing else would clear it either.
+  const [failedTranslationOf, setFailedTranslationOf] = useState<string | null>(null)
   // The summary on screen when a generation request failed without proving the write never
   // happened. Express does not abort a handler when the client goes away, so the backend keeps
   // generating and may persist a summary seconds after the request died. Holding the old text here
@@ -218,7 +223,7 @@ export default function BookmarkPage() {
     setTranslation(null)
     setShowTranslation(false)
     setIsTranslating(false)
-    setTranslateFailed(false)
+    setFailedTranslationOf(null)
   }
 
   // Tracks the id the route is currently on, so a generation request kicked off for a bookmark
@@ -363,10 +368,10 @@ export default function BookmarkPage() {
     setIsGenerating(true)
     setGenerateFailed(false)
     setSupersededSummary(null)
-    // The summary this failure was about is on its way out; the translation it belonged to is
-    // retired by the source tag, and leaving its error line behind would pin a complaint about
-    // the old text under the new one.
-    setTranslateFailed(false)
+    // Covers the one case the tag below cannot: a regeneration that returns byte-identical text,
+    // where the failure would otherwise still match the summary on screen. Anything else is
+    // retired by the comparison at render time.
+    setFailedTranslationOf(null)
     try {
       // Labels ride along on the response when their generation succeeded; adopting them
       // unconditionally (rather than only when present) is what makes this button double as the
@@ -428,7 +433,7 @@ export default function BookmarkPage() {
     // arrived while we waited". See there.
     const summaryAtRequest = bookmark.summary
     setIsTranslating(true)
-    setTranslateFailed(false)
+    setFailedTranslationOf(null)
     try {
       const { translation: text, source, labels } = await api.translateSummary(requestedId)
       // Same staleness guard the other handlers use: a translation that arrives after the reader
@@ -464,8 +469,9 @@ export default function BookmarkPage() {
     } catch {
       if (requestedId !== latestId.current) return
       // Nothing was replaced — the English summary is still on screen and still correct, so the
-      // failure is a line under it rather than a state the page has to recover from.
-      setTranslateFailed(true)
+      // failure is a line under it rather than a state the page has to recover from. Tagged with
+      // the summary it was about, so it only ever appears under that one.
+      setFailedTranslationOf(summaryAtRequest)
     } finally {
       if (requestedId === latestId.current) setIsTranslating(false)
     }
@@ -642,7 +648,7 @@ export default function BookmarkPage() {
               Couldn&apos;t regenerate the summary — the one above is unchanged.
             </p>
           )}
-          {translateFailed && (
+          {failedTranslationOf === bookmark.summary && (
             <p className="m-0 flex items-center gap-2 text-sm text-red-700">
               <FontAwesomeIcon icon={faTriangleExclamation} aria-hidden="true" />
               Couldn&apos;t translate the summary.
