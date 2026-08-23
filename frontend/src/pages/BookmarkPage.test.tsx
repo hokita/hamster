@@ -259,7 +259,10 @@ describe('BookmarkPage', () => {
 
     it('replaces the summary with the translation, marked as Japanese', async () => {
       withEnglishSummary()
-      vi.mocked(api.translateSummary).mockResolvedValue({ translation: japaneseTranslation })
+      vi.mocked(api.translateSummary).mockResolvedValue({
+        translation: japaneseTranslation,
+        source: englishSummary,
+      })
       renderPage()
 
       fireEvent.click(await screen.findByRole('button', { name: 'Translate to Japanese' }))
@@ -274,7 +277,10 @@ describe('BookmarkPage', () => {
 
     it('renders the translation as Markdown, not as one block of text', async () => {
       withEnglishSummary()
-      vi.mocked(api.translateSummary).mockResolvedValue({ translation: japaneseTranslation })
+      vi.mocked(api.translateSummary).mockResolvedValue({
+        translation: japaneseTranslation,
+        source: englishSummary,
+      })
       renderPage()
 
       fireEvent.click(await screen.findByRole('button', { name: 'Translate to Japanese' }))
@@ -285,7 +291,10 @@ describe('BookmarkPage', () => {
 
     it('switches back to the English summary, and forward again without asking twice', async () => {
       withEnglishSummary()
-      vi.mocked(api.translateSummary).mockResolvedValue({ translation: japaneseTranslation })
+      vi.mocked(api.translateSummary).mockResolvedValue({
+        translation: japaneseTranslation,
+        source: englishSummary,
+      })
       renderPage()
 
       fireEvent.click(await screen.findByRole('button', { name: 'Translate to Japanese' }))
@@ -328,7 +337,10 @@ describe('BookmarkPage', () => {
       // Otherwise the button would be one click away from showing the Japanese of text that is no
       // longer on the page — a translation of something the reader can no longer see.
       withEnglishSummary()
-      vi.mocked(api.translateSummary).mockResolvedValue({ translation: japaneseTranslation })
+      vi.mocked(api.translateSummary).mockResolvedValue({
+        translation: japaneseTranslation,
+        source: englishSummary,
+      })
       vi.mocked(api.generateSummary).mockResolvedValue({ summary: 'A second English take.' })
       renderPage()
 
@@ -343,11 +355,36 @@ describe('BookmarkPage', () => {
       expect(screen.getByRole('button', { name: 'Translate to Japanese' })).toBeInTheDocument()
     })
 
+    it('pairs the translation with the English the server actually translated', async () => {
+      // A regeneration in another tab between this page's load and the click leaves the backend
+      // translating newer English than the page is showing. Tagging the result with the stale
+      // text on screen would pair the new Japanese with the old English behind "Show English",
+      // and nothing would ever correct it: a bookmark that already has its summary and labels
+      // does not poll, so this page never hears that the summary moved.
+      withEnglishSummary()
+      vi.mocked(api.translateSummary).mockResolvedValue({
+        translation: japaneseTranslation,
+        source: 'A newer English take, regenerated elsewhere.',
+      })
+      renderPage()
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Translate to Japanese' }))
+      expect(await screen.findByText('この記事はウィジェットを説明する。')).toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Show English' }))
+
+      // The English behind the toggle is the text the Japanese is a translation of.
+      expect(
+        await screen.findByText('A newer English take, regenerated elsewhere.')
+      ).toBeInTheDocument()
+      expect(screen.queryByText('The article explains widgets.')).not.toBeInTheDocument()
+    })
+
     it('clears the error when a retry succeeds', async () => {
       withEnglishSummary()
       vi.mocked(api.translateSummary)
         .mockRejectedValueOnce(new Error('API error: 502'))
-        .mockResolvedValueOnce({ translation: japaneseTranslation })
+        .mockResolvedValueOnce({ translation: japaneseTranslation, source: englishSummary })
       renderPage()
 
       fireEvent.click(await screen.findByRole('button', { name: 'Translate to Japanese' }))

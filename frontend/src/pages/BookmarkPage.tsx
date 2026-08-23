@@ -412,22 +412,33 @@ export default function BookmarkPage() {
 
   // Fetches the Japanese rendering once and keeps it, so switching back and forth afterwards costs
   // nothing. Only ever reached from the button below, which is offered for an English summary and
-  // disabled while this runs. The backend translates the summary IT has stored rather than
-  // anything sent from here; tagging the result with the text on screen records what the reader
-  // was actually looking at when they asked, and a disagreement between the two resolves itself —
-  // whatever change made the stored summary differ reaches this page as a new summary, which
-  // retires the translation.
+  // disabled while this runs.
+  //
+  // The tag comes from the response, not from the summary on screen when the button was clicked.
+  // The backend translates the summary IT has stored, and the two can disagree: regenerate the
+  // bookmark in another tab and this page keeps showing the older English, because a bookmark that
+  // already has its summary and labels does not poll. Tagging with what was on screen would then
+  // pair new Japanese with old English behind "Show English", and nothing would ever correct it.
+  // The response says which text was translated, so both sides of the toggle can be that text.
   async function handleTranslate() {
     if (!id || !bookmark?.summary) return
     const requestedId = id
-    const source = bookmark.summary
     setIsTranslating(true)
     setTranslateFailed(false)
     try {
-      const { translation: text } = await api.translateSummary(requestedId)
+      const { translation: text, source } = await api.translateSummary(requestedId)
       // Same staleness guard the other handlers use: a translation that arrives after the reader
       // has opened another bookmark has nothing to say about the one now on screen.
       if (requestedId !== latestId.current) return
+      // The response carries a fresher read of the stored summary than this page holds, so adopt
+      // it — that is what makes the English behind the toggle the original of the Japanese beside
+      // it. Unchanged in the ordinary case, where the two already agree; the equality check keeps
+      // that case from minting a new object and re-running the poll effect for nothing.
+      setBookmark((previous) =>
+        previous && previous.id === requestedId && previous.summary !== source
+          ? { ...previous, summary: source }
+          : previous
+      )
       setTranslation({ source, text })
       setShowTranslation(true)
     } catch {

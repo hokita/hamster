@@ -868,10 +868,20 @@ describe('POST /api/bookmarks/:id/translation', () => {
   it('translates the stored summary', async () => {
     const res = await request(app).post('/api/bookmarks/1/translation')
     expect(res.status).toBe(200)
-    expect(res.body).toEqual({ translation: '概要。\n\n## 要点\n- **ある点** — 中身がある。' })
+    expect(res.body).toEqual({
+      translation: '概要。\n\n## 要点\n- **ある点** — 中身がある。',
+      source: englishBookmark.summary,
+    })
     // The stored summary, not one sent by the caller: a body would let a client push arbitrary
     // text into a paid Gemini call.
     expect(translate).toHaveBeenCalledWith(englishBookmark.summary)
+  })
+
+  it('reports which summary it translated, so the client can tell if it has moved on', async () => {
+    // The caller cannot otherwise know: it asked for "the stored summary" and gets back Japanese
+    // for whatever that was at read time, which need not be the text on the page that asked.
+    const res = await request(app).post('/api/bookmarks/1/translation')
+    expect(res.body.source).toBe(englishBookmark.summary)
   })
 
   it('ignores any text sent in the body and translates what is stored', async () => {
