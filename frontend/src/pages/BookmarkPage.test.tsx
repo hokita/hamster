@@ -9,6 +9,7 @@ vi.mock('../api', () => ({
     deleteBookmark: vi.fn(),
     setReadState: vi.fn(),
     askQuestion: vi.fn(),
+    translateSummary: vi.fn(),
   },
 }))
 
@@ -220,6 +221,143 @@ describe('BookmarkPage', () => {
     renderPage()
     const paragraph = await screen.findByText(/The article explains the widget process/)
     expect(paragraph.closest('[lang]')).toHaveAttribute('lang', 'en')
+  })
+
+  // The translation button exists for the reader who would rather not read the English summary,
+  // so it is offered exactly where that applies: an English summary, and nothing else.
+  describe('translating an English summary', () => {
+    const englishSummary = 'The article explains widgets.\n\n## Key points\n\n- **One** — a point.'
+    const japaneseTranslation = 'この記事はウィジェットを説明する。\n\n## 要点\n\n- **一つ** — 要点。'
+
+    function withEnglishSummary() {
+      vi.mocked(api.getBookmark).mockResolvedValue({ ...bookmark, summary: englishSummary })
+    }
+
+    it('offers a translation under an English summary', async () => {
+      withEnglishSummary()
+      renderPage()
+      expect(
+        await screen.findByRole('button', { name: 'Translate to Japanese' })
+      ).toBeInTheDocument()
+    })
+
+    it('does not offer one for a summary that is already Japanese', async () => {
+      vi.mocked(api.getBookmark).mockResolvedValue({
+        ...bookmark,
+        summary: 'この記事はウィジェットの仕組みを説明しています。',
+      })
+      renderPage()
+      expect(await screen.findByText(/この記事は/)).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Translate to Japanese' })).not.toBeInTheDocument()
+    })
+
+    it('does not offer one when there is no summary to translate', async () => {
+      renderPage()
+      expect(await screen.findByText('No summary yet.')).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Translate to Japanese' })).not.toBeInTheDocument()
+    })
+
+    it('replaces the summary with the translation, marked as Japanese', async () => {
+      withEnglishSummary()
+      vi.mocked(api.translateSummary).mockResolvedValue({ translation: japaneseTranslation })
+      renderPage()
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Translate to Japanese' }))
+
+      expect(api.translateSummary).toHaveBeenCalledWith('1')
+      const paragraph = await screen.findByText('この記事はウィジェットを説明する。')
+      // index.html declares lang="en", so the Japanese needs its own lang or a screen reader
+      // announces it with English pronunciation rules.
+      expect(paragraph.closest('[lang]')).toHaveAttribute('lang', 'ja')
+      expect(screen.queryByText('The article explains widgets.')).not.toBeInTheDocument()
+    })
+
+    it('renders the translation as Markdown, not as one block of text', async () => {
+      withEnglishSummary()
+      vi.mocked(api.translateSummary).mockResolvedValue({ translation: japaneseTranslation })
+      renderPage()
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Translate to Japanese' }))
+
+      expect(await screen.findByRole('heading', { level: 3, name: '要点' })).toBeInTheDocument()
+      expect(screen.getAllByRole('listitem')).toHaveLength(1)
+    })
+
+    it('switches back to the English summary, and forward again without asking twice', async () => {
+      withEnglishSummary()
+      vi.mocked(api.translateSummary).mockResolvedValue({ translation: japaneseTranslation })
+      renderPage()
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Translate to Japanese' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Show English' }))
+      expect(await screen.findByText('The article explains widgets.')).toBeInTheDocument()
+      expect(screen.queryByText('この記事はウィジェットを説明する。')).not.toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Show Japanese' }))
+      expect(await screen.findByText('この記事はウィジェットを説明する。')).toBeInTheDocument()
+      // The translation is held in state, so toggling costs nothing after the first call.
+      expect(api.translateSummary).toHaveBeenCalledTimes(1)
+    })
+
+    it('keeps the English summary visible and disables the button while translating', async () => {
+      withEnglishSummary()
+      vi.mocked(api.translateSummary).mockReturnValue(new Promise(() => {}))
+      renderPage()
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Translate to Japanese' }))
+
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /Translating/ })).toBeDisabled()
+      )
+      expect(screen.getByText('The article explains widgets.')).toBeInTheDocument()
+    })
+
+    it('keeps the English summary and offers another try when the translation fails', async () => {
+      withEnglishSummary()
+      vi.mocked(api.translateSummary).mockRejectedValue(new Error('API error: 502'))
+      renderPage()
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Translate to Japanese' }))
+
+      expect(await screen.findByText(/Couldn't translate the summary/)).toBeInTheDocument()
+      expect(screen.getByText('The article explains widgets.')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Translate to Japanese' })).toBeEnabled()
+    })
+
+    it('drops a translation of a summary that has since been regenerated', async () => {
+      // Otherwise the button would be one click away from showing the Japanese of text that is no
+      // longer on the page — a translation of something the reader can no longer see.
+      withEnglishSummary()
+      vi.mocked(api.translateSummary).mockResolvedValue({ translation: japaneseTranslation })
+      vi.mocked(api.generateSummary).mockResolvedValue({ summary: 'A second English take.' })
+      renderPage()
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Translate to Japanese' }))
+      expect(await screen.findByText('この記事はウィジェットを説明する。')).toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }))
+
+      expect(await screen.findByText('A second English take.')).toBeInTheDocument()
+      expect(screen.queryByText('この記事はウィジェットを説明する。')).not.toBeInTheDocument()
+      // Back to the offer, not to "Show Japanese": there is no translation of this text yet.
+      expect(screen.getByRole('button', { name: 'Translate to Japanese' })).toBeInTheDocument()
+    })
+
+    it('clears the error when a retry succeeds', async () => {
+      withEnglishSummary()
+      vi.mocked(api.translateSummary)
+        .mockRejectedValueOnce(new Error('API error: 502'))
+        .mockResolvedValueOnce({ translation: japaneseTranslation })
+      renderPage()
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Translate to Japanese' }))
+      expect(await screen.findByText(/Couldn't translate the summary/)).toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Translate to Japanese' }))
+
+      expect(await screen.findByText('この記事はウィジェットを説明する。')).toBeInTheDocument()
+      expect(screen.queryByText(/Couldn't translate the summary/)).not.toBeInTheDocument()
+    })
   })
 
   it('offers to generate a summary when the bookmark has none', async () => {

@@ -158,6 +158,29 @@ describe('api.generateSummary', () => {
   })
 })
 
+describe('api.translateSummary', () => {
+  it('posts to the translation endpoint and returns the translation', async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({ translation: '概要。' }) })
+    const result = await api.translateSummary('1')
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/bookmarks/1/translation'),
+      expect.objectContaining({ method: 'POST' })
+    )
+    expect(result.translation).toBe('概要。')
+  })
+
+  it('sends no body: the backend translates the summary it has stored', async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({ translation: '概要。' }) })
+    await api.translateSummary('1')
+    expect(mockFetch.mock.calls[0][1].body).toBeUndefined()
+  })
+
+  it('throws when the translation fails', async () => {
+    mockFetch.mockResolvedValue({ ok: false, status: 502 })
+    await expect(api.translateSummary('1')).rejects.toThrow('API error: 502')
+  })
+})
+
 describe('api.setReadState', () => {
   it('puts the desired state and resolves on a 204 with no body', async () => {
     // A 204 carries nothing to parse; res.json() on an empty body would reject and turn a

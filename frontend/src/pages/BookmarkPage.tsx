@@ -7,6 +7,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faArrowLeft,
   faArrowUpRightFromSquare,
+  faLanguage,
   faRotate,
   faSpinner,
   faTriangleExclamation,
@@ -165,6 +166,16 @@ export default function BookmarkPage() {
   const [deleteFailed, setDeleteFailed] = useState(false)
   const [isTogglingRead, setIsTogglingRead] = useState(false)
   const [readToggleFailed, setReadToggleFailed] = useState(false)
+  // A Japanese rendering of the summary, tagged with the English text it was made from. The tag is
+  // what retires it: a regeneration — or a poll that picks one up from somewhere else — leaves a
+  // translation of text that is no longer on the page, and offering to show it would be offering
+  // the Japanese of something the reader can no longer read in English. Comparing against the
+  // current summary at render time covers every route by which it can change, without an effect
+  // watching for each of them. Never persisted, so nothing has to invalidate it server-side.
+  const [translation, setTranslation] = useState<{ source: string; text: string } | null>(null)
+  const [showTranslation, setShowTranslation] = useState(false)
+  const [isTranslating, setIsTranslating] = useState(false)
+  const [translateFailed, setTranslateFailed] = useState(false)
   // The summary on screen when a generation request failed without proving the write never
   // happened. Express does not abort a handler when the client goes away, so the backend keeps
   // generating and may persist a summary seconds after the request died. Holding the old text here
@@ -204,6 +215,10 @@ export default function BookmarkPage() {
     setDeleteFailed(false)
     setIsTogglingRead(false)
     setReadToggleFailed(false)
+    setTranslation(null)
+    setShowTranslation(false)
+    setIsTranslating(false)
+    setTranslateFailed(false)
   }
 
   // Tracks the id the route is currently on, so a generation request kicked off for a bookmark
@@ -348,6 +363,10 @@ export default function BookmarkPage() {
     setIsGenerating(true)
     setGenerateFailed(false)
     setSupersededSummary(null)
+    // The summary this failure was about is on its way out; the translation it belonged to is
+    // retired by the source tag, and leaving its error line behind would pin a complaint about
+    // the old text under the new one.
+    setTranslateFailed(false)
     try {
       // Labels ride along on the response when their generation succeeded; adopting them
       // unconditionally (rather than only when present) is what makes this button double as the
@@ -388,6 +407,36 @@ export default function BookmarkPage() {
       if (summaryBefore) setSupersededSummary(summaryBefore)
     } finally {
       if (requestedId === latestId.current) setIsGenerating(false)
+    }
+  }
+
+  // Fetches the Japanese rendering once and keeps it, so switching back and forth afterwards costs
+  // nothing. Only ever reached from the button below, which is offered for an English summary and
+  // disabled while this runs. The backend translates the summary IT has stored rather than
+  // anything sent from here; tagging the result with the text on screen records what the reader
+  // was actually looking at when they asked, and a disagreement between the two resolves itself —
+  // whatever change made the stored summary differ reaches this page as a new summary, which
+  // retires the translation.
+  async function handleTranslate() {
+    if (!id || !bookmark?.summary) return
+    const requestedId = id
+    const source = bookmark.summary
+    setIsTranslating(true)
+    setTranslateFailed(false)
+    try {
+      const { translation: text } = await api.translateSummary(requestedId)
+      // Same staleness guard the other handlers use: a translation that arrives after the reader
+      // has opened another bookmark has nothing to say about the one now on screen.
+      if (requestedId !== latestId.current) return
+      setTranslation({ source, text })
+      setShowTranslation(true)
+    } catch {
+      if (requestedId !== latestId.current) return
+      // Nothing was replaced — the English summary is still on screen and still correct, so the
+      // failure is a line under it rather than a state the page has to recover from.
+      setTranslateFailed(true)
+    } finally {
+      if (requestedId === latestId.current) setIsTranslating(false)
     }
   }
 
@@ -494,6 +543,14 @@ export default function BookmarkPage() {
 
   const hostname = hostnameOf(bookmark.url)
 
+  // Retires a translation of a summary that has since been replaced — see the state declaration.
+  const currentTranslation =
+    translation && translation.source === bookmark.summary ? translation.text : null
+  // Offered only where it applies: an English summary. A Japanese one is already in the language
+  // the button would translate it into, and a bookmark with no summary has nothing to translate.
+  const canTranslate = Boolean(bookmark.summary && textLanguage(bookmark.summary) === 'en')
+  const showingTranslation = showTranslation && currentTranslation !== null
+
   return (
     <div className="max-w-2xl mx-auto px-4 pt-6 pb-10">
       <Link
@@ -541,10 +598,12 @@ export default function BookmarkPage() {
           {/* Dimmed while a regeneration is in flight: the text on screen is about to be replaced,
               and the button's spinner alone is easy to miss below a long summary. */}
           <div
-            aria-busy={isGenerating}
-            className={`transition-opacity ${isGenerating ? 'opacity-50' : ''}`}
+            aria-busy={isGenerating || isTranslating}
+            className={`transition-opacity ${isGenerating || isTranslating ? 'opacity-50' : ''}`}
           >
-            <SummaryBody summary={bookmark.summary} />
+            {/* One summary on screen at a time. SummaryBody derives its own lang from the text it
+                is given, so the Japanese arrives marked as Japanese without anything extra here. */}
+            <SummaryBody summary={showingTranslation ? currentTranslation : bookmark.summary} />
           </div>
           {generateFailed && (
             <p className="m-0 flex items-center gap-2 text-sm text-red-700">
@@ -552,18 +611,52 @@ export default function BookmarkPage() {
               Couldn&apos;t regenerate the summary — the one above is unchanged.
             </p>
           )}
-          <button
-            onClick={handleGenerate}
-            disabled={isGenerating}
-            className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-800 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-          >
-            <FontAwesomeIcon
-              icon={isGenerating ? faSpinner : faRotate}
-              spin={isGenerating}
-              aria-hidden="true"
-            />
-            {isGenerating ? 'Regenerating…' : 'Regenerate'}
-          </button>
+          {translateFailed && (
+            <p className="m-0 flex items-center gap-2 text-sm text-red-700">
+              <FontAwesomeIcon icon={faTriangleExclamation} aria-hidden="true" />
+              Couldn&apos;t translate the summary.
+            </p>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {canTranslate && (
+              <button
+                // Three jobs, one button: fetch the translation, then switch between the two
+                // languages. Once fetched, switching is free — the text is held on the page.
+                onClick={
+                  currentTranslation === null
+                    ? handleTranslate
+                    : () => setShowTranslation(!showingTranslation)
+                }
+                disabled={isTranslating || isGenerating}
+                className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-800 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+              >
+                <FontAwesomeIcon
+                  icon={isTranslating ? faSpinner : faLanguage}
+                  spin={isTranslating}
+                  aria-hidden="true"
+                />
+                {isTranslating
+                  ? 'Translating…'
+                  : currentTranslation === null
+                    ? 'Translate to Japanese'
+                    : showingTranslation
+                      ? 'Show English'
+                      : 'Show Japanese'}
+              </button>
+            )}
+            <button
+              onClick={handleGenerate}
+              disabled={isGenerating || isTranslating}
+              className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-800 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+            >
+              <FontAwesomeIcon
+                icon={isGenerating ? faSpinner : faRotate}
+                spin={isGenerating}
+                aria-hidden="true"
+              />
+              {isGenerating ? 'Regenerating…' : 'Regenerate'}
+            </button>
+          </div>
         </div>
       ) : (
         <div className="flex flex-col items-start gap-3">
