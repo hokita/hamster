@@ -726,6 +726,48 @@ describe('BookmarkPage summary polling', () => {
     expect(api.getBookmark).toHaveBeenCalledTimes(1)
   })
 
+  it('does not put back an older summary when one arrives while a translation is in flight', async () => {
+    // A legacy bookmark — summary, no labels — keeps polling. A regeneration elsewhere lands
+    // mid-translation, so the `source` coming back is older than what the poll has just
+    // installed. Adopting it would undo the poll's work and leave the newer labels sitting over
+    // text that is no longer what the server holds, for the rest of the visit: once summary and
+    // labels are both present the poll stops, so nothing would correct it a second time.
+    vi.mocked(api.getBookmark)
+      .mockResolvedValueOnce({ ...bookmark, summary: 'Older English.' })
+      .mockResolvedValue({
+        ...bookmark,
+        summary: 'Newer English, regenerated elsewhere.',
+        labels: ['widgets'],
+      })
+    let resolveTranslation: (value: { translation: string; source: string }) => void = () => {}
+    vi.mocked(api.translateSummary).mockReturnValue(
+      new Promise((resolve) => {
+        resolveTranslation = resolve
+      })
+    )
+    renderPage()
+    await flush()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Translate to Japanese' }))
+    await flush()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+    expect(screen.getByText('Newer English, regenerated elsewhere.')).toBeInTheDocument()
+
+    await act(async () => {
+      resolveTranslation({ translation: '古い方の訳。', source: 'Older English.' })
+    })
+
+    expect(screen.getByText('Newer English, regenerated elsewhere.')).toBeInTheDocument()
+    expect(screen.queryByText('Older English.')).not.toBeInTheDocument()
+    // The Japanese is of text the page no longer shows, so it is not offered as a translation
+    // of what is there now.
+    expect(screen.queryByText('古い方の訳。')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Translate to Japanese' })).toBeInTheDocument()
+  })
+
   it('stops polling once the budget is exhausted', async () => {
     vi.mocked(api.getBookmark).mockResolvedValue(bookmark)
     renderPage()

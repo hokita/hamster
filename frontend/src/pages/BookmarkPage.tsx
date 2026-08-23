@@ -423,6 +423,10 @@ export default function BookmarkPage() {
   async function handleTranslate() {
     if (!id || !bookmark?.summary) return
     const requestedId = id
+    // What the page was showing when the request went out, so the adopt below can tell "the
+    // server read a fresher summary than this page holds" from "something fresher than either
+    // arrived while we waited". See there.
+    const summaryAtRequest = bookmark.summary
     setIsTranslating(true)
     setTranslateFailed(false)
     try {
@@ -430,12 +434,23 @@ export default function BookmarkPage() {
       // Same staleness guard the other handlers use: a translation that arrives after the reader
       // has opened another bookmark has nothing to say about the one now on screen.
       if (requestedId !== latestId.current) return
-      // The response carries a fresher read of the stored summary than this page holds, so adopt
-      // it — that is what makes the English behind the toggle the original of the Japanese beside
-      // it. Unchanged in the ordinary case, where the two already agree; the equality check keeps
-      // that case from minting a new object and re-running the poll effect for nothing.
+      // The response carries a read of the stored summary taken when the request was handled, so
+      // adopt it — that is what makes the English behind the toggle the original of the Japanese
+      // beside it. Unchanged in the ordinary case, where the two already agree; the equality check
+      // keeps that case from minting a new object and re-running the poll effect for nothing.
+      //
+      // Only while the page still shows what it did when the request went out. A poll can install
+      // a newer summary while Gemini is working — a legacy bookmark with no labels keeps polling —
+      // and that one is fresher than the endpoint's read, not staler. Putting `source` back over it
+      // would undo the poll's work and leave the labels that came with it describing text no longer
+      // on screen, for the rest of the visit: with a summary and labels both present the poll
+      // stops, so nothing would correct it a second time. The translation is then of superseded
+      // text, and the source tag retires it — see currentTranslation.
       setBookmark((previous) =>
-        previous && previous.id === requestedId && previous.summary !== source
+        previous &&
+        previous.id === requestedId &&
+        previous.summary === summaryAtRequest &&
+        previous.summary !== source
           ? { ...previous, summary: source }
           : previous
       )
