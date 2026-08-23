@@ -278,7 +278,17 @@ export function createBookmarksRouter(): Router {
       // regeneration elsewhere between the client's last read and this one leaves it holding
       // older English than the Japanese coming back. Saying which text this is lets the page
       // put the matching English beside it rather than pairing a translation with the wrong original.
-      res.json({ translation, source: bookmark.summary })
+      //
+      // The labels read in the same breath ride along for the same reason: a page adopting that
+      // summary has to replace the chips beside it in the same step, or it shows fresh text under
+      // topics generated for what came before — and it would keep showing them, because a bookmark
+      // with a summary and labels is exactly what stops the page polling for changes. Omitted for
+      // a bookmark that has none, same shape as the summary route's response.
+      res.json(
+        bookmark.labels
+          ? { translation, source: bookmark.summary, labels: bookmark.labels }
+          : { translation, source: bookmark.summary }
+      )
     } catch (error) {
       // Vague body, logged cause — same contract as the summary and chat routes, for the same
       // reason: the client has no use for the internals and they must not leak to it.

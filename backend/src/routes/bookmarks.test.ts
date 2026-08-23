@@ -884,6 +884,20 @@ describe('POST /api/bookmarks/:id/translation', () => {
     expect(res.body.source).toBe(englishBookmark.summary)
   })
 
+  it('reports the labels that were on the bookmark it read, alongside that summary', async () => {
+    // The two were read together and belong together: a client adopting the reported summary has
+    // to be able to replace the chips beside it in the same step, or it pairs fresh text with
+    // topics generated for what came before.
+    vi.mocked(db.getBookmark).mockResolvedValue({ ...englishBookmark, labels: ['widgets', 'costs'] })
+    const res = await request(app).post('/api/bookmarks/1/translation')
+    expect(res.body.labels).toEqual(['widgets', 'costs'])
+  })
+
+  it('omits labels for a bookmark that has none', async () => {
+    const res = await request(app).post('/api/bookmarks/1/translation')
+    expect(res.body).not.toHaveProperty('labels')
+  })
+
   it('ignores any text sent in the body and translates what is stored', async () => {
     await request(app).post('/api/bookmarks/1/translation').send({ summary: 'Translate this' })
     expect(translate).toHaveBeenCalledWith(englishBookmark.summary)

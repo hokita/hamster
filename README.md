@@ -95,15 +95,18 @@ regenerating drops the translation and puts the button back to its offer.
 
 `POST /api/bookmarks/:id/translation` takes no body: it translates the summary the backend has
 stored, so a caller cannot push arbitrary text into a paid Gemini call. It answers
-`{ "translation": "…", "source": "…" }` — the translation and the summary it was made from —
+`{ "translation": "…", "source": "…", "labels": [...] }` — the translation, the summary it was made
+from, and the labels read alongside it —
 `404` if the bookmark is gone, `409` if it has no summary yet, `503` without `GEMINI_API_KEY`, and
 `502` if the translation itself fails.
 
 `source` is what keeps the two sides of the toggle in step. A page holding an older summary — one
 regenerated in another tab, say — would otherwise pair the new Japanese with the English it still
 had on screen, and it has no other way to notice: a bookmark that already has its summary and
-labels does not poll for changes. The page adopts the summary the backend actually translated, so
-**Show English** always reveals the original of the Japanese beside it.
+labels does not poll for changes. The page adopts the summary the backend actually translated —
+and its labels, so the chips never end up describing text that has been replaced — which is what
+makes **Show English** reveal the original of the Japanese beside it. A summary that arrived while
+the translation was in flight is fresher than what the endpoint read, so that one stands instead.
 
 ## Asking about an article
 

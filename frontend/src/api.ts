@@ -61,9 +61,12 @@ export const api = {
   // text into a paid Gemini call. The result is not persisted — see the route. `source` is the
   // summary that was translated, which need not be the one the caller had on screen.
   translateSummary: (id: string) =>
-    request<{ translation: string; source: string }>(`/api/bookmarks/${id}/translation`, {
-      method: 'POST',
-    }),
+    request<{ translation: string; source: string; labels?: string[] }>(
+      `/api/bookmarks/${id}/translation`,
+      {
+        method: 'POST',
+      }
+    ),
   askQuestion: (id: string, messages: ChatMessage[]) =>
     request<{ answer: string }>(`/api/bookmarks/${id}/chat`, {
       method: 'POST',

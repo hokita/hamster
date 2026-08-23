@@ -380,6 +380,30 @@ describe('BookmarkPage', () => {
       expect(screen.queryByText('The article explains widgets.')).not.toBeInTheDocument()
     })
 
+    it('replaces the topic chips along with the summary it adopts', async () => {
+      // The chips describe the summary they sit under. Adopting fresher English while keeping the
+      // old ones would leave them mismatched for the whole visit — a bookmark with a summary and
+      // labels is exactly the case the poll skips, so nothing would reconcile them.
+      vi.mocked(api.getBookmark).mockResolvedValue({
+        ...bookmark,
+        summary: englishSummary,
+        labels: ['widgets'],
+      })
+      vi.mocked(api.translateSummary).mockResolvedValue({
+        translation: japaneseTranslation,
+        source: 'A newer English take, regenerated elsewhere.',
+        labels: ['gadgets'],
+      })
+      renderPage()
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Translate to Japanese' }))
+      expect(await screen.findByText('この記事はウィジェットを説明する。')).toBeInTheDocument()
+
+      const chips = screen.getByTestId('bookmark-labels')
+      expect(chips).toHaveTextContent('gadgets')
+      expect(chips).not.toHaveTextContent('widgets')
+    })
+
     it('clears the error when a retry succeeds', async () => {
       withEnglishSummary()
       vi.mocked(api.translateSummary)

@@ -430,7 +430,7 @@ export default function BookmarkPage() {
     setIsTranslating(true)
     setTranslateFailed(false)
     try {
-      const { translation: text, source } = await api.translateSummary(requestedId)
+      const { translation: text, source, labels } = await api.translateSummary(requestedId)
       // Same staleness guard the other handlers use: a translation that arrives after the reader
       // has opened another bookmark has nothing to say about the one now on screen.
       if (requestedId !== latestId.current) return
@@ -451,7 +451,12 @@ export default function BookmarkPage() {
         previous.id === requestedId &&
         previous.summary === summaryAtRequest &&
         previous.summary !== source
-          ? { ...previous, summary: source }
+          ? // The labels come from the same read as the summary, so they go on together: chips
+            // describing the text that came before would otherwise sit under the new summary for
+            // the rest of the visit — with both present, the poll skips this bookmark entirely.
+            // Adopting an absent `labels` is right too; the poll then resumes to wait for them,
+            // which is what it already does for any bookmark whose labels have not landed yet.
+            { ...previous, summary: source, labels }
           : previous
       )
       setTranslation({ source, text })
