@@ -77,6 +77,37 @@ lighter `gemini-3.5-flash-lite` model from the same page content. Labels appear 
 in the list and on each bookmark's page. They are best-effort: a labelling failure never
 blocks the summary, and regenerating a summary regenerates the labels too.
 
+## Translating a summary
+
+An English summary carries a **Translate to Japanese** button beside **Regenerate**. It sends the
+stored summary to the same Gemini model and asks for Japanese that keeps the document's structure —
+headings, bullets and bold survive, and nothing is condensed on the way across. The translation
+replaces the English in place and the button becomes **Show English**; switching back and forth
+after that is free, because the Japanese is held on the page.
+
+The button only appears where it applies: a summary that is already Japanese, or a bookmark with no
+summary, does not get one. A failed translation changes nothing — the English stays on screen under
+an error, ready to try again.
+
+Nothing is stored. The translation lives on the page and is gone on navigation or reload, like the
+chat below, so a regenerated summary can never be left with a stale Japanese version beside it —
+regenerating drops the translation and puts the button back to its offer.
+
+`POST /api/bookmarks/:id/translation` takes no body: it translates the summary the backend has
+stored, so a caller cannot push arbitrary text into a paid Gemini call. It answers
+`{ "translation": "…", "source": "…", "labels": [...] }` — the translation, the summary it was made
+from, and the labels read alongside it —
+`404` if the bookmark is gone, `409` if it has no summary yet, `503` without `GEMINI_API_KEY`, and
+`502` if the translation itself fails.
+
+`source` is what keeps the two sides of the toggle in step. A page holding an older summary — one
+regenerated in another tab, say — would otherwise pair the new Japanese with the English it still
+had on screen, and it has no other way to notice: a bookmark that already has its summary and
+labels does not poll for changes. The page adopts the summary the backend actually translated —
+and its labels, so the chips never end up describing text that has been replaced — which is what
+makes **Show English** reveal the original of the Japanese beside it. A summary that arrived while
+the translation was in flight is fresher than what the endpoint read, so that one stands instead.
+
 ## Asking about an article
 
 Each bookmark's page has an "Ask about this article" box under the summary. Questions are
@@ -137,7 +168,7 @@ Open http://localhost:5173 and sign in — locally, sign-in goes through the Aut
 | `FIREBASE_PROJECT_ID` | Firebase project ID (`demo-hamster` for local dev — no real GCP project needed) |
 | `FRONTEND_URL` | Frontend origin for CORS |
 | `PORT` | Port the backend listens on |
-| `GEMINI_API_KEY` | Gemini API key used to generate bookmark summaries and answer questions about articles (both are disabled when unset) |
+| `GEMINI_API_KEY` | Gemini API key used to generate bookmark summaries, translate them into Japanese, and answer questions about articles (all are disabled when unset) |
 | `FIRESTORE_EMULATOR_HOST` | Host:port of the Firestore emulator (routes the Admin SDK to it instead of production) |
 | `FIREBASE_AUTH_EMULATOR_HOST` | Host:port of the Auth emulator (routes the Admin SDK to it instead of production) |
 

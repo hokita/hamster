@@ -8,6 +8,7 @@ import { summarize, isSummarizerConfigured, SummarizerUnavailableError } from '.
 import { generateLabels } from '../services/labeler'
 import { answerQuestion, isChatConfigured, ChatUnavailableError } from '../services/articleChat'
 import type { ChatMessage } from '../services/articleChat'
+import { translate, isTranslatorConfigured, TranslatorUnavailableError } from '../services/translator'
 
 // Thrown when the linked page could not be read (blocked, non-HTML, 404/500, network failure, ...).
 // A sentinel rather than a plain Error so the shared in-flight promise's rejection can still be
@@ -228,6 +229,74 @@ export function createBookmarksRouter(): Router {
         res.status(502).json({ error: 'Could not read the linked page' })
       } else {
         res.status(502).json({ error: 'Failed to generate a summary' })
+      }
+    }
+  })
+
+  // Translates the summary this bookmark already has into Japanese, for a reader who would rather
+  // not read the English one. Like the chat, the result is not persisted: it is returned and lives
+  // on the page for the visit, so a regenerated summary can never be left with a stale Japanese
+  // version stored beside it.
+  //
+  // The summary is read here rather than sent in the body. The client has the text already, so a
+  // body would be less work — but it would also let any caller push arbitrary text into a paid
+  // Gemini call, and this way the translation is always of what the app actually stored.
+  //
+  // No in-flight dedup map either, unlike the summary route: nothing triggers this automatically,
+  // so there is no second request seconds behind the first to collide with — only a reader
+  // clicking a button that disables itself while it runs.
+  router.post('/:id/translation', async (req: Request, res: Response) => {
+    let bookmark
+    try {
+      bookmark = await db.getBookmark(req.params.id)
+    } catch {
+      res.status(500).json({ error: 'Failed to load bookmark' })
+      return
+    }
+    if (!bookmark) {
+      res.status(404).json({ error: 'Bookmark not found' })
+      return
+    }
+    if (!bookmark.summary) {
+      // Not a 404: the bookmark exists, it is just not in a state this endpoint can act on. The
+      // caller's fix is to generate a summary first, not to stop asking about this id.
+      res.status(409).json({ error: 'Bookmark has no summary to translate' })
+      return
+    }
+
+    // Same early exit as the summary and chat routes: without a key the request can never succeed,
+    // and the deterministic 503 is more useful than a 502 from a call that was never going to work.
+    if (!isTranslatorConfigured()) {
+      res.status(503).json({ error: 'Translation is not configured' })
+      return
+    }
+
+    try {
+      const translation = await translate(bookmark.summary)
+      // The summary that was translated rides along with the translation. The client asked for
+      // "the stored summary" without saying which text that was, and the two can disagree: a
+      // regeneration elsewhere between the client's last read and this one leaves it holding
+      // older English than the Japanese coming back. Saying which text this is lets the page
+      // put the matching English beside it rather than pairing a translation with the wrong original.
+      //
+      // The labels read in the same breath ride along for the same reason: a page adopting that
+      // summary has to replace the chips beside it in the same step, or it shows fresh text under
+      // topics generated for what came before — and it would keep showing them, because a bookmark
+      // with a summary and labels is exactly what stops the page polling for changes. Omitted for
+      // a bookmark that has none, same shape as the summary route's response.
+      res.json(
+        bookmark.labels
+          ? { translation, source: bookmark.summary, labels: bookmark.labels }
+          : { translation, source: bookmark.summary }
+      )
+    } catch (error) {
+      // Vague body, logged cause — same contract as the summary and chat routes, for the same
+      // reason: the client has no use for the internals and they must not leak to it.
+      console.error(`translation failed for bookmark ${bookmark.id}:`, error)
+      if (error instanceof TranslatorUnavailableError) {
+        res.status(503).json({ error: 'Translation is not configured' })
+      } else {
+        res.status(502).json({ error: 'Failed to translate the summary' })
       }
     }
   })

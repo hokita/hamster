@@ -57,6 +57,16 @@ export const api = {
     request<{ summary: string; labels?: string[] }>(`/api/bookmarks/${id}/summary`, {
       method: 'POST',
     }),
+  // No body: the backend translates the summary it has stored, so a caller cannot push arbitrary
+  // text into a paid Gemini call. The result is not persisted — see the route. `source` is the
+  // summary that was translated, which need not be the one the caller had on screen.
+  translateSummary: (id: string) =>
+    request<{ translation: string; source: string; labels?: string[] }>(
+      `/api/bookmarks/${id}/translation`,
+      {
+        method: 'POST',
+      }
+    ),
   askQuestion: (id: string, messages: ChatMessage[]) =>
     request<{ answer: string }>(`/api/bookmarks/${id}/chat`, {
       method: 'POST',

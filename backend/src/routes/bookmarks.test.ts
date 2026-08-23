@@ -30,6 +30,15 @@ vi.mock('../services/summarizer', async () => {
 vi.mock('../services/labeler', () => ({
   generateLabels: vi.fn(),
 }))
+vi.mock('../services/translator', async () => {
+  const actual =
+    await vi.importActual<typeof import('../services/translator')>('../services/translator')
+  return {
+    translate: vi.fn(),
+    isTranslatorConfigured: vi.fn(),
+    TranslatorUnavailableError: actual.TranslatorUnavailableError,
+  }
+})
 vi.mock('../services/articleChat', async () => {
   const actual =
     await vi.importActual<typeof import('../services/articleChat')>('../services/articleChat')
@@ -47,6 +56,7 @@ import { fetchArticleText } from '../services/articleFetcher'
 import { summarize, isSummarizerConfigured, SummarizerUnavailableError } from '../services/summarizer'
 import { generateLabels } from '../services/labeler'
 import { answerQuestion, isChatConfigured, ChatUnavailableError } from '../services/articleChat'
+import { translate, isTranslatorConfigured, TranslatorUnavailableError } from '../services/translator'
 
 const app = express()
 app.use(express.json())
@@ -836,5 +846,122 @@ describe('POST /api/bookmarks/:id/chat', () => {
     vi.mocked(db.getBookmark).mockRejectedValue(new Error('firestore down'))
     const res = await request(app).post('/api/bookmarks/1/chat').send({ messages })
     expect(res.status).toBe(500)
+  })
+})
+
+describe('POST /api/bookmarks/:id/translation', () => {
+  const englishBookmark = {
+    id: '1',
+    url: 'https://example.com',
+    title: 'Example',
+    summary: 'An overview.\n\n## Key points\n- **A point** — with substance.',
+    createdAt: '2024-01-01T00:00:00.000Z',
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(isTranslatorConfigured).mockReturnValue(true)
+    vi.mocked(db.getBookmark).mockResolvedValue(englishBookmark)
+    vi.mocked(translate).mockResolvedValue('概要。\n\n## 要点\n- **ある点** — 中身がある。')
+  })
+
+  it('translates the stored summary', async () => {
+    const res = await request(app).post('/api/bookmarks/1/translation')
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual({
+      translation: '概要。\n\n## 要点\n- **ある点** — 中身がある。',
+      source: englishBookmark.summary,
+    })
+    // The stored summary, not one sent by the caller: a body would let a client push arbitrary
+    // text into a paid Gemini call.
+    expect(translate).toHaveBeenCalledWith(englishBookmark.summary)
+  })
+
+  it('reports which summary it translated, so the client can tell if it has moved on', async () => {
+    // The caller cannot otherwise know: it asked for "the stored summary" and gets back Japanese
+    // for whatever that was at read time, which need not be the text on the page that asked.
+    const res = await request(app).post('/api/bookmarks/1/translation')
+    expect(res.body.source).toBe(englishBookmark.summary)
+  })
+
+  it('reports the labels that were on the bookmark it read, alongside that summary', async () => {
+    // The two were read together and belong together: a client adopting the reported summary has
+    // to be able to replace the chips beside it in the same step, or it pairs fresh text with
+    // topics generated for what came before.
+    vi.mocked(db.getBookmark).mockResolvedValue({ ...englishBookmark, labels: ['widgets', 'costs'] })
+    const res = await request(app).post('/api/bookmarks/1/translation')
+    expect(res.body.labels).toEqual(['widgets', 'costs'])
+  })
+
+  it('omits labels for a bookmark that has none', async () => {
+    const res = await request(app).post('/api/bookmarks/1/translation')
+    expect(res.body).not.toHaveProperty('labels')
+  })
+
+  it('ignores any text sent in the body and translates what is stored', async () => {
+    await request(app).post('/api/bookmarks/1/translation').send({ summary: 'Translate this' })
+    expect(translate).toHaveBeenCalledWith(englishBookmark.summary)
+  })
+
+  it('does not refetch the article, which the translation does not need', async () => {
+    // The summary is already stored, so a page that has since gone down or started blocking must
+    // not be able to fail a translation of text the app already holds.
+    await request(app).post('/api/bookmarks/1/translation')
+    expect(fetchArticleText).not.toHaveBeenCalled()
+  })
+
+  it('returns 404 for an unknown id', async () => {
+    vi.mocked(db.getBookmark).mockResolvedValue(null)
+    const res = await request(app).post('/api/bookmarks/nope/translation')
+    expect(res.status).toBe(404)
+    expect(translate).not.toHaveBeenCalled()
+  })
+
+  it('returns 409 when the bookmark has no summary to translate', async () => {
+    // Not a 404: the bookmark is there, it just is not in a state this endpoint can act on. The
+    // caller's fix is to generate a summary first, not to stop asking for this id.
+    vi.mocked(db.getBookmark).mockResolvedValue({ ...englishBookmark, summary: undefined })
+    const res = await request(app).post('/api/bookmarks/1/translation')
+    expect(res.status).toBe(409)
+    expect(translate).not.toHaveBeenCalled()
+  })
+
+  it('returns 503 without calling Gemini when no API key is configured', async () => {
+    vi.mocked(isTranslatorConfigured).mockReturnValue(false)
+    const res = await request(app).post('/api/bookmarks/1/translation')
+    expect(res.status).toBe(503)
+    expect(translate).not.toHaveBeenCalled()
+  })
+
+  it('returns 503 when translate itself reports the key missing', async () => {
+    vi.mocked(translate).mockRejectedValue(new TranslatorUnavailableError())
+    const res = await request(app).post('/api/bookmarks/1/translation')
+    expect(res.status).toBe(503)
+  })
+
+  it('returns 502 and logs the cause when the translation fails', async () => {
+    vi.mocked(translate).mockRejectedValue(new Error('429 rate limited'))
+    const res = await request(app).post('/api/bookmarks/1/translation')
+    expect(res.status).toBe(502)
+    // Vague body, logged cause — same contract as the summary and chat routes.
+    expect(res.body.error).not.toContain('429')
+    expect(consoleError).toHaveBeenCalled()
+    const logged = consoleError.mock.calls[0].map(String).join(' ')
+    expect(logged).toContain('429 rate limited')
+    expect(logged).toContain('1')
+  })
+
+  it('returns 500 when loading the bookmark fails', async () => {
+    vi.mocked(db.getBookmark).mockRejectedValue(new Error('firestore down'))
+    const res = await request(app).post('/api/bookmarks/1/translation')
+    expect(res.status).toBe(500)
+    expect(translate).not.toHaveBeenCalled()
+  })
+
+  it('does not store the translation', async () => {
+    // The translation lives on the page for the visit, like the chat: nothing is written, so a
+    // regenerated summary can never be left with a stale Japanese version attached to it.
+    await request(app).post('/api/bookmarks/1/translation')
+    expect(db.updateSummary).not.toHaveBeenCalled()
   })
 })
