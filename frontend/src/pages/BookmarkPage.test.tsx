@@ -101,6 +101,26 @@ describe('BookmarkPage', () => {
     expect(screen.getByText('a banner')).toBeInTheDocument()
   })
 
+  it('renders a markdown table in a summary as a real table', async () => {
+    // GFM tables are not CommonMark: without the GFM extension the pipe rows land as one literal
+    // paragraph of "| ... |" text, which is worse than no table at all.
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...bookmark,
+      summary:
+        'The article compares the plans.\n\n' +
+        '| Plan | Price |\n' +
+        '| --- | --- |\n' +
+        '| Free | $0 |\n' +
+        '| Pro | $8 |',
+    })
+    renderPage()
+
+    expect(await screen.findByRole('table')).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: 'Plan' })).toBeInTheDocument()
+    expect(screen.getByRole('cell', { name: '$8' })).toBeInTheDocument()
+    expect(screen.queryByText(/\| Plan \|/)).not.toBeInTheDocument()
+  })
+
   it('renders a plain-text summary saved before summaries were markdown', async () => {
     vi.mocked(api.getBookmark).mockResolvedValue({
       ...bookmark,
@@ -227,7 +247,8 @@ describe('BookmarkPage', () => {
   // so it is offered exactly where that applies: an English summary, and nothing else.
   describe('translating an English summary', () => {
     const englishSummary = 'The article explains widgets.\n\n## Key points\n\n- **One** — a point.'
-    const japaneseTranslation = 'この記事はウィジェットを説明する。\n\n## 要点\n\n- **一つ** — 要点。'
+    const japaneseTranslation =
+      'この記事はウィジェットを説明する。\n\n## 要点\n\n- **一つ** — 要点。'
 
     function withEnglishSummary() {
       vi.mocked(api.getBookmark).mockResolvedValue({ ...bookmark, summary: englishSummary })
@@ -248,13 +269,17 @@ describe('BookmarkPage', () => {
       })
       renderPage()
       expect(await screen.findByText(/この記事は/)).toBeInTheDocument()
-      expect(screen.queryByRole('button', { name: 'Translate to Japanese' })).not.toBeInTheDocument()
+      expect(
+        screen.queryByRole('button', { name: 'Translate to Japanese' })
+      ).not.toBeInTheDocument()
     })
 
     it('does not offer one when there is no summary to translate', async () => {
       renderPage()
       expect(await screen.findByText('No summary yet.')).toBeInTheDocument()
-      expect(screen.queryByRole('button', { name: 'Translate to Japanese' })).not.toBeInTheDocument()
+      expect(
+        screen.queryByRole('button', { name: 'Translate to Japanese' })
+      ).not.toBeInTheDocument()
     })
 
     it('replaces the summary with the translation, marked as Japanese', async () => {

@@ -120,7 +120,12 @@ describe('summarize', () => {
     expect(systemInstruction).toContain('Markdown')
     expect(systemInstruction).toContain('"## " section headings')
     expect(systemInstruction).toContain('**bold**')
-    expect(systemInstruction).toContain('Never use links, images, tables, code blocks')
+    // Tables joined the rendered subset: the page grew GFM table support, and a comparison
+    // article's substance genuinely lives in one.
+    expect(systemInstruction).toContain('tables')
+    expect(systemInstruction).toContain('compares')
+    expect(systemInstruction).toContain('Never use links, images, code blocks')
+    expect(systemInstruction).not.toContain('Never use links, images, tables')
     expect(systemInstruction).toContain('Key points')
     expect(systemInstruction).toContain('Takeaway')
     // Headings in English above a Japanese summary would read as a translation glitch.

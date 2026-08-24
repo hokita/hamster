@@ -80,6 +80,9 @@ describe('translate', () => {
     expect(systemInstruction).toContain('Japanese')
     expect(systemInstruction).toContain('"## " headings')
     expect(systemInstruction).toContain('**bold**')
+    // Summaries can carry tables now; a translation that flattens one into prose loses the
+    // comparison the table existed to show.
+    expect(systemInstruction).toContain('tables as tables')
   })
 
   it('asks for a translation rather than a summary of the summary', async () => {
