@@ -47,12 +47,16 @@ export function isSummarizerConfigured(): boolean {
 // a guarantee: it raises the bar for a hostile page to override these rules, it does not eliminate
 // the possibility. The realistic worst case if it's bypassed is a misleading summary, not a breach.
 const SYSTEM_INSTRUCTION = [
-  'Summarize the following web page so the reader gets the article\'s full substance without opening it.',
+  "Summarize the following web page so the reader gets the article's full substance without opening it.",
   '',
   'Write the summary in Markdown, using only these constructs: paragraphs, "## " section headings,',
-  '"- " bullet lists, and **bold** for emphasis. Never use links, images, tables, code blocks,',
+  '"- " bullet lists, **bold** for emphasis, and tables. Never use links, images, code blocks,',
   'blockquotes, headings deeper than "## ", or raw HTML — they are dropped before the summary is',
   'shown, so anything written with them is lost.',
+  '',
+  'Use a table only when the article compares things — options, versions, benchmark results,',
+  'prices — and the comparison reads better as rows and columns than as bullets. Most articles',
+  'need no table; never force one.',
   '',
   'Rules:',
   '- Write the summary in the language the article itself is written in, as long as that language',

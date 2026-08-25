@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import Markdown from 'react-markdown'
 import type { Components } from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faArrowLeft,
@@ -133,18 +134,31 @@ const SUMMARY_COMPONENTS: Components = {
   ),
   hr: () => <hr className="m-0 border-gray-200" />,
   img: SummaryImageText,
+  // Tables come from GFM (the prompt asks for one when the article compares things). The wrapper
+  // scrolls a wide table inside its own box instead of widening the whole page on a phone.
+  table: ({ children }) => (
+    <div className="overflow-x-auto">
+      <table className="m-0 w-full border-collapse text-sm">{children}</table>
+    </div>
+  ),
+  th: ({ children }) => (
+    <th className="border-b border-gray-300 px-2 py-1.5 text-left font-semibold text-gray-900">
+      {children}
+    </th>
+  ),
+  td: ({ children }) => (
+    <td className="border-b border-gray-200 px-2 py-1.5 align-top">{children}</td>
+  ),
 }
 
 function SummaryBody({ summary }: { summary: string }) {
   return (
     // gap-3 spaces the blocks, so every child above resets its own margin to zero rather than
     // stacking browser defaults on top of it.
-    <div
-      lang={textLanguage(summary)}
-      className="flex flex-col gap-3 text-gray-700 leading-relaxed"
-    >
+    <div lang={textLanguage(summary)} className="flex flex-col gap-3 text-gray-700 leading-relaxed">
       <Markdown
         components={SUMMARY_COMPONENTS}
+        remarkPlugins={[remarkGfm]}
         disallowedElements={DISALLOWED_ELEMENTS}
         unwrapDisallowed
       >
@@ -322,8 +336,8 @@ export default function BookmarkPage() {
           // this effect, and hand the poll a fresh budget — polling forever.
           const summaryAdvanced = Boolean(
             reconciled.summary &&
-              reconciled.summary !== supersededSummary &&
-              reconciled.summary !== bookmark.summary
+            reconciled.summary !== supersededSummary &&
+            reconciled.summary !== bookmark.summary
           )
           const labelsAdvanced = !sameLabels(reconciled.labels, bookmark.labels)
           // The read flag counts as an advance in its own right. It is the one field a poll can
