@@ -2,10 +2,10 @@ import { GoogleGenAI, ThinkingLevel } from '@google/genai'
 import { withSignal } from './safeFetch'
 
 // Same timeout as the sibling eagle repo; the model is one step up from eagle's flash-lite —
-// summarising a whole article benefits from the stronger model. Pinned id, verified against
-// ListModels on 2026-08-15 — never extrapolate Gemini ids from family patterns (the labeler
-// shipped a nonexistent one that way).
-const MODEL = 'gemini-3.7-flash'
+// summarising a whole article benefits from the stronger model. Pinned id, taken from Google's
+// published model list (GA since 2026-09-02) rather than guessed — never extrapolate Gemini ids
+// from family patterns (the labeler shipped a nonexistent one that way).
+const MODEL = 'gemini-3.8-flash'
 const TIMEOUT_MS = 45_000
 // a ~2k-token summary of a ~50k-token input fits well inside 45s at Flash speeds, but not always
 // inside the old 20s.
@@ -23,8 +23,9 @@ const MAX_OUTPUT_TOKENS = 16384
 // offer: it keeps latency and per-summary cost down and leaves the budget above to the summary
 // itself. Belt and braces with MAX_OUTPUT_TOKENS — either alone fixes the truncation, but low
 // thinking also stops a pathological page from quietly costing 16k output tokens of reasoning.
-// gemini-3.7-flash rejects MINIMAL with 400 INVALID_ARGUMENT (verified live 2026-08-15); LOW is
-// the least it accepts.
+// gemini-3.8-flash takes only low/medium/high — MINIMAL is gone from the 3.8 family, as it was
+// already rejected with 400 INVALID_ARGUMENT on 3.7 (verified live 2026-08-15); LOW stays the
+// least it accepts.
 const THINKING_LEVEL = ThinkingLevel.LOW
 
 export class SummarizerUnavailableError extends Error {

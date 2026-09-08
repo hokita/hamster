@@ -2,8 +2,8 @@ import { GoogleGenAI, ThinkingLevel } from '@google/genai'
 import { withSignal } from './safeFetch'
 
 // Same model as the summarizer: answering a question about a whole article is the same
-// read-and-condense task, and the pinned id was verified against ListModels on 2026-08-15.
-const MODEL = 'gemini-3.7-flash'
+// read-and-condense task, and the pinned id comes from Google's published model list.
+const MODEL = 'gemini-3.8-flash'
 // An answer is a paragraph or two, far shorter than a summary; Flash reaches that comfortably
 // inside 30s even with the whole article in context.
 const TIMEOUT_MS = 30_000
@@ -11,8 +11,8 @@ const TIMEOUT_MS = 30_000
 // summarizer hit at 1024). Answers are a few hundred tokens, so 8192 is ample headroom even in
 // Japanese, and the MAX_TOKENS guard below still catches a model gone off-script.
 const MAX_OUTPUT_TOKENS = 8192
-// gemini-3.7-flash rejects MINIMAL with 400 INVALID_ARGUMENT (verified live 2026-08-15 for the
-// summarizer); LOW is the least it accepts.
+// gemini-3.8-flash takes only low/medium/high (3.7 already rejected MINIMAL with 400
+// INVALID_ARGUMENT, verified live 2026-08-15 for the summarizer); LOW is the least it accepts.
 const THINKING_LEVEL = ThinkingLevel.LOW
 
 export interface ChatMessage {

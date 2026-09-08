@@ -54,7 +54,7 @@ describe('translate', () => {
     await translate('A summary.')
     expect(mockGenerateContent).toHaveBeenCalledWith(
       expect.objectContaining({
-        model: 'gemini-3.7-flash',
+        model: 'gemini-3.8-flash',
         config: expect.objectContaining({ maxOutputTokens: 16384 }),
       })
     )
