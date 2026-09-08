@@ -14,7 +14,7 @@ import {
 // real limit. Still bounded: this is the network/memory guard, not the text-length guard.
 const MAX_BYTES = 1_500_000
 // The summary is meant to replace reading the article, so the model has to see the whole thing.
-// 200k chars ≈ 50k tokens — well inside gemini-3.7-flash's 1M context; covers all but
+// 200k chars ≈ 50k tokens — well inside gemini-3.8-flash's 1M context; covers all but
 // book-length pages.
 const MAX_CHARS = 200_000
 const FETCH_TIMEOUT_MS = 8000

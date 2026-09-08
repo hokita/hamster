@@ -44,15 +44,15 @@ describe('answerQuestion', () => {
     await answerQuestion('Title', 'Article body', question)
     expect(mockGenerateContent).toHaveBeenCalledWith(
       expect.objectContaining({
-        model: 'gemini-3.7-flash',
+        model: 'gemini-3.8-flash',
         config: expect.objectContaining({ maxOutputTokens: 8192 }),
       })
     )
   })
 
   it('asks for the lowest supported thinking, so the output budget funds the answer', async () => {
-    // Thinking tokens are drawn from maxOutputTokens; gemini-3.7-flash rejects MINIMAL
-    // (400 INVALID_ARGUMENT — see summarizer.ts), so LOW is the floor for this model.
+    // Thinking tokens are drawn from maxOutputTokens; gemini-3.8-flash offers only low/medium/high
+    // (MINIMAL was already rejected on 3.7 — see summarizer.ts), so LOW is the floor here.
     mockGenerateContent.mockResolvedValue({ text: 'ok' })
     await answerQuestion('Title', 'Article body', question)
     const config = mockGenerateContent.mock.calls[0][0].config

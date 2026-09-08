@@ -1,11 +1,12 @@
 import { GoogleGenAI, ThinkingLevel } from '@google/genai'
 import { withSignal } from './safeFetch'
 
-// The same pinned id the summarizer uses, verified against ListModels on 2026-08-15 — never
-// extrapolate Gemini ids from family patterns (the labeler shipped a nonexistent one that way).
+// The same pinned id the summarizer uses, taken from Google's published model list rather than
+// guessed — never extrapolate Gemini ids from family patterns (the labeler shipped a nonexistent
+// one that way).
 // Translating prose the reader will read instead of the English is not the mechanical job the
 // lighter flash-lite handles for labels: the summary's argument has to survive it.
-const MODEL = 'gemini-3.7-flash'
+const MODEL = 'gemini-3.8-flash'
 // The input is a stored summary — a couple of thousand tokens at most, already fetched — so this
 // call is far cheaper than the summarizer's and does no network work of its own beyond Gemini.
 // The shorter timeout still clears a worst-case translation comfortably.
@@ -16,8 +17,8 @@ const TIMEOUT_MS = 30_000
 // pool (see the summarizer's note), which is why the level below is pinned rather than defaulted.
 const MAX_OUTPUT_TOKENS = 16384
 // Rendering one language as another is a reading task, not a reasoning one, so buy the least
-// thinking on offer. gemini-3.7-flash rejects MINIMAL with 400 INVALID_ARGUMENT (verified live
-// 2026-08-15); LOW is the least it accepts.
+// thinking on offer. gemini-3.8-flash takes only low/medium/high, as 3.7 did before it (MINIMAL
+// came back 400 INVALID_ARGUMENT, verified live 2026-08-15); LOW is the least it accepts.
 const THINKING_LEVEL = ThinkingLevel.LOW
 
 export class TranslatorUnavailableError extends Error {
