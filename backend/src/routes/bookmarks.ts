@@ -338,11 +338,6 @@ export function createBookmarksRouter(): Router {
     } catch {
       text = null
     }
-    if (!text) {
-      res.status(502).json({ error: 'Could not read the linked page' })
-      return
-    }
-
     try {
       const answer = await answerQuestion(bookmark.title, text, messages)
       res.json({ answer })

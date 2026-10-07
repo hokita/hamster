@@ -108,16 +108,17 @@ and its labels, so the chips never end up describing text that has been replaced
 makes **Show English** reveal the original of the Japanese beside it. A summary that arrived while
 the translation was in flight is fresher than what the endpoint read, so that one stands instead.
 
-## Asking about an article
+## Asking questions
 
-Each bookmark's page has an "Ask about this article" box under the summary. Questions are
-answered by the same Gemini model from the article's fetched text — in the question's language
-when that is English or Japanese, in English otherwise, same policy as summaries — and only
-from what the article actually says — when it doesn't cover the question,
-the answer says so instead of guessing. Follow-up questions see the earlier exchange, so "why?"
-after an answer works. The conversation is not saved anywhere: it lives on the page and is gone
-on navigation, and the backend refetches the article for every question rather than holding any
-state. A failed question stays in the chat with a Retry button next to the error.
+Each bookmark's page has an "Ask a question" box under the summary. You can ask about the
+article or any other topic. The same Gemini model uses the fetched article as context for
+article questions and general knowledge for questions beyond it, distinguishing article content
+from additional explanations. Answers use the question's language when that is English or
+Japanese, and English otherwise. If the article cannot be fetched, general questions still work;
+the assistant explains that the page is unavailable when asked about its specific contents.
+Follow-up questions see the earlier exchange. The conversation is not saved anywhere: it lives
+on the page and is gone on navigation. The backend refetches the article for every question.
+A failed question stays in the chat with a Retry button next to the error.
 
 Like summaries, asking needs `GEMINI_API_KEY`; without it the box answers every question with
 the failure state.
@@ -168,7 +169,7 @@ Open http://localhost:5173 and sign in — locally, sign-in goes through the Aut
 | `FIREBASE_PROJECT_ID` | Firebase project ID (`demo-hamster` for local dev — no real GCP project needed) |
 | `FRONTEND_URL` | Frontend origin for CORS |
 | `PORT` | Port the backend listens on |
-| `GEMINI_API_KEY` | Gemini API key used to generate bookmark summaries, translate them into Japanese, and answer questions about articles (all are disabled when unset) |
+| `GEMINI_API_KEY` | Gemini API key used to generate bookmark summaries, translate them into Japanese, and answer article and general questions (all are disabled when unset) |
 | `FIRESTORE_EMULATOR_HOST` | Host:port of the Firestore emulator (routes the Admin SDK to it instead of production) |
 | `FIREBASE_AUTH_EMULATOR_HOST` | Host:port of the Auth emulator (routes the Admin SDK to it instead of production) |
 

@@ -37,11 +37,16 @@ export function isChatConfigured(): boolean {
 // a mitigation against a hostile page overriding the rules, not a guarantee. The realistic worst
 // case if bypassed is a misleading answer about one article, not a breach.
 const SYSTEM_INSTRUCTION = [
-  'You answer questions about one web page, whose content is provided in the first user turn.',
+  'You answer questions about a web page and general questions on any topic.',
+  'The first user turn includes page content when it is available, as optional context.',
   '',
   'Rules:',
-  '- Use only information found in the article. Do not speculate or bring in outside knowledge.',
-  '- When the article does not cover what was asked, say so plainly instead of guessing.',
+  '- For questions about the article, ground your answer in the provided page content.',
+  '- Use your general knowledge for questions beyond the article, including unrelated topics.',
+  '- Clearly distinguish what the article says from explanations based on general knowledge.',
+  '- When page content is unavailable, say so for article-specific questions; do not invent',
+  '  what the article says. You can still answer general questions using your own knowledge.',
+  '- Acknowledge uncertainty instead of guessing or inventing facts.',
   '- Answer in the language the question was asked in, as long as that language is English or',
   '  Japanese. For a question in any other language, answer in English.',
   '- Answer in plain text: no Markdown syntax, no headings, no bullet markers.',
@@ -70,7 +75,7 @@ function buildArticleTurn(title: string, text: string): string {
 
 export async function answerQuestion(
   title: string,
-  text: string,
+  text: string | null,
   messages: ChatMessage[]
 ): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY
@@ -92,7 +97,14 @@ export async function answerQuestion(
       contents: [
         {
           role: 'user',
-          parts: [{ text: buildArticleTurn(title, text) }, { text: firstMessage.text }],
+          parts: [
+            {
+              text: text
+                ? buildArticleTurn(title, text)
+                : 'Page content is unavailable for this conversation turn.',
+            },
+            { text: firstMessage.text },
+          ],
         },
         ...laterMessages.map((message) => ({
           role: message.role,

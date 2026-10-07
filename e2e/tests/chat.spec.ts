@@ -17,8 +17,8 @@ test.describe('ask about an article', () => {
 
     await page.goto(`/bookmarks/${id}`)
 
-    await expect(page.getByRole('heading', { name: 'Ask about this article' })).toBeVisible()
-    await expect(page.getByLabel('Ask a question about this article')).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Ask a question' })).toBeVisible()
+    await expect(page.getByLabel('Ask a question')).toBeVisible()
     // Nothing typed yet, so there is nothing to ask.
     await expect(page.getByRole('button', { name: 'Ask' })).toBeDisabled()
   })
@@ -31,7 +31,7 @@ test.describe('ask about an article', () => {
     })
 
     await page.goto(`/bookmarks/${id}`)
-    await page.getByLabel('Ask a question about this article').fill('What is this page about?')
+    await page.getByLabel('Ask a question').fill('What is this page about?')
     await page.getByRole('button', { name: 'Ask' }).click()
 
     // No GEMINI_API_KEY in the e2e environment, so POST /:id/chat deterministically returns 503.
