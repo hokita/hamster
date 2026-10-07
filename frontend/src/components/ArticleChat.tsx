@@ -69,8 +69,9 @@ export default function ArticleChat({ bookmarkId }: { bookmarkId: string }) {
   return (
     <div className="mt-10">
       <h2 className="mt-0 mb-3 text-sm font-semibold uppercase tracking-wide text-gray-400">
-        Ask about this article
+        Ask a question
       </h2>
+      <p className="m-0 mb-3 text-sm text-gray-500">Ask about this article or any other topic.</p>
 
       {messages.length > 0 && (
         // role="log" is the chat semantic: an implicit polite live region that announces
@@ -145,10 +146,10 @@ export default function ArticleChat({ bookmarkId }: { bookmarkId: string }) {
 
       <form onSubmit={handleSubmit} className="flex items-start gap-2">
         <textarea
-          aria-label="Ask a question about this article"
+          aria-label="Ask a question"
           value={question}
           onChange={(event) => setQuestion(event.target.value)}
-          placeholder="e.g. What is the main argument?"
+          placeholder="e.g. What is the main argument? Or ask about any topic."
           rows={2}
           maxLength={MAX_QUESTION_CHARS}
           // Closed while a failed turn is pending: another question would append a second

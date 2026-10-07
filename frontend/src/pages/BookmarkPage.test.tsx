@@ -1031,7 +1031,7 @@ describe('article chat', () => {
   it('offers a question box once the bookmark has loaded', async () => {
     renderPage()
     expect(
-      await screen.findByRole('textbox', { name: 'Ask a question about this article' })
+      await screen.findByRole('textbox', { name: 'Ask a question' })
     ).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Ask' })).toBeInTheDocument()
   })
@@ -1041,7 +1041,7 @@ describe('article chat', () => {
     renderPage()
 
     fireEvent.change(
-      await screen.findByRole('textbox', { name: 'Ask a question about this article' }),
+      await screen.findByRole('textbox', { name: 'Ask a question' }),
       { target: { value: 'A question?' } }
     )
     fireEvent.click(screen.getByRole('button', { name: 'Ask' }))

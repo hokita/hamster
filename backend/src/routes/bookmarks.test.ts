@@ -819,11 +819,18 @@ describe('POST /api/bookmarks/:id/chat', () => {
     expect(fetchArticleText).not.toHaveBeenCalled()
   })
 
-  it('returns 502 when the article cannot be fetched', async () => {
+  it('answers questions without article context when the article cannot be fetched', async () => {
     vi.mocked(fetchArticleText).mockResolvedValue(null)
     const res = await request(app).post('/api/bookmarks/1/chat').send({ messages })
-    expect(res.status).toBe(502)
-    expect(answerQuestion).not.toHaveBeenCalled()
+    expect(res.status).toBe(200)
+    expect(answerQuestion).toHaveBeenCalledWith(chatBookmark.title, null, messages)
+  })
+
+  it('answers questions without article context when the article fetch throws', async () => {
+    vi.mocked(fetchArticleText).mockRejectedValue(new Error('network failure'))
+    const res = await request(app).post('/api/bookmarks/1/chat').send({ messages })
+    expect(res.status).toBe(200)
+    expect(answerQuestion).toHaveBeenCalledWith(chatBookmark.title, null, messages)
   })
 
   it('returns 502 when Gemini fails, and logs the cause with the bookmark id', async () => {

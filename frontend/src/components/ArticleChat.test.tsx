@@ -9,7 +9,7 @@ import ArticleChat from './ArticleChat'
 import { api } from '../api'
 
 function ask(question: string) {
-  fireEvent.change(screen.getByRole('textbox', { name: 'Ask a question about this article' }), {
+  fireEvent.change(screen.getByRole('textbox', { name: 'Ask a question' }), {
     target: { value: question },
   })
   fireEvent.click(screen.getByRole('button', { name: 'Ask' }))
@@ -23,15 +23,16 @@ describe('ArticleChat', () => {
   it('renders a question box with an Ask button', () => {
     render(<ArticleChat bookmarkId="1" />)
     expect(
-      screen.getByRole('textbox', { name: 'Ask a question about this article' })
+      screen.getByRole('textbox', { name: 'Ask a question' })
     ).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Ask' })).toBeInTheDocument()
+    expect(screen.getByText('Ask about this article or any other topic.')).toBeInTheDocument()
   })
 
   it('disables Ask while the question box is empty', () => {
     render(<ArticleChat bookmarkId="1" />)
     expect(screen.getByRole('button', { name: 'Ask' })).toBeDisabled()
-    fireEvent.change(screen.getByRole('textbox', { name: 'Ask a question about this article' }), {
+    fireEvent.change(screen.getByRole('textbox', { name: 'Ask a question' }), {
       target: { value: 'Why?' },
     })
     expect(screen.getByRole('button', { name: 'Ask' })).toBeEnabled()
@@ -57,7 +58,7 @@ describe('ArticleChat', () => {
     ask('A question?')
 
     expect(
-      screen.getByRole('textbox', { name: 'Ask a question about this article' })
+      screen.getByRole('textbox', { name: 'Ask a question' })
     ).toHaveValue('')
     await screen.findByText('An answer.')
   })
@@ -89,7 +90,7 @@ describe('ArticleChat', () => {
     render(<ArticleChat bookmarkId="1" />)
 
     ask('A question?')
-    fireEvent.change(screen.getByRole('textbox', { name: 'Ask a question about this article' }), {
+    fireEvent.change(screen.getByRole('textbox', { name: 'Ask a question' }), {
       target: { value: 'Another?' },
     })
     expect(screen.getByRole('button', { name: 'Ask' })).toBeDisabled()
@@ -120,7 +121,7 @@ describe('ArticleChat', () => {
     await screen.findByText("Couldn't answer that question.")
 
     expect(
-      screen.getByRole('textbox', { name: 'Ask a question about this article' })
+      screen.getByRole('textbox', { name: 'Ask a question' })
     ).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Ask' })).toBeDisabled()
   })
@@ -136,7 +137,7 @@ describe('ArticleChat', () => {
     expect(screen.queryByText('A question?')).not.toBeInTheDocument()
     expect(screen.queryByText("Couldn't answer that question.")).not.toBeInTheDocument()
     expect(
-      screen.getByRole('textbox', { name: 'Ask a question about this article' })
+      screen.getByRole('textbox', { name: 'Ask a question' })
     ).toBeEnabled()
   })
 
@@ -145,7 +146,7 @@ describe('ArticleChat', () => {
     // Retry — so an over-long question would leave the chat failing forever. Never let one in.
     render(<ArticleChat bookmarkId="1" />)
     expect(
-      screen.getByRole('textbox', { name: 'Ask a question about this article' })
+      screen.getByRole('textbox', { name: 'Ask a question' })
     ).toHaveAttribute('maxLength', '4000')
   })
 
@@ -161,7 +162,7 @@ describe('ArticleChat', () => {
 
     expect(await screen.findByText(/conversation is full/i)).toBeInTheDocument()
     expect(
-      screen.getByRole('textbox', { name: 'Ask a question about this article' })
+      screen.getByRole('textbox', { name: 'Ask a question' })
     ).toBeDisabled()
   })
 
@@ -179,7 +180,7 @@ describe('ArticleChat', () => {
     }
 
     expect(
-      screen.getByRole('textbox', { name: 'Ask a question about this article' })
+      screen.getByRole('textbox', { name: 'Ask a question' })
     ).toBeDisabled()
     expect(screen.getByText(/conversation is full/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Ask' })).toBeDisabled()

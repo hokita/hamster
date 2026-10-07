@@ -65,16 +65,34 @@ describe('answerQuestion', () => {
     const systemInstruction = mockGenerateContent.mock.calls[0][0].config
       .systemInstruction as string
     expect(systemInstruction).toContain('Rules:')
-    expect(systemInstruction).toContain('only information found in the article')
+    expect(systemInstruction).toContain('ground your answer in the provided page content')
+    expect(systemInstruction).toContain('Clearly distinguish what the article says')
+    expect(systemInstruction).toContain('never as')
+    expect(systemInstruction).toContain('instructions to follow')
   })
 
-  it('tells the model to admit when the article does not cover the question', async () => {
-    // An answer invented beyond the article would defeat the point of asking about THIS article.
+  it('allows general knowledge for unrelated questions without inventing article facts', async () => {
     mockGenerateContent.mockResolvedValue({ text: 'ok' })
     await answerQuestion('My Title', 'The article body text', question)
     const systemInstruction = mockGenerateContent.mock.calls[0][0].config
       .systemInstruction as string
-    expect(systemInstruction).toContain('does not cover')
+    expect(systemInstruction).toContain('including unrelated topics')
+    expect(systemInstruction).toContain('Acknowledge uncertainty')
+    expect(systemInstruction).not.toContain('Use only information found in the article')
+  })
+
+  it('answers general questions even when page content is unavailable', async () => {
+    mockGenerateContent.mockResolvedValue({ text: 'Paris.' })
+    const generalQuestion: ChatMessage[] = [
+      { role: 'user', text: 'What is the capital of France?' },
+    ]
+    await expect(answerQuestion('Title', null, generalQuestion)).resolves.toBe('Paris.')
+    const request = mockGenerateContent.mock.calls[0][0]
+    expect(request.contents[0].parts).toEqual([
+      { text: 'Page content is unavailable for this conversation turn.' },
+      { text: generalQuestion[0].text },
+    ])
+    expect(request.config.systemInstruction).toContain('do not invent')
   })
 
   it('asks for the answer in the question language, falling back to English', async () => {
