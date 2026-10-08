@@ -7,6 +7,7 @@ import { formatRelativeTime } from '../relativeTime'
 import { describeBookmark } from '../bookmarkLabel'
 import DeleteBookmarkButton from './DeleteBookmarkButton'
 import ReadToggleButton from './ReadToggleButton'
+import SummaryPreview from './SummaryPreview'
 
 interface BookmarkListProps {
   bookmarks: Bookmark[]
@@ -189,6 +190,9 @@ export default function BookmarkList({
               <Link
                 to={`/bookmarks/${bookmark.id}`}
                 aria-labelledby={`bookmark-title-${bookmark.id} bookmark-meta-${bookmark.id}`}
+                aria-describedby={
+                  bookmark.summary?.trim() ? `bookmark-summary-${bookmark.id}` : undefined
+                }
                 className="flex flex-1 min-w-0 items-center gap-3 py-2.5 px-1 rounded-md hover:bg-gray-50"
               >
                 <span className="flex items-center justify-center w-7 h-7 rounded-md bg-gray-100 text-gray-400 flex-shrink-0 overflow-hidden">
@@ -208,7 +212,7 @@ export default function BookmarkList({
                     <FontAwesomeIcon icon={faLink} size="xs" aria-hidden="true" />
                   )}
                 </span>
-                <span className="flex-1 min-w-0">
+                <div className="flex-1 min-w-0">
                   <span
                     // A read bookmark recedes: normal weight and a lighter grey, so a glance down
                     // the list picks out what is still waiting to be read. Nothing is hidden —
@@ -232,6 +236,10 @@ export default function BookmarkList({
                         the row link's accessible name (see aria-labelledby above). */}
                     {bookmark.isRead && <span> · Read</span>}
                   </span>
+                  <SummaryPreview
+                    summary={bookmark.summary}
+                    id={`bookmark-summary-${bookmark.id}`}
+                  />
                   {bookmark.labels && bookmark.labels.length > 0 && (
                     <span data-testid="bookmark-labels" className="mt-1 flex flex-wrap gap-1">
                       {bookmark.labels.map((label) => (
@@ -244,7 +252,7 @@ export default function BookmarkList({
                       ))}
                     </span>
                   )}
-                </span>
+                </div>
               </Link>
               {onToggleRead && (
                 <ReadToggleButton

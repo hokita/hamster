@@ -72,6 +72,12 @@ it runs a fresh generation; if that fails, the existing summary is left as it wa
 Summarization needs `GEMINI_API_KEY`. Without it the app works normally and every
 bookmark page simply shows its empty state.
 
+The top page shows the opening overview of each stored summary below its article title and
+metadata, limited to two lines so the list stays easy to scan. Markdown emphasis is preserved;
+links and images do not add controls to the row. Existing summaries work immediately, and a
+new bookmark's preview appears when its automatic summary finishes. Bookmarks without a
+summary keep their usual row until one is generated.
+
 Saving a bookmark also assigns it a handful of short topic labels, generated with the
 lighter `gemini-3.5-flash-lite` model from the same page content. Labels appear as chips
 in the list and on each bookmark's page. They are best-effort: a labelling failure never

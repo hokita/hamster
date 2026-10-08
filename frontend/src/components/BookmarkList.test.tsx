@@ -43,6 +43,74 @@ describe('BookmarkList', () => {
     expect(external).toHaveAttribute('rel', 'noreferrer')
   })
 
+  it('shows only the overview of a stored Markdown summary and describes the row link', () => {
+    renderList({
+      bookmarks: [
+        {
+          ...bookmarks[0],
+          summary:
+            '## Overview\n\nAn article about **React** and its rendering model.\n\n## Key points\n\n- A detailed point.',
+        },
+      ],
+    })
+
+    const link = screen.getByRole('link', { name: /Example Site/ })
+    expect(link).toHaveAccessibleDescription('An article about React and its rendering model.')
+    expect(screen.getByText('React').tagName).toBe('STRONG')
+    expect(screen.queryByText('Overview')).not.toBeInTheDocument()
+    expect(screen.queryByText('Key points')).not.toBeInTheDocument()
+    expect(screen.queryByText('A detailed point.')).not.toBeInTheDocument()
+    expect(document.getElementById('bookmark-summary-1')).toHaveClass('line-clamp-2')
+  })
+
+  it('shows legacy plain-text summaries and Japanese overviews', () => {
+    renderList({
+      bookmarks: [
+        { ...bookmarks[0], summary: 'A plain-text overview.\nIt continues on another line.' },
+        {
+          ...bookmarks[0],
+          id: '2',
+          summary: 'この記事は React の描画について解説します。\n\n## 要点\n\n- 詳細。',
+        },
+      ],
+    })
+
+    expect(screen.getByText(/A plain-text overview/)).toHaveTextContent(
+      'It continues on another line.'
+    )
+    expect(screen.getByText('この記事は React の描画について解説します。')).toBeInTheDocument()
+    expect(screen.queryByText('要点')).not.toBeInTheDocument()
+  })
+
+  it('renders summary links as text without nesting links or loading images', () => {
+    renderList({
+      bookmarks: [
+        {
+          ...bookmarks[0],
+          summary:
+            'Read [the explanation](https://other.example) for details. ![Cover](https://other.example/cover.png) <img src="https://other.example/tracker.png" />',
+        },
+      ],
+    })
+
+    const preview = document.getElementById('bookmark-summary-1')!
+    expect(preview).toHaveTextContent('Read the explanation for details.')
+    expect(preview.querySelector('a')).toBeNull()
+    expect(preview.querySelector('img')).toBeNull()
+  })
+
+  it('keeps rows without summaries free of empty previews', () => {
+    renderList({
+      bookmarks: [bookmarks[0], { ...bookmarks[0], id: '2', summary: ' \n ' }],
+    })
+
+    expect(document.getElementById('bookmark-summary-1')).toBeNull()
+    expect(document.getElementById('bookmark-summary-2')).toBeNull()
+    expect(screen.getAllByRole('link', { name: /Example Site/ })[0]).not.toHaveAttribute(
+      'aria-describedby'
+    )
+  })
+
   it("shows the bookmark's domain and relative time", () => {
     const recent = [{ ...bookmarks[0], createdAt: new Date().toISOString() }]
     renderList({ bookmarks: recent })
@@ -159,9 +227,7 @@ describe('BookmarkList', () => {
   })
 
   it('renders the empty state instead of throwing when bookmarks is not an array', () => {
-    expect(() =>
-      renderList({ bookmarks: null as unknown as typeof bookmarks })
-    ).not.toThrow()
+    expect(() => renderList({ bookmarks: null as unknown as typeof bookmarks })).not.toThrow()
     expect(screen.getByText('No bookmarks yet — paste a URL above to add one.')).toBeInTheDocument()
   })
 })
