@@ -1,4 +1,6 @@
 const FIRESTORE_EMULATOR_URL = 'http://localhost:8081'
+import { createHash } from 'node:crypto'
+import type { VisualSummary } from '../../backend/src/visualSummary'
 const PROJECT_ID = 'demo-hamster-e2e'
 
 // Writes a bookmark straight into the emulator, bypassing the app's own add flow. The e2e
@@ -9,6 +11,7 @@ export async function seedBookmark(fields: {
   url: string
   title: string
   summary: string
+  visualSummary?: VisualSummary
 }): Promise<string> {
   const res = await fetch(
     `${FIRESTORE_EMULATOR_URL}/v1/projects/${PROJECT_ID}/databases/(default)/documents/bookmarks`,
@@ -20,6 +23,21 @@ export async function seedBookmark(fields: {
           url: { stringValue: fields.url },
           title: { stringValue: fields.title },
           summary: { stringValue: fields.summary },
+          ...(fields.visualSummary
+            ? {
+                visualSummary: {
+                  mapValue: {
+                    fields: {
+                      sourceHash: {
+                        stringValue: createHash('sha256').update(fields.summary).digest('hex'),
+                      },
+                      summaryVersion: { nullValue: null },
+                      json: { stringValue: JSON.stringify(fields.visualSummary) },
+                    },
+                  },
+                },
+              }
+            : {}),
           createdAt: { timestampValue: new Date().toISOString() },
         },
       }),

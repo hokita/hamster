@@ -1,4 +1,7 @@
 import { FieldValue, getFirestore, Timestamp } from 'firebase-admin/firestore'
+import { createHash, randomUUID } from 'node:crypto'
+import { parseVisualSummary } from '../visualSummary'
+import type { VisualSummary } from '../visualSummary'
 
 export interface BookmarkDoc {
   id: string
@@ -6,6 +9,8 @@ export interface BookmarkDoc {
   title: string
   faviconUrl?: string
   summary?: string
+  summaryVersion?: string
+  visualSummary?: VisualSummary
   labels?: string[]
   // Always present, unlike the optional fields above: a bookmark is either read or not, and
   // "the field is missing" is not a third state a caller should have to think about. Documents
@@ -40,12 +45,14 @@ export async function createBookmark(
 
 // Shared by listBookmarks and getBookmark. Returns null for any document that doesn't carry the
 // fields the app requires, so one malformed document can't break a whole listing.
-function toBookmark(id: string, data: unknown): BookmarkDoc | null {
+function toBookmark(id: string, data: unknown, includeVisual = true): BookmarkDoc | null {
   const doc = data as {
     url?: unknown
     title?: unknown
     faviconUrl?: unknown
     summary?: unknown
+    summaryVersion?: unknown
+    visualSummary?: { sourceHash?: unknown; summaryVersion?: unknown; json?: unknown }
     labels?: unknown
     isRead?: unknown
     createdAt?: { toDate?: () => Date }
@@ -57,6 +64,22 @@ function toBookmark(id: string, data: unknown): BookmarkDoc | null {
   ) {
     return null
   }
+  let visualSummary: VisualSummary | undefined
+  const saved = doc.visualSummary
+  if (
+    includeVisual &&
+    typeof doc.summary === 'string' &&
+    saved?.sourceHash === createHash('sha256').update(doc.summary).digest('hex') &&
+    saved.summaryVersion === (doc.summaryVersion ?? null) &&
+    typeof saved.json === 'string' &&
+    saved.json.length <= 60_000
+  ) {
+    try {
+      visualSummary = parseVisualSummary(JSON.parse(saved.json))
+    } catch {
+      /* Ignore corrupt/stale saved UI. */
+    }
+  }
   // faviconUrl and summary are deliberately absent from the validation above: every document
   // written before those fields existed lacks them, and gating on them would drop the entire
   // back catalogue.
@@ -66,6 +89,8 @@ function toBookmark(id: string, data: unknown): BookmarkDoc | null {
     title: doc.title,
     ...(typeof doc.faviconUrl === 'string' ? { faviconUrl: doc.faviconUrl } : {}),
     ...(typeof doc.summary === 'string' ? { summary: doc.summary } : {}),
+    ...(typeof doc.summaryVersion === 'string' ? { summaryVersion: doc.summaryVersion } : {}),
+    ...(visualSummary ? { visualSummary } : {}),
     ...(Array.isArray(doc.labels) && doc.labels.every((label) => typeof label === 'string')
       ? { labels: doc.labels as string[] }
       : {}),
@@ -100,7 +125,42 @@ export async function updateSummary(id: string, summary: string): Promise<void> 
   // a client can transiently observe a summary from one run paired with labels from the other.
   // That pairing is still both from the same, current regeneration attempt, never a previous page
   // version's labels, and it self-heals the next time either run's labels write lands.
-  await db.collection('bookmarks').doc(id).update({ summary, labels: FieldValue.delete() })
+  await db.collection('bookmarks').doc(id).update({
+    summary,
+    summaryVersion: randomUUID(),
+    labels: FieldValue.delete(),
+    visualSummary: FieldValue.delete(),
+  })
+}
+
+// Compare and write atomically: a concurrent regeneration/deletion must not save obsolete UI.
+export async function saveVisualSummary(
+  id: string,
+  source: string,
+  summaryVersion: string | undefined,
+  value: VisualSummary
+): Promise<boolean> {
+  const visualSummary = parseVisualSummary(value)
+  const json = JSON.stringify(visualSummary)
+  if (json.length > 60_000) throw new Error('Visual summary is too large to save')
+  const db = getFirestore()
+  const ref = db.collection('bookmarks').doc(id)
+  return db.runTransaction(async (transaction) => {
+    const snap = await transaction.get(ref)
+    const current = snap.data()
+    if (!snap.exists || current?.summary !== source || current?.summaryVersion !== summaryVersion)
+      return false
+    // Firestore does not support nested arrays (comparison rows), so store validated JSON as
+    // a string rather than writing its object directly. No generated executable code is stored.
+    transaction.update(ref, {
+      visualSummary: {
+        sourceHash: createHash('sha256').update(source).digest('hex'),
+        summaryVersion: summaryVersion ?? null,
+        json,
+      },
+    })
+    return true
+  })
 }
 
 // Firestore's status code for "no document to update" (google.rpc.Code.NOT_FOUND). update()
@@ -171,7 +231,7 @@ export async function listBookmarks(): Promise<BookmarkDoc[]> {
   const snap = await db.collection('bookmarks').orderBy('createdAt', 'desc').get()
   const bookmarks: BookmarkDoc[] = []
   for (const doc of snap.docs) {
-    const bookmark = toBookmark(doc.id, doc.data())
+    const bookmark = toBookmark(doc.id, doc.data(), false)
     if (bookmark) bookmarks.push(bookmark)
   }
   return bookmarks

@@ -9,6 +9,8 @@ import VisualSummaryView from './VisualSummary'
 interface Props {
   bookmarkId: string
   summary: string
+  summaryVersion?: string
+  saved?: VisualSummary
   disabled?: boolean
 }
 
@@ -17,14 +19,19 @@ export default function VisualSummaryPanel(props: Props) {
   // ultimately stays identical). This also resets native checkbox/details state immediately.
   return (
     <VisualSummarySession
-      key={JSON.stringify([props.bookmarkId, props.summary, Boolean(props.disabled)])}
+      key={JSON.stringify([
+        props.bookmarkId,
+        props.summary,
+        props.summaryVersion,
+        Boolean(props.disabled),
+      ])}
       {...props}
     />
   )
 }
 
-function VisualSummarySession({ bookmarkId, summary, disabled }: Props) {
-  const [value, setValue] = useState<VisualSummary | null>(null)
+function VisualSummarySession({ bookmarkId, summary, saved, disabled }: Props) {
+  const [value, setValue] = useState<VisualSummary | null>(disabled ? null : (saved ?? null))
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const request = useRef<AbortController | null>(null)
@@ -65,7 +72,9 @@ function VisualSummarySession({ bookmarkId, summary, disabled }: Props) {
             ? 'The saved summary changed. Reload this page and try again.'
             : controller.signal.aborted || message === 'API error: 504'
               ? 'Visual summary timed out. Try again.'
-              : "Couldn't generate a visual summary. Try again."
+              : message === 'API error: 500'
+                ? "Couldn't save the visual summary. Try again."
+                : "Couldn't generate a visual summary. Try again."
       )
     } finally {
       clearTimeout(timeout)

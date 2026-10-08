@@ -80,7 +80,8 @@ blocks the summary, and regenerating a summary regenerates the labels too.
 ## Visual summaries (Generative UI)
 
 A saved summary, including one created before this feature, offers **Generate visual summary**.
-Nothing is generated on page load. Clicking sends the saved text to Gemini, which chooses useful
+Previously generated UI is restored from Firestore on page load without a Gemini call. If none
+is saved, clicking sends the saved text to Gemini, which chooses useful
 blocks and their order: key-point cards, comparison tables, checkable procedures, and expandable
 Q&A. A summary can use just one type; comparisons and procedures are requested only when the
 source explicitly supports them. The original text summary stays readable throughout generation
@@ -108,8 +109,9 @@ code units):
 
 `POST /api/bookmarks/:id/visual-summary` uses the existing Firebase authentication and verified
 email allowlist. It accepts no prompt or summary in the body and reads the saved summary from
-Firestore. It returns `{ "visualSummary": { "blocks": [...] }, "source": "…" }` without writing
-anything. Missing bookmarks return `404`, missing/changed summaries `409`, oversized saved text
+Firestore. It saves the validated JSON before returning
+`{ "visualSummary": { "blocks": [...] }, "source": "…" }`. If valid saved UI exists, it returns
+that UI without calling Gemini, even without an API key. Missing bookmarks return `404`, missing/changed summaries `409`, oversized saved text
 `422`, missing `GEMINI_API_KEY` `503`, generation/validation failures `502`, and generation
 timeouts `504`. Database failures return `500`. The SDK request and server wait are bounded at
 30 seconds; the browser stops waiting at 35 seconds. Failure shows an error and **Try again**,
@@ -118,19 +120,28 @@ and duplicate clicks are disabled.
 Only predefined React components render the JSON. All generated strings are escaped text nodes;
 HTML, JavaScript and JSX are never evaluated. Checkboxes have labels, Q&A uses native
 `details`/`summary` controls, loading/errors are announced, and wide tables scroll within a
-keyboard-focusable region on phones. Generated UI, checked steps and open questions live only
-in the current page session. Navigation, source changes, and starting summary regeneration
-clear them and cancel the client wait. Late responses are ignored, and a response whose source
+keyboard-focusable region on phones. Generated UI is persisted; checked steps and open questions
+live only in the current page session. Navigation resets these operations and restores saved UI
+when revisiting. Source changes and starting summary regeneration clear the current UI and
+cancel the client wait. Late responses are ignored, and a response whose source
 differs from the text on screen asks the reader to reload rather than replacing newer text.
 
-Each explicit generation or retry can add one paid Gemini request, using only the saved summary
+Each explicit generation or retry when no valid saved UI exists can add one paid Gemini request, using only the saved summary
 as input, with LOW thinking and an 8,192-token output budget (including thinking). Viewing a page,
 checking steps, expanding Q&A or rereading an already generated UI adds no Gemini cost. Concurrent
 requests for the same bookmark and saved text share a request within one server process; this
-does not deduplicate across Cloud Run instances. There is no persistent cache, so revisiting and
-generating again costs another call. Actual charges depend on token usage and
+does not deduplicate across Cloud Run instances. Reopening saved UI adds no Gemini calls. Saving
+uses a Firestore transaction; restoring uses the existing bookmark detail read. Actual charges depend on token usage and
 [Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing); aborting a client wait does not
-guarantee cancellation of billable server work. There are no automatic retries.
+guarantee cancellation of billable server work. There are no automatic retries. A storage failure
+returns `500` and leaves the text summary intact; retry may incur another Gemini call.
+
+Persisted UI contains a source SHA-256 hash, summary version and validated JSON string (Firestore
+does not support nested arrays such as comparison rows). Every detail read revalidates the JSON
+and rejects mismatched source/version or corrupt data. The list response omits the UI payload.
+Updating the summary atomically deletes saved UI and changes the version, including identical-text
+regenerations. A save transaction checks both text and version, so late generations cannot overwrite
+an updated summary or recreate a deleted bookmark. Legacy summaries require no migration.
 
 The prompt forbids adding unsupported facts, numbers or steps, and treats saved content as
 untrusted data. Structural validation does not prove factual accuracy: a visual summary can

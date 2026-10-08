@@ -5,7 +5,11 @@ const { verifyIdToken, generate } = vi.hoisted(() => ({
   generate: vi.fn(),
 }))
 vi.mock('firebase-admin/auth', () => ({ getAuth: () => ({ verifyIdToken }) }))
-vi.mock('../services/firestore', () => ({ getBookmark: vi.fn(), updateSummary: vi.fn() }))
+vi.mock('../services/firestore', () => ({
+  getBookmark: vi.fn(),
+  updateSummary: vi.fn(),
+  saveVisualSummary: vi.fn(),
+}))
 vi.mock('../services/visualSummarizer', async () => {
   const actual = await vi.importActual<typeof import('../services/visualSummarizer')>(
     '../services/visualSummarizer'
@@ -36,6 +40,7 @@ beforeEach(() => {
   process.env.ALLOWED_EMAILS = 'reader@example.com'
   verifyIdToken.mockResolvedValue({ email: 'reader@example.com', email_verified: true })
   vi.mocked(db.getBookmark).mockResolvedValue(bookmark)
+  vi.mocked(db.saveVisualSummary).mockResolvedValue(true)
   generate.mockResolvedValue(visualSummary)
 })
 afterEach(() => {
@@ -49,12 +54,18 @@ const post = (app = createApp()) =>
   request(app).post('/api/bookmarks/1/visual-summary').set('Authorization', 'Bearer token')
 
 describe('POST visual-summary', () => {
-  it('uses only saved text, returns its source, and never fetches an article or persists UI', async () => {
+  it('uses only saved text, persists validated UI, and returns its source', async () => {
     const res = await post()
     expect(res.status).toBe(200)
     expect(res.body).toEqual({ source: bookmark.summary, visualSummary })
     expect(generate).toHaveBeenCalledWith(bookmark.summary)
     expect(db.updateSummary).not.toHaveBeenCalled()
+    expect(db.saveVisualSummary).toHaveBeenCalledWith(
+      '1',
+      bookmark.summary,
+      undefined,
+      visualSummary
+    )
   })
   it('requires existing authentication before reading or generating', async () => {
     expect((await request(createApp()).post('/api/bookmarks/1/visual-summary')).status).toBe(401)
@@ -104,18 +115,25 @@ describe('POST visual-summary', () => {
     vi.mocked(db.getBookmark).mockRejectedValueOnce(new Error('db failed'))
     expect((await post()).status).toBe(500)
     expect(generate).not.toHaveBeenCalled()
-    vi.mocked(db.getBookmark)
-      .mockResolvedValueOnce(bookmark)
-      .mockRejectedValueOnce(new Error('db failed'))
+    vi.mocked(db.saveVisualSummary).mockRejectedValueOnce(new Error('db failed'))
     expect((await post()).status).toBe(500)
   })
-  it.each([null, { ...bookmark, summary: 'Updated summary.' }])(
-    'discards a result after deletion or summary replacement: %#',
-    async (current) => {
-      vi.mocked(db.getBookmark).mockResolvedValueOnce(bookmark).mockResolvedValueOnce(current)
-      expect((await post()).status).toBe(409)
-    }
-  )
+  it('discards a result if the storage transaction detects deletion or summary replacement', async () => {
+    vi.mocked(db.saveVisualSummary).mockResolvedValueOnce(false)
+    expect((await post()).status).toBe(409)
+  })
+  it('returns saved UI without a Gemini call, even when the key is unset', async () => {
+    delete process.env.GEMINI_API_KEY
+    vi.mocked(db.getBookmark).mockResolvedValue({
+      ...bookmark,
+      visualSummary: visualSummary as import('../visualSummary').VisualSummary,
+    })
+    const result = await post()
+    expect(result.status).toBe(200)
+    expect(result.body).toEqual({ source: bookmark.summary, visualSummary })
+    expect(generate).not.toHaveBeenCalled()
+    expect(db.saveVisualSummary).not.toHaveBeenCalled()
+  })
   it('shares an in-flight call for identical saved summaries, then permits regeneration', async () => {
     const app = createApp()
     let resolve!: (value: typeof visualSummary) => void

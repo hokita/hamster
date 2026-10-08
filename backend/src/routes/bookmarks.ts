@@ -346,11 +346,15 @@ export function createBookmarksRouter(): Router {
       res.status(422).json({ error: 'Saved summary is too long to visualize' })
       return
     }
+    if (bookmark.visualSummary) {
+      res.json({ visualSummary: bookmark.visualSummary, source })
+      return
+    }
     if (!process.env.GEMINI_API_KEY?.trim()) {
       res.status(503).json({ error: 'Visual summary is not configured' })
       return
     }
-    const key = JSON.stringify([bookmark.id, source])
+    const key = JSON.stringify([bookmark.id, source, bookmark.summaryVersion])
     let generation = visualInFlight.get(key)
     if (!generation) {
       generation = generateVisualSummary(source)
@@ -372,15 +376,16 @@ export function createBookmarksRouter(): Router {
       }
       return
     }
-    // A regeneration elsewhere can replace the stored text while Gemini is working.
+    // The transaction checks the source/version and saves the JSON in one atomic step.
     try {
-      const current = await db.getBookmark(bookmark.id)
-      if (!current || current.summary !== source) {
+      if (
+        !(await db.saveVisualSummary(bookmark.id, source, bookmark.summaryVersion, visualSummary))
+      ) {
         res.status(409).json({ error: 'Saved summary changed; reload and try again' })
         return
       }
     } catch {
-      res.status(500).json({ error: 'Failed to load bookmark' })
+      res.status(500).json({ error: 'Failed to save visual summary' })
       return
     }
     res.json({ visualSummary, source })

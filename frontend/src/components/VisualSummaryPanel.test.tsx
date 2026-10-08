@@ -44,6 +44,18 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers())
 
 describe('VisualSummaryPanel', () => {
+  it('restores saved UI on mount without a Gemini request and resets only interaction state on revisiting', () => {
+    const view = render(<VisualSummaryPanel bookmarkId="1" summary={source} saved={value} />)
+    expect(screen.getByText('Supported fact.')).toBeInTheDocument()
+    expect(api.generateVisualSummary).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('checkbox', { name: '1. Read the summary' }))
+    fireEvent.click(screen.getByText('What is covered?'))
+    view.rerender(<VisualSummaryPanel bookmarkId="2" summary={source} />)
+    view.rerender(<VisualSummaryPanel bookmarkId="1" summary={source} saved={value} />)
+    expect(screen.getByRole('checkbox', { name: '1. Read the summary' })).not.toBeChecked()
+    expect(screen.getByText('What is covered?').closest('details')).not.toHaveAttribute('open')
+    expect(api.generateVisualSummary).not.toHaveBeenCalled()
+  })
   it('does not generate on mount and renders only the selected blocks after clicking', async () => {
     vi.mocked(api.generateVisualSummary).mockResolvedValue({
       source,
@@ -75,6 +87,7 @@ describe('VisualSummaryPanel', () => {
     ['API error: 503', 'GEMINI_API_KEY'],
     ['API error: 504', 'timed out'],
     ['API error: 409', 'saved summary changed'],
+    ['API error: 500', "Couldn't save the visual summary"],
   ])('shows a helpful failure and permits retry: %s', async (error, message) => {
     vi.mocked(api.generateVisualSummary).mockRejectedValueOnce(new Error(error))
     render(<VisualSummaryPanel bookmarkId="1" summary={source} />)

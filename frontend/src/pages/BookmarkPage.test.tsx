@@ -59,6 +59,44 @@ describe('visual summary on the bookmark page', () => {
     expect(screen.getByText(source)).toBeInTheDocument()
   })
 
+  it('does not restore saved UI after regenerating an identical text summary', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...bookmark,
+      summary: source,
+      labels: [],
+      summaryVersion: 'v1',
+      visualSummary,
+    })
+    vi.mocked(api.generateSummary).mockResolvedValue({ summary: source, labels: [] })
+    renderPage()
+    await screen.findByText('Visual fact.')
+    fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Generate visual summary' })).toBeEnabled()
+    )
+    expect(screen.queryByText('Visual fact.')).not.toBeInTheDocument()
+  })
+
+  it('drops saved UI when translation discovers a fresher source summary', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...bookmark,
+      summary: source,
+      labels: [],
+      visualSummary,
+    })
+    vi.mocked(api.translateSummary).mockResolvedValue({
+      source: 'New saved summary.',
+      translation: '新しい要約。',
+      labels: [],
+    })
+    renderPage()
+    await screen.findByText('Visual fact.')
+    fireEvent.click(screen.getByRole('button', { name: 'Translate to Japanese' }))
+    await screen.findByText('新しい要約。')
+    expect(screen.queryByText('Visual fact.')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Generate visual summary' })).toBeEnabled()
+  })
+
   it('retires the visual result as soon as regeneration starts, while keeping the text', async () => {
     vi.mocked(api.generateSummary).mockReturnValue(new Promise(() => {}))
     renderPage()

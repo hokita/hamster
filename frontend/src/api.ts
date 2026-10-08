@@ -7,6 +7,8 @@ export interface Bookmark {
   title: string
   faviconUrl?: string
   summary?: string
+  summaryVersion?: string
+  visualSummary?: VisualSummary
   labels?: string[]
   // Always sent by the backend, which reads a missing stored field as false — so the UI never has
   // to treat "unknown" as a third state alongside read and unread.
