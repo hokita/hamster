@@ -1,4 +1,5 @@
 import { auth } from './firebase'
+import type { VisualSummary } from '../../backend/src/visualSummary'
 
 export interface Bookmark {
   id: string
@@ -72,4 +73,12 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ messages }),
     }),
+  generateVisualSummary: (id: string, signal?: AbortSignal) =>
+    request<{ visualSummary: VisualSummary; source: string }>(
+      `/api/bookmarks/${id}/visual-summary`,
+      {
+        method: 'POST',
+        signal,
+      }
+    ),
 }

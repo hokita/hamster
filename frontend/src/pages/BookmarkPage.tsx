@@ -22,6 +22,7 @@ import { describeBookmark } from '../bookmarkLabel'
 import DeleteBookmarkButton from '../components/DeleteBookmarkButton'
 import ReadToggleButton from '../components/ReadToggleButton'
 import ArticleChat from '../components/ArticleChat'
+import VisualSummaryPanel from '../components/VisualSummaryPanel'
 
 // Generation of the new whole-article summaries can take up to the backend's 45s timeout.
 // Polling every 2 seconds for up to 60 seconds (30 attempts) ensures the window outlives
@@ -727,6 +728,14 @@ export default function BookmarkPage() {
             {isGenerating ? 'Generating…' : generateFailed ? 'Try again' : 'Generate summary'}
           </button>
         </div>
+      )}
+
+      {bookmark.summary && (
+        <VisualSummaryPanel
+          bookmarkId={bookmark.id}
+          summary={bookmark.summary}
+          disabled={isGenerating}
+        />
       )}
 
       {/* Under the summary, where the reader ends up once they have read it — marking something

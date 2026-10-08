@@ -4,11 +4,25 @@ import * as db from '../services/firestore'
 import type { BookmarkDoc } from '../services/firestore'
 import { fetchMetadata } from '../services/metadataFetcher'
 import { fetchArticleText } from '../services/articleFetcher'
-import { summarize, isSummarizerConfigured, SummarizerUnavailableError } from '../services/summarizer'
+import {
+  summarize,
+  isSummarizerConfigured,
+  SummarizerUnavailableError,
+} from '../services/summarizer'
 import { generateLabels } from '../services/labeler'
 import { answerQuestion, isChatConfigured, ChatUnavailableError } from '../services/articleChat'
 import type { ChatMessage } from '../services/articleChat'
-import { translate, isTranslatorConfigured, TranslatorUnavailableError } from '../services/translator'
+import {
+  translate,
+  isTranslatorConfigured,
+  TranslatorUnavailableError,
+} from '../services/translator'
+import {
+  generateVisualSummary,
+  MAX_VISUAL_SOURCE_LENGTH,
+  VisualSummaryUnavailableError,
+} from '../services/visualSummarizer'
+import type { VisualSummary } from '../visualSummary'
 
 // Thrown when the linked page could not be read (blocked, non-HTML, 404/500, network failure, ...).
 // A sentinel rather than a plain Error so the shared in-flight promise's rejection can still be
@@ -55,6 +69,8 @@ export function createBookmarksRouter(): Router {
   // for a distributed lock with its own failure modes (stale leases, lease-holder crashes) — real
   // cost for a single-user app where the occasional duplicate Gemini call is cheap to tolerate.
   const inFlight = new Map<string, Promise<{ summary: string; labels: string[] | null }>>()
+  // Only concurrent requests for the same saved text share a call. No persisted UI/cache.
+  const visualInFlight = new Map<string, Promise<VisualSummary>>()
 
   function generateSummary(
     bookmark: BookmarkDoc
@@ -299,6 +315,75 @@ export function createBookmarksRouter(): Router {
         res.status(502).json({ error: 'Failed to translate the summary' })
       }
     }
+  })
+
+  router.post('/:id/visual-summary', async (req: Request, res: Response) => {
+    // There is no prompt input, even for an authenticated caller.
+    if (
+      req.body &&
+      (typeof req.body !== 'object' || Array.isArray(req.body) || Object.keys(req.body).length > 0)
+    ) {
+      res.status(400).json({ error: 'This endpoint accepts no request body' })
+      return
+    }
+    let bookmark
+    try {
+      bookmark = await db.getBookmark(req.params.id)
+    } catch {
+      res.status(500).json({ error: 'Failed to load bookmark' })
+      return
+    }
+    if (!bookmark) {
+      res.status(404).json({ error: 'Bookmark not found' })
+      return
+    }
+    const source = bookmark.summary
+    if (!source?.trim()) {
+      res.status(409).json({ error: 'Bookmark has no summary to visualize' })
+      return
+    }
+    if (source.length > MAX_VISUAL_SOURCE_LENGTH) {
+      res.status(422).json({ error: 'Saved summary is too long to visualize' })
+      return
+    }
+    if (!process.env.GEMINI_API_KEY?.trim()) {
+      res.status(503).json({ error: 'Visual summary is not configured' })
+      return
+    }
+    const key = JSON.stringify([bookmark.id, source])
+    let generation = visualInFlight.get(key)
+    if (!generation) {
+      generation = generateVisualSummary(source)
+      visualInFlight.set(key, generation)
+      const cleanup = () => visualInFlight.delete(key)
+      generation.then(cleanup, cleanup)
+    }
+    let visualSummary
+    try {
+      visualSummary = await generation
+    } catch (error) {
+      console.error(`visual summary failed for bookmark ${bookmark.id}:`, error)
+      if (error instanceof VisualSummaryUnavailableError) {
+        res.status(503).json({ error: 'Visual summary is not configured' })
+      } else if (error instanceof Error && error.name === 'TimeoutError') {
+        res.status(504).json({ error: 'Visual summary timed out' })
+      } else {
+        res.status(502).json({ error: 'Failed to generate a visual summary' })
+      }
+      return
+    }
+    // A regeneration elsewhere can replace the stored text while Gemini is working.
+    try {
+      const current = await db.getBookmark(bookmark.id)
+      if (!current || current.summary !== source) {
+        res.status(409).json({ error: 'Saved summary changed; reload and try again' })
+        return
+      }
+    } catch {
+      res.status(500).json({ error: 'Failed to load bookmark' })
+      return
+    }
+    res.json({ visualSummary, source })
   })
 
   // The chat is not persisted, so the client sends the whole conversation each time and this

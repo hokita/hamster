@@ -77,6 +77,73 @@ lighter `gemini-3.5-flash-lite` model from the same page content. Labels appear 
 in the list and on each bookmark's page. They are best-effort: a labelling failure never
 blocks the summary, and regenerating a summary regenerates the labels too.
 
+## Visual summaries (Generative UI)
+
+A saved summary, including one created before this feature, offers **Generate visual summary**.
+Nothing is generated on page load. Clicking sends the saved text to Gemini, which chooses useful
+blocks and their order: key-point cards, comparison tables, checkable procedures, and expandable
+Q&A. A summary can use just one type; comparisons and procedures are requested only when the
+source explicitly supports them. The original text summary stays readable throughout generation
+and after failure. The visual summary uses the saved summary's language, even when its Japanese
+translation is currently displayed.
+
+The implementation uses the existing `@google/genai` SDK (locked at 2.16.0) and
+`gemini-3.8-flash`, with `models.generateContent`, `responseMimeType: 'application/json'` and
+`responseJsonSchema`. Compatibility was checked against Google's
+[model documentation](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash),
+[structured-output guide](https://ai.google.dev/gemini-api/docs/structured-output), and
+[SDK configuration reference](https://googleapis.github.io/js-genai/release_docs/interfaces/types.GenerateContentConfig.html).
+The backend validates the parsed JSON independently: 1–6 blocks, only the four permitted types,
+no extra fields, non-empty text, and the following limits (string lengths use JavaScript UTF-16
+code units):
+
+| Content | Limit |
+|---|---|
+| Block/card titles and column headings | 120 characters |
+| Card text, steps and answers | 1,200 characters |
+| Questions / table cells | 200 / 400 characters |
+| Cards / steps / Q&A per block | 6 / 10 / 6 |
+| Comparison columns / rows | 2–5 / 2–8; every row must match the column count |
+| Saved input / generated JSON | 40,000 / 60,000 characters; oversized input is rejected, never truncated |
+
+`POST /api/bookmarks/:id/visual-summary` uses the existing Firebase authentication and verified
+email allowlist. It accepts no prompt or summary in the body and reads the saved summary from
+Firestore. It returns `{ "visualSummary": { "blocks": [...] }, "source": "…" }` without writing
+anything. Missing bookmarks return `404`, missing/changed summaries `409`, oversized saved text
+`422`, missing `GEMINI_API_KEY` `503`, generation/validation failures `502`, and generation
+timeouts `504`. Database failures return `500`. The SDK request and server wait are bounded at
+30 seconds; the browser stops waiting at 35 seconds. Failure shows an error and **Try again**,
+and duplicate clicks are disabled.
+
+Only predefined React components render the JSON. All generated strings are escaped text nodes;
+HTML, JavaScript and JSX are never evaluated. Checkboxes have labels, Q&A uses native
+`details`/`summary` controls, loading/errors are announced, and wide tables scroll within a
+keyboard-focusable region on phones. Generated UI, checked steps and open questions live only
+in the current page session. Navigation, source changes, and starting summary regeneration
+clear them and cancel the client wait. Late responses are ignored, and a response whose source
+differs from the text on screen asks the reader to reload rather than replacing newer text.
+
+Each explicit generation or retry can add one paid Gemini request, using only the saved summary
+as input, with LOW thinking and an 8,192-token output budget (including thinking). Viewing a page,
+checking steps, expanding Q&A or rereading an already generated UI adds no Gemini cost. Concurrent
+requests for the same bookmark and saved text share a request within one server process; this
+does not deduplicate across Cloud Run instances. There is no persistent cache, so revisiting and
+generating again costs another call. Actual charges depend on token usage and
+[Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing); aborting a client wait does not
+guarantee cancellation of billable server work. There are no automatic retries.
+
+The prompt forbids adding unsupported facts, numbers or steps, and treats saved content as
+untrusted data. Structural validation does not prove factual accuracy: a visual summary can
+still reflect errors in the saved summary or in the model's rearrangement. Compare it with the
+original text when accuracy matters. Updates in other tabs are noticed when the page next reads
+the bookmark or when generation detects a source mismatch; this feature adds no background polling.
+
+Validation includes backend schema/service/authenticated-route tests, frontend loading/retry,
+safe-text and stale-response tests, and Playwright tests for mobile layout and keyboard-operated
+checkbox/Q&A controls. Run the existing `npm test`, `npm run build`, and `npm run lint` in both
+`backend` and `frontend`, and `npm test` in `e2e`. Gemini is mocked in automated tests; no live API
+key or paid call is required.
+
 ## Translating a summary
 
 An English summary carries a **Translate to Japanese** button beside **Regenerate**. It sends the
@@ -169,7 +236,7 @@ Open http://localhost:5173 and sign in — locally, sign-in goes through the Aut
 | `FIREBASE_PROJECT_ID` | Firebase project ID (`demo-hamster` for local dev — no real GCP project needed) |
 | `FRONTEND_URL` | Frontend origin for CORS |
 | `PORT` | Port the backend listens on |
-| `GEMINI_API_KEY` | Gemini API key used to generate bookmark summaries, translate them into Japanese, and answer article and general questions (all are disabled when unset) |
+| `GEMINI_API_KEY` | Gemini API key used to generate bookmark summaries and visual summaries, translate summaries into Japanese, and answer article and general questions (all are disabled when unset) |
 | `FIRESTORE_EMULATOR_HOST` | Host:port of the Firestore emulator (routes the Admin SDK to it instead of production) |
 | `FIREBASE_AUTH_EMULATOR_HOST` | Host:port of the Auth emulator (routes the Admin SDK to it instead of production) |
 
