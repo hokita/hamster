@@ -95,7 +95,7 @@ test.describe('bookmark summary page', () => {
 })
 
 for (const width of [390, 1280]) {
-  test(`keeps article previews to two lines at ${width}px`, async ({ page }) => {
+  test(`keeps article previews to one line at ${width}px`, async ({ page }) => {
     await clearFirestore()
     await page.setViewportSize({ width, height: 844 })
     const overview =
@@ -110,7 +110,7 @@ for (const width of [390, 1280]) {
       lineHeight: Number.parseFloat(getComputedStyle(element).lineHeight),
       contentHeight: element.scrollHeight,
     }))
-    expect(dimensions.height).toBeLessThanOrEqual(dimensions.lineHeight * 2 + 1)
+    expect(dimensions.height).toBeLessThanOrEqual(dimensions.lineHeight + 1)
     expect(dimensions.contentHeight).toBeGreaterThan(dimensions.height)
 
     await page.getByRole('link', { name: /Long article/ }).click()
