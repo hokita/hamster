@@ -1,4 +1,5 @@
 import { auth } from './firebase'
+import type { VisualSummary } from '../../backend/src/visualSummary'
 
 export interface Bookmark {
   id: string
@@ -6,6 +7,8 @@ export interface Bookmark {
   title: string
   faviconUrl?: string
   summary?: string
+  summaryVersion?: string
+  visualSummary?: VisualSummary
   labels?: string[]
   // Always sent by the backend, which reads a missing stored field as false — so the UI never has
   // to treat "unknown" as a third state alongside read and unread.
@@ -72,4 +75,12 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ messages }),
     }),
+  generateVisualSummary: (id: string, signal?: AbortSignal) =>
+    request<{ visualSummary: VisualSummary; source: string }>(
+      `/api/bookmarks/${id}/visual-summary`,
+      {
+        method: 'POST',
+        signal,
+      }
+    ),
 }

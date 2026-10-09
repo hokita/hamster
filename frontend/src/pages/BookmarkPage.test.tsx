@@ -10,6 +10,7 @@ vi.mock('../api', () => ({
     setReadState: vi.fn(),
     askQuestion: vi.fn(),
     translateSummary: vi.fn(),
+    generateVisualSummary: vi.fn(),
   },
 }))
 
@@ -35,6 +36,95 @@ function renderPage() {
     </MemoryRouter>
   )
 }
+
+describe('visual summary on the bookmark page', () => {
+  const source = 'A saved summary.'
+  const visualSummary = {
+    blocks: [
+      { type: 'cards' as const, title: 'Points', items: [{ title: 'A', text: 'Visual fact.' }] },
+    ],
+  }
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(api.getBookmark).mockResolvedValue({ ...bookmark, summary: source, labels: [] })
+    vi.mocked(api.generateVisualSummary).mockResolvedValue({ source, visualSummary })
+  })
+
+  it('supports legacy saved summaries without generating on page display', async () => {
+    renderPage()
+    const button = await screen.findByRole('button', { name: 'Generate visual summary' })
+    expect(api.generateVisualSummary).not.toHaveBeenCalled()
+    fireEvent.click(button)
+    expect(await screen.findByText('Visual fact.')).toBeInTheDocument()
+    expect(screen.getByText(source)).toBeInTheDocument()
+  })
+
+  it('does not restore saved UI after regenerating an identical text summary', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...bookmark,
+      summary: source,
+      labels: [],
+      summaryVersion: 'v1',
+      visualSummary,
+    })
+    vi.mocked(api.generateSummary).mockResolvedValue({ summary: source, labels: [] })
+    renderPage()
+    await screen.findByText('Visual fact.')
+    fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Generate visual summary' })).toBeEnabled()
+    )
+    expect(screen.queryByText('Visual fact.')).not.toBeInTheDocument()
+  })
+
+  it('drops saved UI when translation discovers a fresher source summary', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...bookmark,
+      summary: source,
+      labels: [],
+      visualSummary,
+    })
+    vi.mocked(api.translateSummary).mockResolvedValue({
+      source: 'New saved summary.',
+      translation: '新しい要約。',
+      labels: [],
+    })
+    renderPage()
+    await screen.findByText('Visual fact.')
+    fireEvent.click(screen.getByRole('button', { name: 'Translate to Japanese' }))
+    await screen.findByText('新しい要約。')
+    expect(screen.queryByText('Visual fact.')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Generate visual summary' })).toBeEnabled()
+  })
+
+  it('retires the visual result as soon as regeneration starts, while keeping the text', async () => {
+    vi.mocked(api.generateSummary).mockReturnValue(new Promise(() => {}))
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: 'Generate visual summary' }))
+    await screen.findByText('Visual fact.')
+    fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }))
+    expect(screen.queryByText('Visual fact.')).not.toBeInTheDocument()
+    expect(screen.getByText(source)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Generate visual summary' })).toBeDisabled()
+  })
+
+  it('ignores a pending visual response when regenerated text arrives', async () => {
+    let resolve!: (result: { source: string; visualSummary: typeof visualSummary }) => void
+    vi.mocked(api.generateVisualSummary).mockReturnValue(
+      new Promise((r) => {
+        resolve = r
+      })
+    )
+    vi.mocked(api.generateSummary).mockResolvedValue({ summary: 'Updated summary.', labels: [] })
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: 'Generate visual summary' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }))
+    await screen.findByText('Updated summary.')
+    await act(async () => resolve({ source, visualSummary }))
+    expect(screen.queryByText('Visual fact.')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Generate visual summary' })).toBeEnabled()
+  })
+})
 
 describe('BookmarkPage', () => {
   beforeEach(() => {
@@ -1030,9 +1120,7 @@ describe('article chat', () => {
 
   it('offers a question box once the bookmark has loaded', async () => {
     renderPage()
-    expect(
-      await screen.findByRole('textbox', { name: 'Ask a question' })
-    ).toBeInTheDocument()
+    expect(await screen.findByRole('textbox', { name: 'Ask a question' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Ask' })).toBeInTheDocument()
   })
 
@@ -1040,10 +1128,9 @@ describe('article chat', () => {
     vi.mocked(api.askQuestion).mockResolvedValue({ answer: 'An answer.' })
     renderPage()
 
-    fireEvent.change(
-      await screen.findByRole('textbox', { name: 'Ask a question' }),
-      { target: { value: 'A question?' } }
-    )
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Ask a question' }), {
+      target: { value: 'A question?' },
+    })
     fireEvent.click(screen.getByRole('button', { name: 'Ask' }))
 
     await screen.findByText('An answer.')

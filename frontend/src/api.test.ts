@@ -13,6 +13,24 @@ beforeEach(() => {
   mockFetch.mockReset()
 })
 
+describe('api.generateVisualSummary', () => {
+  it('posts only an authenticated bookmark id, forwards cancellation and returns the source', async () => {
+    const result = { source: 'Saved summary.', visualSummary: { blocks: [] } }
+    mockFetch.mockResolvedValue({ ok: true, json: async () => result })
+    const controller = new AbortController()
+    expect(await api.generateVisualSummary('1', controller.signal)).toEqual(result)
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/bookmarks/1/visual-summary'),
+      expect.objectContaining({
+        method: 'POST',
+        signal: controller.signal,
+        headers: expect.objectContaining({ Authorization: 'Bearer fake-token' }),
+      })
+    )
+    expect(mockFetch.mock.calls[0][1].body).toBeUndefined()
+  })
+})
+
 describe('api.listBookmarks', () => {
   it('fetches bookmarks with an auth header', async () => {
     mockFetch.mockResolvedValue({
@@ -135,9 +153,9 @@ describe('api.askQuestion', () => {
 
   it('throws when answering fails', async () => {
     mockFetch.mockResolvedValue({ ok: false, status: 502 })
-    await expect(
-      api.askQuestion('1', [{ role: 'user', text: 'Question?' }])
-    ).rejects.toThrow('API error: 502')
+    await expect(api.askQuestion('1', [{ role: 'user', text: 'Question?' }])).rejects.toThrow(
+      'API error: 502'
+    )
   })
 })
 

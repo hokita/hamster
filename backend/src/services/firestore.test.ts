@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { createHash } from 'node:crypto'
+import type { VisualSummary } from '../visualSummary'
 
 const mockGet = vi.fn()
 const mockAdd = vi.fn()
@@ -6,6 +8,11 @@ const mockOrderBy = vi.fn(() => ({ get: mockGet }))
 const mockDocGet = vi.fn()
 const mockUpdate = vi.fn()
 const mockDelete = vi.fn()
+const mockTransactionGet = vi.fn()
+const mockTransactionUpdate = vi.fn()
+const mockRunTransaction = vi.fn(async (callback) =>
+  callback({ get: mockTransactionGet, update: mockTransactionUpdate })
+)
 const mockDoc = vi.fn(() => ({ get: mockDocGet, update: mockUpdate, delete: mockDelete }))
 const mockSelect = vi.fn(() => ({ get: mockGet }))
 const mockCollection = vi.fn(() => ({
@@ -17,7 +24,7 @@ const mockCollection = vi.fn(() => ({
 const fixedDate = new Date('2024-01-01T00:00:00.000Z')
 
 vi.mock('firebase-admin/firestore', () => ({
-  getFirestore: () => ({ collection: mockCollection }),
+  getFirestore: () => ({ collection: mockCollection, runTransaction: mockRunTransaction }),
   Timestamp: { now: () => ({ toDate: () => fixedDate }) },
   FieldValue: { delete: () => 'DELETE_SENTINEL' },
 }))
@@ -31,6 +38,7 @@ import {
   listAllLabels,
   deleteBookmark,
   setReadState,
+  saveVisualSummary,
 } from './firestore'
 
 beforeEach(() => {
@@ -227,7 +235,12 @@ describe('updateSummary', () => {
     await updateSummary('abc', 'A summary.')
 
     expect(mockDoc).toHaveBeenCalledWith('abc')
-    expect(mockUpdate).toHaveBeenCalledWith({ summary: 'A summary.', labels: 'DELETE_SENTINEL' })
+    expect(mockUpdate).toHaveBeenCalledWith({
+      summary: 'A summary.',
+      summaryVersion: expect.any(String),
+      labels: 'DELETE_SENTINEL',
+      visualSummary: 'DELETE_SENTINEL',
+    })
   })
 })
 
@@ -520,5 +533,102 @@ describe('setReadState', () => {
     mockUpdate.mockRejectedValue(Object.assign(new Error('permission denied'), { code: 7 }))
 
     await expect(setReadState('abc', true)).rejects.toThrow('permission denied')
+  })
+})
+
+describe('visual summary persistence', () => {
+  const source = 'Saved summary.'
+  const value: VisualSummary = {
+    blocks: [
+      {
+        type: 'comparison',
+        title: 'Options',
+        columns: ['Option', 'Price'],
+        rows: [
+          ['A', '$10'],
+          ['B', '$20'],
+        ],
+      },
+    ],
+  }
+  const saved = {
+    sourceHash: createHash('sha256').update(source).digest('hex'),
+    summaryVersion: 'v1',
+    json: JSON.stringify(value),
+  }
+  const data = {
+    url: 'https://example.com',
+    title: 'Article',
+    summary: source,
+    summaryVersion: 'v1',
+    visualSummary: saved,
+    createdAt: { toDate: () => fixedDate },
+  }
+
+  it('restores validated saved JSON through the detail read but omits it from the list', async () => {
+    mockDocGet.mockResolvedValue({ exists: true, id: '1', data: () => data })
+    expect((await getBookmark('1'))?.visualSummary).toEqual(value)
+    mockGet.mockResolvedValue({ docs: [{ id: '1', data: () => data }] })
+    expect((await listBookmarks())[0].visualSummary).toBeUndefined()
+  })
+  it.each([
+    { ...saved, sourceHash: 'wrong' },
+    { ...saved, summaryVersion: 'v0' },
+    { ...saved, json: '{invalid' },
+    { ...saved, json: '{"blocks":[]}' },
+    { ...saved, json: 'x'.repeat(60_001) },
+  ])(
+    'ignores stale, corrupt or oversized persisted UI without hiding the summary: %#',
+    async (visualSummary) => {
+      mockDocGet.mockResolvedValue({
+        exists: true,
+        id: '1',
+        data: () => ({ ...data, visualSummary }),
+      })
+      const result = await getBookmark('1')
+      expect(result?.summary).toBe(source)
+      expect(result?.visualSummary).toBeUndefined()
+    }
+  )
+  it('atomically saves JSON as a string, including comparison rows with nested arrays', async () => {
+    mockTransactionGet.mockResolvedValue({ exists: true, data: () => data })
+    expect(await saveVisualSummary('1', source, 'v1', value)).toBe(true)
+    expect(mockTransactionUpdate).toHaveBeenCalledWith(expect.anything(), { visualSummary: saved })
+  })
+  it.each([
+    { exists: false, data: () => undefined },
+    { exists: true, data: () => ({ ...data, summary: 'Updated summary.' }) },
+    { exists: true, data: () => ({ ...data, summaryVersion: 'v2' }) },
+  ])('never writes obsolete UI or resurrects a deleted article: %#', async (snapshot) => {
+    mockTransactionGet.mockResolvedValue(snapshot)
+    expect(await saveVisualSummary('1', source, 'v1', value)).toBe(false)
+    expect(mockTransactionUpdate).not.toHaveBeenCalled()
+  })
+  it('supports legacy summaries with no version field', async () => {
+    mockTransactionGet.mockResolvedValue({ exists: true, data: () => ({ summary: source }) })
+    expect(await saveVisualSummary('1', source, undefined, value)).toBe(true)
+    const stored = mockTransactionUpdate.mock.calls[0][1].visualSummary
+    expect(stored.summaryVersion).toBeNull()
+    mockDocGet.mockResolvedValue({
+      exists: true,
+      id: '1',
+      data: () => ({ ...data, summaryVersion: undefined, visualSummary: stored }),
+    })
+    expect((await getBookmark('1'))?.visualSummary).toEqual(value)
+  })
+  it('rejects invalid persisted input and propagates storage failure', async () => {
+    await expect(saveVisualSummary('1', source, 'v1', { blocks: [] })).rejects.toThrow()
+    expect(mockTransactionUpdate).not.toHaveBeenCalled()
+    mockRunTransaction.mockRejectedValueOnce(new Error('storage unavailable'))
+    await expect(saveVisualSummary('1', source, 'v1', value)).rejects.toThrow('storage unavailable')
+  })
+  it('invalidates saved UI and changes the version even when summary text is regenerated identically', async () => {
+    mockUpdate.mockResolvedValue(undefined)
+    await updateSummary('1', source)
+    await updateSummary('1', source)
+    const first = mockUpdate.mock.calls[0][0]
+    const second = mockUpdate.mock.calls[1][0]
+    expect(first.visualSummary).toBe('DELETE_SENTINEL')
+    expect(first.summaryVersion).not.toBe(second.summaryVersion)
   })
 })

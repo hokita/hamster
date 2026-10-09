@@ -22,6 +22,7 @@ import { describeBookmark } from '../bookmarkLabel'
 import DeleteBookmarkButton from '../components/DeleteBookmarkButton'
 import ReadToggleButton from '../components/ReadToggleButton'
 import ArticleChat from '../components/ArticleChat'
+import VisualSummaryPanel from '../components/VisualSummaryPanel'
 
 // Generation of the new whole-article summaries can take up to the backend's 45s timeout.
 // Polling every 2 seconds for up to 60 seconds (30 attempts) ensures the window outlives
@@ -347,7 +348,8 @@ export default function BookmarkPage() {
           // the endless re-polling the check above guards against either: this compares values,
           // so once applied, the next identical response is discarded as unchanged.
           const readAdvanced = reconciled.isRead !== bookmark.isRead
-          if (!summaryAdvanced && !labelsAdvanced && !readAdvanced) return
+          const versionAdvanced = reconciled.summaryVersion !== bookmark.summaryVersion
+          if (!summaryAdvanced && !labelsAdvanced && !readAdvanced && !versionAdvanced) return
           setBookmark(reconciled)
           if (summaryAdvanced || (labelsAdvanced && reconciled.labels)) {
             // A fresh labels write proves a generation run completed server-side even when the
@@ -395,7 +397,11 @@ export default function BookmarkPage() {
       // outdated chips for text they no longer describe, so they must be dropped too.
       const { summary, labels } = await api.generateSummary(requestedId)
       if (requestedId !== latestId.current) return
-      setBookmark((previous) => (previous ? { ...previous, summary, labels } : previous))
+      setBookmark((previous) =>
+        previous
+          ? { ...previous, summary, labels, visualSummary: undefined, summaryVersion: undefined }
+          : previous
+      )
     } catch {
       if (requestedId !== latestId.current) return
       // A failed request does not prove nothing was written: the summary is persisted before the
@@ -475,7 +481,13 @@ export default function BookmarkPage() {
             // the rest of the visit — with both present, the poll skips this bookmark entirely.
             // Adopting an absent `labels` is right too; the poll then resumes to wait for them,
             // which is what it already does for any bookmark whose labels have not landed yet.
-            { ...previous, summary: source, labels }
+            {
+              ...previous,
+              summary: source,
+              labels,
+              visualSummary: undefined,
+              summaryVersion: undefined,
+            }
           : previous
       )
       setTranslation({ source, text })
@@ -727,6 +739,16 @@ export default function BookmarkPage() {
             {isGenerating ? 'Generating…' : generateFailed ? 'Try again' : 'Generate summary'}
           </button>
         </div>
+      )}
+
+      {bookmark.summary && (
+        <VisualSummaryPanel
+          bookmarkId={bookmark.id}
+          summary={bookmark.summary}
+          summaryVersion={bookmark.summaryVersion}
+          saved={bookmark.visualSummary}
+          disabled={isGenerating}
+        />
       )}
 
       {/* Under the summary, where the reader ends up once they have read it — marking something
