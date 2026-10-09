@@ -396,6 +396,36 @@ describe('BookmarkList summary previews', () => {
     )
   })
 
+  it.each(['- ', '* ', '+ ', '1. ', '1) ', '・', '## '])(
+    'stops legacy previews at a %s boundary without a blank line',
+    (marker) => {
+      renderList({
+        bookmarks: [
+          { ...bookmarks[0], summary: `This article explains widgets.\n${marker}Hidden details.` },
+        ],
+      })
+
+      const link = screen.getByRole('link', { name: /Example Site/ })
+      expect(link).toHaveTextContent('This article explains widgets.')
+      expect(link).not.toHaveTextContent('Hidden details.')
+    }
+  )
+
+  it('keeps soft line breaks within the opening paragraph', () => {
+    renderList({
+      bookmarks: [
+        {
+          ...bookmarks[0],
+          summary: 'First overview sentence.\r\nSecond overview sentence.\r\n  - Hidden details.',
+        },
+      ],
+    })
+
+    const link = screen.getByRole('link', { name: /Example Site/ })
+    expect(link).toHaveTextContent('First overview sentence. Second overview sentence.')
+    expect(link).not.toHaveTextContent('Hidden details.')
+  })
+
   it('keeps untrusted Markdown links, images and HTML out of the preview', () => {
     const { container } = renderList({
       bookmarks: [

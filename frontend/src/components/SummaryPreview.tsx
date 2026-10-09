@@ -6,9 +6,11 @@ interface SummaryPreviewProps {
 }
 
 export default function SummaryPreview({ summary, isSummarizing }: SummaryPreviewProps) {
-  // Generated summaries start with an overview. Keep the preview to that paragraph so the
-  // article's key points and takeaway remain on its detail page.
-  const overview = summary?.trim().split(/\n\s*\n/)[0]
+  // Stop at the first paragraph, heading or list boundary. Legacy summaries do not always
+  // leave a blank line before their bullets, including Japanese "・" bullets.
+  const overview = summary
+    ?.trim()
+    .split(/\r?\n(?:[ \t]*\r?\n|[ \t]*(?:#{1,6}[ \t]+|[-+*][ \t]+|・[ \t]*|\d+[.)][ \t]+))/)[0]
 
   if (!overview) {
     return (
