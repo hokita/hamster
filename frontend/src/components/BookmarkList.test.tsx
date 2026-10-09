@@ -389,6 +389,11 @@ describe('BookmarkList summary previews', () => {
 
     expect(screen.getByText('testing', { selector: 'strong' })).toBeInTheDocument()
     expect(screen.getByText('別の記事の概要です。')).toBeInTheDocument()
+    expect(screen.getByText('別の記事の概要です。').closest('[lang]')).toHaveAttribute('lang', 'ja')
+    expect(screen.getByText('testing', { selector: 'strong' }).closest('[lang]')).toHaveAttribute(
+      'lang',
+      'en'
+    )
     expect(screen.queryByText('Key points')).not.toBeInTheDocument()
     expect(screen.queryByText('Details.')).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: /Example Site/ })).toHaveTextContent(

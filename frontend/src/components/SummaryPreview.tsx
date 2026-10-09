@@ -1,4 +1,5 @@
 import ReactMarkdown from 'react-markdown'
+import { textLanguage } from '../textLanguage'
 
 interface SummaryPreviewProps {
   summary?: string
@@ -21,7 +22,10 @@ export default function SummaryPreview({ summary, isSummarizing }: SummaryPrevie
   }
 
   return (
-    <span className="mt-1 block line-clamp-2 text-sm leading-5 text-gray-600">
+    <span
+      lang={textLanguage(overview)}
+      className="mt-1 block line-clamp-2 text-sm leading-5 text-gray-600"
+    >
       <ReactMarkdown
         // The preview sits inside the row link. Unwrap Markdown links to avoid nested anchors,
         // and discard images and raw HTML so article content cannot initiate network requests.
