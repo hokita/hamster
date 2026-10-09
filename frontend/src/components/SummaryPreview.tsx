@@ -18,7 +18,10 @@ export default function SummaryPreview({ shortSummary, isSummarizing }: SummaryP
   }
 
   return (
-    <span lang={textLanguage(text)} className="mt-1 block truncate text-sm leading-5 text-gray-600">
+    <span
+      lang={textLanguage(text)}
+      className="mt-1 block break-words text-sm leading-5 text-gray-600"
+    >
       {text}
     </span>
   )

@@ -95,17 +95,18 @@ test.describe('bookmark summary page', () => {
 })
 
 for (const width of [390, 1280]) {
-  test(`keeps article previews to one line at ${width}px`, async ({ page }) => {
+  test(`shows the complete short sentence at ${width}px`, async ({ page }) => {
     await clearFirestore()
     await page.setViewportSize({ width, height: 844 })
     const overview =
       'Engineering leaders need to balance delivery speed with professional growth. '.repeat(12)
+    const sentence =
+      'The article explains how engineering leaders can balance faster delivery with thoughtful practice that builds architectural judgment, debugging skills, and long-term professional growth.'
     await seedBookmark({
       url: 'https://example.com',
       title: 'Long article',
       summary: overview,
-      shortSummary:
-        'Balance fast delivery with developing engineering judgment and long-term professional growth through thoughtful practice.',
+      shortSummary: sentence,
     })
     await signIn(page)
 
@@ -114,11 +115,15 @@ for (const width of [390, 1280]) {
     const dimensions = await preview.evaluate((element) => ({
       height: element.getBoundingClientRect().height,
       lineHeight: Number.parseFloat(getComputedStyle(element).lineHeight),
-      width: element.getBoundingClientRect().width,
+      contentHeight: element.scrollHeight,
+      clientHeight: element.clientHeight,
+      width: element.clientWidth,
       contentWidth: element.scrollWidth,
     }))
-    expect(dimensions.height).toBeLessThanOrEqual(dimensions.lineHeight + 1)
-    expect(dimensions.contentWidth).toBeGreaterThan(dimensions.width)
+    await expect(preview).toHaveText(sentence)
+    expect(dimensions.contentHeight).toBeLessThanOrEqual(dimensions.clientHeight + 1)
+    expect(dimensions.contentWidth).toBeLessThanOrEqual(dimensions.width + 1)
+    if (width === 390) expect(dimensions.height).toBeGreaterThan(dimensions.lineHeight)
     await expect(page.getByText(overview.trim(), { exact: true })).not.toBeVisible()
 
     await page.getByRole('link', { name: /Long article/ }).click()

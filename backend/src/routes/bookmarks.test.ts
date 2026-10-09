@@ -27,7 +27,9 @@ vi.mock('../services/summarizer', async () => {
     SummarizerUnavailableError: actual.SummarizerUnavailableError,
   }
 })
-vi.mock('../services/shortSummarizer', () => ({ summarizeShort: vi.fn() }))
+vi.mock('../services/shortSummarizer', () => ({
+  summarizeShort: vi.fn().mockResolvedValue(undefined),
+}))
 vi.mock('../services/labeler', () => ({
   generateLabels: vi.fn(),
 }))
@@ -1031,6 +1033,30 @@ describe('separate list summaries', () => {
     expect(db.updateSummary).toHaveBeenCalledWith('1', res.body.summary, res.body.shortSummary)
   })
 
+  it('starts short generation while detailed generation is still pending', async () => {
+    let finishDetailed!: (summary: string) => void
+    vi.mocked(summarize).mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishDetailed = resolve
+      })
+    )
+    vi.mocked(summarizeShort).mockResolvedValueOnce('A complete short sentence.')
+    const response = request(app)
+      .post('/api/bookmarks/1/summary')
+      .then((res) => res)
+
+    await vi.waitFor(() => expect(summarizeShort).toHaveBeenCalledWith('Example', 'Article body'))
+    expect(db.updateSummary).not.toHaveBeenCalled()
+    finishDetailed('Detailed summary.')
+    const res = await response
+    expect(res.status).toBe(200)
+    expect(db.updateSummary).toHaveBeenCalledWith(
+      '1',
+      'Detailed summary.',
+      'A complete short sentence.'
+    )
+  })
+
   it('still stores detailed text and clears stale short text when short generation fails', async () => {
     vi.mocked(summarizeShort).mockRejectedValueOnce(new Error('Gemini unavailable'))
     const res = await request(app).post('/api/bookmarks/1/summary')
@@ -1051,6 +1077,6 @@ describe('separate list summaries', () => {
 
     expect(res.status).toBe(502)
     expect(db.updateSummary).not.toHaveBeenCalled()
-    expect(summarizeShort).not.toHaveBeenCalled()
+    expect(summarizeShort).toHaveBeenCalledWith('Example', 'Article body')
   })
 })

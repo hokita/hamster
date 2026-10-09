@@ -81,15 +81,17 @@ export function createBookmarksRouter(): Router {
       const text = await fetchArticleText(bookmark.url)
       if (!text) throw new ArticleUnreadableError()
 
-      const summary = await summarize(bookmark.title, text)
-      // A separate, concise model output for the list. Its failure must not lose the detailed
-      // summary; storing them together also clears any stale short summary from a previous run.
-      let shortSummary: string | undefined
-      try {
-        shortSummary = await summarizeShort(bookmark.title, text)
-      } catch (error) {
-        console.error(`short summary generation failed for bookmark ${bookmark.id}:`, error)
-      }
+      // Start both calls together so the additional short-summary call cannot extend the
+      // detailed-summary write beyond the detail page's existing polling window.
+      const [summary, shortSummary] = await Promise.all([
+        summarize(bookmark.title, text),
+        summarizeShort(bookmark.title, text).catch((error) => {
+          // A short-summary failure must not lose the detailed summary. The atomic write below
+          // clears any stale short summary from the previous article version in that case.
+          console.error(`short summary generation failed for bookmark ${bookmark.id}:`, error)
+          return undefined
+        }),
+      ])
 
       try {
         await db.updateSummary(bookmark.id, summary, shortSummary)
