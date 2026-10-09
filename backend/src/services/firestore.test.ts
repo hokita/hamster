@@ -227,7 +227,11 @@ describe('updateSummary', () => {
     await updateSummary('abc', 'A summary.')
 
     expect(mockDoc).toHaveBeenCalledWith('abc')
-    expect(mockUpdate).toHaveBeenCalledWith({ summary: 'A summary.', labels: 'DELETE_SENTINEL' })
+    expect(mockUpdate).toHaveBeenCalledWith({
+      summary: 'A summary.',
+      shortSummary: 'DELETE_SENTINEL',
+      labels: 'DELETE_SENTINEL',
+    })
   })
 })
 
@@ -521,4 +525,38 @@ describe('setReadState', () => {
 
     await expect(setReadState('abc', true)).rejects.toThrow('permission denied')
   })
+})
+
+describe('separate summary storage', () => {
+  it('writes both summaries atomically while clearing old labels', async () => {
+    mockUpdate.mockResolvedValue(undefined)
+    await updateSummary('abc', 'Detailed summary.', 'Short summary.')
+    expect(mockUpdate).toHaveBeenCalledWith({
+      summary: 'Detailed summary.',
+      shortSummary: 'Short summary.',
+      labels: 'DELETE_SENTINEL',
+    })
+  })
+
+  it.each(['A short summary.', undefined, 42])(
+    'reads the optional short summary safely: %s',
+    async (shortSummary) => {
+      const data = {
+        url: 'https://example.com',
+        title: 'Example',
+        summary: 'Detailed summary.',
+        shortSummary,
+        createdAt: { toDate: () => fixedDate },
+      }
+      mockDocGet.mockResolvedValue({ exists: true, id: 'abc', data: () => data })
+      mockGet.mockResolvedValue({ docs: [{ id: 'abc', data: () => data }] })
+
+      for (const bookmark of [await getBookmark('abc'), ...(await listBookmarks())]) {
+        expect(bookmark?.summary).toBe('Detailed summary.')
+        expect(bookmark?.shortSummary).toBe(
+          typeof shortSummary === 'string' ? shortSummary : undefined
+        )
+      }
+    }
+  )
 })

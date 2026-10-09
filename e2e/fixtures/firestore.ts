@@ -9,6 +9,7 @@ export async function seedBookmark(fields: {
   url: string
   title: string
   summary: string
+  shortSummary?: string
 }): Promise<string> {
   const res = await fetch(
     `${FIRESTORE_EMULATOR_URL}/v1/projects/${PROJECT_ID}/databases/(default)/documents/bookmarks`,
@@ -20,6 +21,7 @@ export async function seedBookmark(fields: {
           url: { stringValue: fields.url },
           title: { stringValue: fields.title },
           summary: { stringValue: fields.summary },
+          ...(fields.shortSummary ? { shortSummary: { stringValue: fields.shortSummary } } : {}),
           createdAt: { timestampValue: new Date().toISOString() },
         },
       }),

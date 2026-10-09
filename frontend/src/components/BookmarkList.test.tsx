@@ -378,91 +378,62 @@ describe('empty state', () => {
   })
 })
 
-describe('BookmarkList summary previews', () => {
-  it('shows each article overview without the rest of its summary', () => {
-    renderList({
-      bookmarks: [
-        { ...bookmarks[0], summary: 'An overview of **testing**.\n\n## Key points\n- Details.' },
-        { ...bookmarks[0], id: '2', title: 'Other article', summary: '別の記事の概要です。' },
-      ],
-    })
-
-    expect(screen.getByText('testing', { selector: 'strong' })).toBeInTheDocument()
-    expect(screen.getByText('別の記事の概要です。')).toBeInTheDocument()
-    expect(screen.getByText('別の記事の概要です。').closest('[lang]')).toHaveAttribute('lang', 'ja')
-    expect(screen.getByText('testing', { selector: 'strong' }).closest('[lang]')).toHaveAttribute(
-      'lang',
-      'en'
-    )
-    expect(screen.queryByText('Key points')).not.toBeInTheDocument()
-    expect(screen.queryByText('Details.')).not.toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /Example Site/ })).toHaveTextContent(
-      'An overview of testing.'
-    )
-  })
-
-  it.each(['- ', '* ', '+ ', '1. ', '1) ', '・', '## '])(
-    'stops legacy previews at a %s boundary without a blank line',
-    (marker) => {
-      renderList({
-        bookmarks: [
-          { ...bookmarks[0], summary: `This article explains widgets.\n${marker}Hidden details.` },
-        ],
-      })
-
-      const link = screen.getByRole('link', { name: /Example Site/ })
-      expect(link).toHaveTextContent('This article explains widgets.')
-      expect(link).not.toHaveTextContent('Hidden details.')
-    }
-  )
-
-  it('keeps soft line breaks within the opening paragraph', () => {
+describe('BookmarkList separate short summaries', () => {
+  it('shows the short summary and keeps detailed content on the article page', () => {
     renderList({
       bookmarks: [
         {
           ...bookmarks[0],
-          summary: 'First overview sentence.\r\nSecond overview sentence.\r\n  - Hidden details.',
+          shortSummary: 'A concise takeaway.',
+          summary: 'Detailed overview.\n\n## Key points\n- Full details.',
+        },
+        {
+          ...bookmarks[0],
+          id: '2',
+          title: 'Other article',
+          shortSummary: '別の記事の要点です。',
+          summary: '記事の詳しい内容。',
         },
       ],
     })
 
-    const link = screen.getByRole('link', { name: /Example Site/ })
-    expect(link).toHaveTextContent('First overview sentence. Second overview sentence.')
-    expect(link).not.toHaveTextContent('Hidden details.')
+    expect(screen.getByText('A concise takeaway.')).toBeInTheDocument()
+    expect(screen.queryByText(/Detailed overview/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Full details/)).not.toBeInTheDocument()
+    expect(screen.getByText('別の記事の要点です。').closest('[lang]')).toHaveAttribute('lang', 'ja')
+    expect(screen.getByText('A concise takeaway.').closest('[lang]')).toHaveAttribute('lang', 'en')
   })
 
-  it('keeps untrusted Markdown links, images and HTML out of the preview', () => {
+  it('renders generated short text safely without interpreting HTML or Markdown', () => {
     const { container } = renderList({
       bookmarks: [
         {
           ...bookmarks[0],
-          summary:
-            '[Overview](https://untrusted.example) ![image](https://untrusted.example/a.png) <img src="https://untrusted.example/b.png">',
+          shortSummary:
+            '[Overview](https://untrusted.example) <img src="https://untrusted.example/a.png">',
         },
       ],
     })
-
-    expect(screen.getByText('Overview')).toBeInTheDocument()
     expect(container.querySelector('a a')).toBeNull()
     expect(container.querySelector('[src^="https://untrusted.example"]')).toBeNull()
     expect(screen.getAllByRole('link')).toHaveLength(2)
   })
 
-  it('explains missing summaries and updates when generation finishes', () => {
-    const { rerender } = renderList({ bookmarks, summarizingIds: new Set(['1']) })
-    expect(screen.getByText('Your summary will appear here.')).toBeInTheDocument()
-
-    rerender(
-      <MemoryRouter>
-        <BookmarkList bookmarks={[{ ...bookmarks[0], summary: 'The finished overview.' }]} />
-      </MemoryRouter>
-    )
-    expect(screen.getByText('The finished overview.')).toBeInTheDocument()
-    expect(screen.queryByText('Your summary will appear here.')).not.toBeInTheDocument()
+  it('does not use the detailed summary as a fallback for legacy articles', () => {
+    renderList({ bookmarks: [{ ...bookmarks[0], summary: 'An old detailed summary.' }] })
+    expect(screen.queryByText('An old detailed summary.')).not.toBeInTheDocument()
+    expect(screen.getByText('Open article to generate a short summary.')).toBeInTheDocument()
   })
 
-  it('offers generation on the detail page for missing or blank summaries', () => {
-    renderList({ bookmarks: [{ ...bookmarks[0], summary: '  ' }] })
-    expect(screen.getByText('Open article to generate a summary.')).toBeInTheDocument()
+  it('updates when the separate short summary arrives', () => {
+    const { rerender } = renderList({ bookmarks, summarizingIds: new Set(['1']) })
+    expect(screen.getByText('Your summary will appear here.')).toBeInTheDocument()
+    rerender(
+      <MemoryRouter>
+        <BookmarkList bookmarks={[{ ...bookmarks[0], shortSummary: 'The concise takeaway.' }]} />
+      </MemoryRouter>
+    )
+    expect(screen.getByText('The concise takeaway.')).toBeInTheDocument()
+    expect(screen.queryByText('Your summary will appear here.')).not.toBeInTheDocument()
   })
 })

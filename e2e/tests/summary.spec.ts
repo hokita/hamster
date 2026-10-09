@@ -100,7 +100,13 @@ for (const width of [390, 1280]) {
     await page.setViewportSize({ width, height: 844 })
     const overview =
       'Engineering leaders need to balance delivery speed with professional growth. '.repeat(12)
-    await seedBookmark({ url: 'https://example.com', title: 'Long article', summary: overview })
+    await seedBookmark({
+      url: 'https://example.com',
+      title: 'Long article',
+      summary: overview,
+      shortSummary:
+        'Balance fast delivery with developing engineering judgment and long-term professional growth through thoughtful practice.',
+    })
     await signIn(page)
 
     const preview = page.getByRole('link', { name: /Long article/ }).locator('span[lang]')
@@ -108,10 +114,12 @@ for (const width of [390, 1280]) {
     const dimensions = await preview.evaluate((element) => ({
       height: element.getBoundingClientRect().height,
       lineHeight: Number.parseFloat(getComputedStyle(element).lineHeight),
-      contentHeight: element.scrollHeight,
+      width: element.getBoundingClientRect().width,
+      contentWidth: element.scrollWidth,
     }))
     expect(dimensions.height).toBeLessThanOrEqual(dimensions.lineHeight + 1)
-    expect(dimensions.contentHeight).toBeGreaterThan(dimensions.height)
+    expect(dimensions.contentWidth).toBeGreaterThan(dimensions.width)
+    await expect(page.getByText(overview.trim(), { exact: true })).not.toBeVisible()
 
     await page.getByRole('link', { name: /Long article/ }).click()
     await expect(page.getByText(overview.trim(), { exact: true })).toBeVisible()

@@ -234,7 +234,7 @@ export default function BookmarkList({
                     {bookmark.isRead && <span> · Read</span>}
                   </span>
                   <SummaryPreview
-                    summary={bookmark.summary}
+                    shortSummary={bookmark.shortSummary}
                     isSummarizing={summarizingIds?.has(bookmark.id)}
                   />
                   {bookmark.labels && bookmark.labels.length > 0 && (
