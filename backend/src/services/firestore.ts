@@ -6,6 +6,7 @@ export interface BookmarkDoc {
   title: string
   faviconUrl?: string
   summary?: string
+  shortSummary?: string
   labels?: string[]
   // Always present, unlike the optional fields above: a bookmark is either read or not, and
   // "the field is missing" is not a third state a caller should have to think about. Documents
@@ -46,6 +47,7 @@ function toBookmark(id: string, data: unknown): BookmarkDoc | null {
     title?: unknown
     faviconUrl?: unknown
     summary?: unknown
+    shortSummary?: unknown
     labels?: unknown
     isRead?: unknown
     createdAt?: { toDate?: () => Date }
@@ -66,6 +68,7 @@ function toBookmark(id: string, data: unknown): BookmarkDoc | null {
     title: doc.title,
     ...(typeof doc.faviconUrl === 'string' ? { faviconUrl: doc.faviconUrl } : {}),
     ...(typeof doc.summary === 'string' ? { summary: doc.summary } : {}),
+    ...(typeof doc.shortSummary === 'string' ? { shortSummary: doc.shortSummary } : {}),
     ...(Array.isArray(doc.labels) && doc.labels.every((label) => typeof label === 'string')
       ? { labels: doc.labels as string[] }
       : {}),
@@ -85,7 +88,11 @@ export async function getBookmark(id: string): Promise<BookmarkDoc | null> {
   return toBookmark(snap.id, snap.data())
 }
 
-export async function updateSummary(id: string, summary: string): Promise<void> {
+export async function updateSummary(
+  id: string,
+  summary: string,
+  shortSummary?: string
+): Promise<void> {
   const db = getFirestore()
   // Within one process, a stored document can never pair a new summary with the previous
   // page-version's labels: the labeler runs afterward and may fail (network, quota, a bad
@@ -100,7 +107,16 @@ export async function updateSummary(id: string, summary: string): Promise<void> 
   // a client can transiently observe a summary from one run paired with labels from the other.
   // That pairing is still both from the same, current regeneration attempt, never a previous page
   // version's labels, and it self-heals the next time either run's labels write lands.
-  await db.collection('bookmarks').doc(id).update({ summary, labels: FieldValue.delete() })
+  // Both summaries belong to the same fetched article. Clear the previous short summary when
+  // its replacement fails, rather than attaching an outdated teaser to a fresh detailed summary.
+  await db
+    .collection('bookmarks')
+    .doc(id)
+    .update({
+      summary,
+      shortSummary: shortSummary ?? FieldValue.delete(),
+      labels: FieldValue.delete(),
+    })
 }
 
 // Firestore's status code for "no document to update" (google.rpc.Code.NOT_FOUND). update()

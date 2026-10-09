@@ -6,6 +6,7 @@ export interface Bookmark {
   title: string
   faviconUrl?: string
   summary?: string
+  shortSummary?: string
   labels?: string[]
   // Always sent by the backend, which reads a missing stored field as false — so the UI never has
   // to treat "unknown" as a third state alongside read and unread.
@@ -54,9 +55,12 @@ export const api = {
       body: JSON.stringify({ isRead }),
     }),
   generateSummary: (id: string) =>
-    request<{ summary: string; labels?: string[] }>(`/api/bookmarks/${id}/summary`, {
-      method: 'POST',
-    }),
+    request<{ summary: string; shortSummary?: string; labels?: string[] }>(
+      `/api/bookmarks/${id}/summary`,
+      {
+        method: 'POST',
+      }
+    ),
   // No body: the backend translates the summary it has stored, so a caller cannot push arbitrary
   // text into a paid Gemini call. The result is not persisted — see the route. `source` is the
   // summary that was translated, which need not be the one the caller had on screen.

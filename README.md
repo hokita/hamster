@@ -56,9 +56,14 @@ generation still running for a deleted bookmark fails its own write rather than 
 
 ## Summaries
 
-The article list shows a one-line preview of each saved summary’s opening overview. Open an
-article to read the full summary or generate one if it is missing. Previews update when automatic
-generation finishes and keep the summary’s original language.
+The article list and article page use separate AI summaries. The list shows one concise, complete
+sentence, stored as `shortSummary`, that wraps naturally without a line limit or character cutoff.
+The article page shows the detailed Markdown `summary`. Both are generated from the same fetched
+article when a bookmark is saved or regenerated; the short version uses the lighter
+`gemini-3.5-flash-lite` model.
+Older bookmarks keep their detailed summaries; use **Regenerate** on the article page to add the
+short version. A short-summary failure never loses the detailed summary, and regeneration clears
+any stale short summary if a fresh one could not be generated.
 
 Each bookmark has its own page at `/bookmarks/:id` showing a summary of the linked
 article — an overview paragraph, a "Key points" section of four to six bullet points, and a

@@ -27,6 +27,9 @@ vi.mock('../services/summarizer', async () => {
     SummarizerUnavailableError: actual.SummarizerUnavailableError,
   }
 })
+vi.mock('../services/shortSummarizer', () => ({
+  summarizeShort: vi.fn().mockResolvedValue(undefined),
+}))
 vi.mock('../services/labeler', () => ({
   generateLabels: vi.fn(),
 }))
@@ -53,10 +56,19 @@ import { createBookmarksRouter } from './bookmarks'
 import * as db from '../services/firestore'
 import { fetchMetadata } from '../services/metadataFetcher'
 import { fetchArticleText } from '../services/articleFetcher'
-import { summarize, isSummarizerConfigured, SummarizerUnavailableError } from '../services/summarizer'
+import {
+  summarize,
+  isSummarizerConfigured,
+  SummarizerUnavailableError,
+} from '../services/summarizer'
 import { generateLabels } from '../services/labeler'
+import { summarizeShort } from '../services/shortSummarizer'
 import { answerQuestion, isChatConfigured, ChatUnavailableError } from '../services/articleChat'
-import { translate, isTranslatorConfigured, TranslatorUnavailableError } from '../services/translator'
+import {
+  translate,
+  isTranslatorConfigured,
+  TranslatorUnavailableError,
+} from '../services/translator'
 
 const app = express()
 app.use(express.json())
@@ -342,7 +354,11 @@ describe('POST /api/bookmarks/:id/summary', () => {
     expect(res.body).toEqual({ summary: 'A summary.\n- one\n- two\n- three' })
     expect(fetchArticleText).toHaveBeenCalledWith('https://example.com')
     expect(summarize).toHaveBeenCalledWith('Example', 'Article body')
-    expect(db.updateSummary).toHaveBeenCalledWith('1', 'A summary.\n- one\n- two\n- three')
+    expect(db.updateSummary).toHaveBeenCalledWith(
+      '1',
+      'A summary.\n- one\n- two\n- three',
+      undefined
+    )
   })
 
   it('regenerates even when a summary already exists', async () => {
@@ -354,7 +370,7 @@ describe('POST /api/bookmarks/:id/summary', () => {
 
     expect(res.status).toBe(200)
     expect(res.body).toEqual({ summary: 'New summary.' })
-    expect(db.updateSummary).toHaveBeenCalledWith('1', 'New summary.')
+    expect(db.updateSummary).toHaveBeenCalledWith('1', 'New summary.', undefined)
   })
 
   it('returns 404 for an unknown id', async () => {
@@ -494,8 +510,12 @@ describe('POST /api/bookmarks/:id/summary — concurrent dedup', () => {
 
     // supertest/superagent requests don't dispatch until `.then`/`.end` is called, so kick both off
     // immediately by chaining `.then` rather than merely assigning the (lazy) request objects.
-    const req1 = request(app).post('/api/bookmarks/1/summary').then((r) => r)
-    const req2 = request(app).post('/api/bookmarks/1/summary').then((r) => r)
+    const req1 = request(app)
+      .post('/api/bookmarks/1/summary')
+      .then((r) => r)
+    const req2 = request(app)
+      .post('/api/bookmarks/1/summary')
+      .then((r) => r)
 
     // Give both requests a chance to reach the summarize call before it resolves.
     await new Promise((r) => setTimeout(r, 20))
@@ -553,8 +573,12 @@ describe('POST /api/bookmarks/:id/summary — concurrent dedup', () => {
     const gen = deferred<string>()
     vi.mocked(summarize).mockReturnValue(gen.promise)
 
-    const req1 = request(app).post('/api/bookmarks/1/summary').then((r) => r)
-    const req2 = request(app).post('/api/bookmarks/1/summary').then((r) => r)
+    const req1 = request(app)
+      .post('/api/bookmarks/1/summary')
+      .then((r) => r)
+    const req2 = request(app)
+      .post('/api/bookmarks/1/summary')
+      .then((r) => r)
 
     await new Promise((r) => setTimeout(r, 20))
     gen.reject(new SummarizerUnavailableError())
@@ -570,8 +594,12 @@ describe('POST /api/bookmarks/:id/summary — concurrent dedup', () => {
     const gen = deferred<string>()
     vi.mocked(summarize).mockReturnValue(gen.promise)
 
-    const req1 = request(app).post('/api/bookmarks/1/summary').then((r) => r)
-    const req2 = request(app).post('/api/bookmarks/1/summary').then((r) => r)
+    const req1 = request(app)
+      .post('/api/bookmarks/1/summary')
+      .then((r) => r)
+    const req2 = request(app)
+      .post('/api/bookmarks/1/summary')
+      .then((r) => r)
 
     await new Promise((r) => setTimeout(r, 20))
     gen.reject(new Error('429 rate limited'))
@@ -895,7 +923,10 @@ describe('POST /api/bookmarks/:id/translation', () => {
     // The two were read together and belong together: a client adopting the reported summary has
     // to be able to replace the chips beside it in the same step, or it pairs fresh text with
     // topics generated for what came before.
-    vi.mocked(db.getBookmark).mockResolvedValue({ ...englishBookmark, labels: ['widgets', 'costs'] })
+    vi.mocked(db.getBookmark).mockResolvedValue({
+      ...englishBookmark,
+      labels: ['widgets', 'costs'],
+    })
     const res = await request(app).post('/api/bookmarks/1/translation')
     expect(res.body.labels).toEqual(['widgets', 'costs'])
   })
@@ -970,5 +1001,82 @@ describe('POST /api/bookmarks/:id/translation', () => {
     // regenerated summary can never be left with a stale Japanese version attached to it.
     await request(app).post('/api/bookmarks/1/translation')
     expect(db.updateSummary).not.toHaveBeenCalled()
+  })
+})
+
+describe('separate list summaries', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(isSummarizerConfigured).mockReturnValue(true)
+    vi.mocked(db.getBookmark).mockResolvedValue({
+      ...bookmark,
+      summary: 'Old details.',
+      shortSummary: 'Old teaser.',
+    })
+    vi.mocked(fetchArticleText).mockResolvedValue('Article body')
+    vi.mocked(summarize).mockResolvedValue('Detailed overview.\n\n## Key points\n- Details.')
+    vi.mocked(db.updateSummary).mockResolvedValue(undefined)
+    vi.mocked(generateLabels).mockRejectedValue(new Error('Label generation unavailable'))
+  })
+
+  it('generates distinct summaries from the same article and stores them together', async () => {
+    vi.mocked(summarizeShort).mockResolvedValueOnce('The main takeaway in one sentence.')
+    const res = await request(app).post('/api/bookmarks/1/summary')
+
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual({
+      summary: 'Detailed overview.\n\n## Key points\n- Details.',
+      shortSummary: 'The main takeaway in one sentence.',
+    })
+    expect(summarizeShort).toHaveBeenCalledWith('Example', 'Article body')
+    expect(fetchArticleText).toHaveBeenCalledTimes(1)
+    expect(db.updateSummary).toHaveBeenCalledWith('1', res.body.summary, res.body.shortSummary)
+  })
+
+  it('starts short generation while detailed generation is still pending', async () => {
+    let finishDetailed!: (summary: string) => void
+    vi.mocked(summarize).mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishDetailed = resolve
+      })
+    )
+    vi.mocked(summarizeShort).mockResolvedValueOnce('A complete short sentence.')
+    const response = request(app)
+      .post('/api/bookmarks/1/summary')
+      .then((res) => res)
+
+    await vi.waitFor(() => expect(summarizeShort).toHaveBeenCalledWith('Example', 'Article body'))
+    expect(db.updateSummary).not.toHaveBeenCalled()
+    finishDetailed('Detailed summary.')
+    const res = await response
+    expect(res.status).toBe(200)
+    expect(db.updateSummary).toHaveBeenCalledWith(
+      '1',
+      'Detailed summary.',
+      'A complete short sentence.'
+    )
+  })
+
+  it('still stores detailed text and clears stale short text when short generation fails', async () => {
+    vi.mocked(summarizeShort).mockRejectedValueOnce(new Error('Gemini unavailable'))
+    const res = await request(app).post('/api/bookmarks/1/summary')
+
+    expect(res.status).toBe(200)
+    expect(res.body.summary).toContain('Detailed overview.')
+    expect(res.body).not.toHaveProperty('shortSummary')
+    expect(db.updateSummary).toHaveBeenCalledWith('1', res.body.summary, undefined)
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringContaining('short summary generation failed'),
+      expect.any(Error)
+    )
+  })
+
+  it('leaves both stored summaries unchanged when detailed generation fails', async () => {
+    vi.mocked(summarize).mockRejectedValueOnce(new Error('Gemini unavailable'))
+    const res = await request(app).post('/api/bookmarks/1/summary')
+
+    expect(res.status).toBe(502)
+    expect(db.updateSummary).not.toHaveBeenCalled()
+    expect(summarizeShort).toHaveBeenCalledWith('Example', 'Article body')
   })
 })

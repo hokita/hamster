@@ -393,9 +393,11 @@ export default function BookmarkPage() {
       // the new summary (see updateSummary), so a response with no labels means the labels step
       // failed after that write landed — keeping the previous topics on screen here would show
       // outdated chips for text they no longer describe, so they must be dropped too.
-      const { summary, labels } = await api.generateSummary(requestedId)
+      const { summary, shortSummary, labels } = await api.generateSummary(requestedId)
       if (requestedId !== latestId.current) return
-      setBookmark((previous) => (previous ? { ...previous, summary, labels } : previous))
+      setBookmark((previous) =>
+        previous ? { ...previous, summary, shortSummary, labels } : previous
+      )
     } catch {
       if (requestedId !== latestId.current) return
       // A failed request does not prove nothing was written: the summary is persisted before the

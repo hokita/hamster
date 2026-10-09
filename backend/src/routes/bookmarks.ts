@@ -4,11 +4,20 @@ import * as db from '../services/firestore'
 import type { BookmarkDoc } from '../services/firestore'
 import { fetchMetadata } from '../services/metadataFetcher'
 import { fetchArticleText } from '../services/articleFetcher'
-import { summarize, isSummarizerConfigured, SummarizerUnavailableError } from '../services/summarizer'
+import {
+  summarize,
+  isSummarizerConfigured,
+  SummarizerUnavailableError,
+} from '../services/summarizer'
 import { generateLabels } from '../services/labeler'
+import { summarizeShort } from '../services/shortSummarizer'
 import { answerQuestion, isChatConfigured, ChatUnavailableError } from '../services/articleChat'
 import type { ChatMessage } from '../services/articleChat'
-import { translate, isTranslatorConfigured, TranslatorUnavailableError } from '../services/translator'
+import {
+  translate,
+  isTranslatorConfigured,
+  TranslatorUnavailableError,
+} from '../services/translator'
 
 // Thrown when the linked page could not be read (blocked, non-HTML, 404/500, network failure, ...).
 // A sentinel rather than a plain Error so the shared in-flight promise's rejection can still be
@@ -54,11 +63,14 @@ export function createBookmarksRouter(): Router {
   // Firestore-backed lease would close the cross-instance gap, but that trades this in-memory map
   // for a distributed lock with its own failure modes (stale leases, lease-holder crashes) — real
   // cost for a single-user app where the occasional duplicate Gemini call is cheap to tolerate.
-  const inFlight = new Map<string, Promise<{ summary: string; labels: string[] | null }>>()
+  const inFlight = new Map<
+    string,
+    Promise<{ summary: string; shortSummary?: string; labels: string[] | null }>
+  >()
 
   function generateSummary(
     bookmark: BookmarkDoc
-  ): Promise<{ summary: string; labels: string[] | null }> {
+  ): Promise<{ summary: string; shortSummary?: string; labels: string[] | null }> {
     const generation = (async () => {
       // Check configuration before doing any network work. Without a key the request can never
       // succeed, so fetching the article first only burns up to 8 seconds and bandwidth on a
@@ -69,10 +81,20 @@ export function createBookmarksRouter(): Router {
       const text = await fetchArticleText(bookmark.url)
       if (!text) throw new ArticleUnreadableError()
 
-      const summary = await summarize(bookmark.title, text)
+      // Start both calls together so the additional short-summary call cannot extend the
+      // detailed-summary write beyond the detail page's existing polling window.
+      const [summary, shortSummary] = await Promise.all([
+        summarize(bookmark.title, text),
+        summarizeShort(bookmark.title, text).catch((error) => {
+          // A short-summary failure must not lose the detailed summary. The atomic write below
+          // clears any stale short summary from the previous article version in that case.
+          console.error(`short summary generation failed for bookmark ${bookmark.id}:`, error)
+          return undefined
+        }),
+      ])
 
       try {
-        await db.updateSummary(bookmark.id, summary)
+        await db.updateSummary(bookmark.id, summary, shortSummary)
       } catch (error) {
         throw new SummaryStorageError(error)
       }
@@ -91,7 +113,7 @@ export function createBookmarksRouter(): Router {
         console.error(`label generation failed for bookmark ${bookmark.id}:`, error)
       }
 
-      return { summary, labels }
+      return { summary, shortSummary, labels }
     })()
 
     // Remove the map entry once the generation settles, success or failure, so the next request
@@ -213,8 +235,12 @@ export function createBookmarksRouter(): Router {
     }
 
     try {
-      const { summary, labels } = await generation
-      res.json(labels ? { summary, labels } : { summary })
+      const { summary, shortSummary, labels } = await generation
+      res.json({
+        summary,
+        ...(shortSummary ? { shortSummary } : {}),
+        ...(labels ? { labels } : {}),
+      })
     } catch (error) {
       // Every response body below is deliberately vague — the client has no use for the internals
       // and they must not leak to it. That left a failed summary with no trace anywhere but a bare
