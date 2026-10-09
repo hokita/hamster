@@ -7,6 +7,7 @@ import { formatRelativeTime } from '../relativeTime'
 import { describeBookmark } from '../bookmarkLabel'
 import DeleteBookmarkButton from './DeleteBookmarkButton'
 import ReadToggleButton from './ReadToggleButton'
+import SummaryPreview from './SummaryPreview'
 
 interface BookmarkListProps {
   bookmarks: Bookmark[]
@@ -232,6 +233,10 @@ export default function BookmarkList({
                         the row link's accessible name (see aria-labelledby above). */}
                     {bookmark.isRead && <span> · Read</span>}
                   </span>
+                  <SummaryPreview
+                    summary={bookmark.summary}
+                    isSummarizing={summarizingIds?.has(bookmark.id)}
+                  />
                   {bookmark.labels && bookmark.labels.length > 0 && (
                     <span data-testid="bookmark-labels" className="mt-1 flex flex-wrap gap-1">
                       {bookmark.labels.map((label) => (

@@ -159,9 +159,7 @@ describe('BookmarkList', () => {
   })
 
   it('renders the empty state instead of throwing when bookmarks is not an array', () => {
-    expect(() =>
-      renderList({ bookmarks: null as unknown as typeof bookmarks })
-    ).not.toThrow()
+    expect(() => renderList({ bookmarks: null as unknown as typeof bookmarks })).not.toThrow()
     expect(screen.getByText('No bookmarks yet — paste a URL above to add one.')).toBeInTheDocument()
   })
 })
@@ -377,5 +375,59 @@ describe('empty state', () => {
     expect(
       screen.queryByText('No bookmarks yet — paste a URL above to add one.')
     ).not.toBeInTheDocument()
+  })
+})
+
+describe('BookmarkList summary previews', () => {
+  it('shows each article overview without the rest of its summary', () => {
+    renderList({
+      bookmarks: [
+        { ...bookmarks[0], summary: 'An overview of **testing**.\n\n## Key points\n- Details.' },
+        { ...bookmarks[0], id: '2', title: 'Other article', summary: '別の記事の概要です。' },
+      ],
+    })
+
+    expect(screen.getByText('testing', { selector: 'strong' })).toBeInTheDocument()
+    expect(screen.getByText('別の記事の概要です。')).toBeInTheDocument()
+    expect(screen.queryByText('Key points')).not.toBeInTheDocument()
+    expect(screen.queryByText('Details.')).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /Example Site/ })).toHaveTextContent(
+      'An overview of testing.'
+    )
+  })
+
+  it('keeps untrusted Markdown links, images and HTML out of the preview', () => {
+    const { container } = renderList({
+      bookmarks: [
+        {
+          ...bookmarks[0],
+          summary:
+            '[Overview](https://untrusted.example) ![image](https://untrusted.example/a.png) <img src="https://untrusted.example/b.png">',
+        },
+      ],
+    })
+
+    expect(screen.getByText('Overview')).toBeInTheDocument()
+    expect(container.querySelector('a a')).toBeNull()
+    expect(container.querySelector('[src^="https://untrusted.example"]')).toBeNull()
+    expect(screen.getAllByRole('link')).toHaveLength(2)
+  })
+
+  it('explains missing summaries and updates when generation finishes', () => {
+    const { rerender } = renderList({ bookmarks, summarizingIds: new Set(['1']) })
+    expect(screen.getByText('Your summary will appear here.')).toBeInTheDocument()
+
+    rerender(
+      <MemoryRouter>
+        <BookmarkList bookmarks={[{ ...bookmarks[0], summary: 'The finished overview.' }]} />
+      </MemoryRouter>
+    )
+    expect(screen.getByText('The finished overview.')).toBeInTheDocument()
+    expect(screen.queryByText('Your summary will appear here.')).not.toBeInTheDocument()
+  })
+
+  it('offers generation on the detail page for missing or blank summaries', () => {
+    renderList({ bookmarks: [{ ...bookmarks[0], summary: '  ' }] })
+    expect(screen.getByText('Open article to generate a summary.')).toBeInTheDocument()
   })
 })

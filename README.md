@@ -56,6 +56,10 @@ generation still running for a deleted bookmark fails its own write rather than 
 
 ## Summaries
 
+The article list shows a two-line preview of each saved summary’s opening overview. Open an
+article to read the full summary or generate one if it is missing. Previews update when automatic
+generation finishes and keep the summary’s original language.
+
 Each bookmark has its own page at `/bookmarks/:id` showing a summary of the linked
 article — an overview paragraph, a "Key points" section of four to six bullet points, and a
 closing takeaway — generated with the Gemini API. The model writes the summary in Markdown,
