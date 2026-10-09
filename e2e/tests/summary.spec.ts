@@ -93,3 +93,27 @@ test.describe('bookmark summary page', () => {
     await expect(page.getByRole('link', { name: 'Back to bookmarks' })).toBeVisible()
   })
 })
+
+for (const width of [390, 1280]) {
+  test(`keeps article previews to one line at ${width}px`, async ({ page }) => {
+    await clearFirestore()
+    await page.setViewportSize({ width, height: 844 })
+    const overview =
+      'Engineering leaders need to balance delivery speed with professional growth. '.repeat(12)
+    await seedBookmark({ url: 'https://example.com', title: 'Long article', summary: overview })
+    await signIn(page)
+
+    const preview = page.getByRole('link', { name: /Long article/ }).locator('span[lang]')
+    await expect(preview).toBeVisible()
+    const dimensions = await preview.evaluate((element) => ({
+      height: element.getBoundingClientRect().height,
+      lineHeight: Number.parseFloat(getComputedStyle(element).lineHeight),
+      contentHeight: element.scrollHeight,
+    }))
+    expect(dimensions.height).toBeLessThanOrEqual(dimensions.lineHeight + 1)
+    expect(dimensions.contentHeight).toBeGreaterThan(dimensions.height)
+
+    await page.getByRole('link', { name: /Long article/ }).click()
+    await expect(page.getByText(overview.trim(), { exact: true })).toBeVisible()
+  })
+}

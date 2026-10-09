@@ -24,7 +24,7 @@ export default function SummaryPreview({ summary, isSummarizing }: SummaryPrevie
   return (
     <span
       lang={textLanguage(overview)}
-      className="mt-1 block line-clamp-2 text-sm leading-5 text-gray-600"
+      className="mt-1 line-clamp-1 text-sm leading-5 text-gray-600"
     >
       <ReactMarkdown
         // The preview sits inside the row link. Unwrap Markdown links to avoid nested anchors,

@@ -56,7 +56,7 @@ generation still running for a deleted bookmark fails its own write rather than 
 
 ## Summaries
 
-The article list shows a two-line preview of each saved summary’s opening overview. Open an
+The article list shows a one-line preview of each saved summary’s opening overview. Open an
 article to read the full summary or generate one if it is missing. Previews update when automatic
 generation finishes and keep the summary’s original language.
 
