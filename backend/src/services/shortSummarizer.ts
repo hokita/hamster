@@ -1,7 +1,7 @@
 import { GoogleGenAI, ThinkingLevel } from '@google/genai'
 import { withSignal } from './safeFetch'
 import { SummarizerUnavailableError } from './summarizer'
-import { textLanguage } from './textLanguage'
+import { matchesSummaryLanguage, textLanguage } from './textLanguage'
 
 // Use the same lighter model and bounded call settings as topic labelling.
 const MODEL = 'gemini-3.5-flash-lite'
@@ -56,7 +56,7 @@ export async function summarizeShort(title: string, detailedSummary: string): Pr
     }
     const summary = response.text?.replace(/\s+/g, ' ').trim()
     if (!summary) throw new Error('Gemini returned an empty short summary')
-    if (textLanguage(summary) === language) return summary
+    if (matchesSummaryLanguage(summary, language)) return summary
   }
   throw new Error('Short summary language does not match the detailed summary')
 }

@@ -7,3 +7,15 @@ export function textLanguage(text: string): 'ja' | 'en' {
   const japanese = characters.match(JAPANESE_SCRIPT)?.length ?? 0
   return characters.length > 0 && japanese / characters.length >= 0.2 ? 'ja' : 'en'
 }
+
+// Rendering's binary script heuristic is not proof of an output language. Japanese
+// prose needs kana (Han alone may be Chinese); English must be classified among
+// all supported languages, rather than only compared against Japanese.
+// Ambiguous short text fails closed and can be retried by the caller.
+export function matchesSummaryLanguage(text: string, language: 'ja' | 'en'): boolean {
+  if (language === 'ja') {
+    return /[\u3040-\u30ff\uff66-\uff9f]/u.test(text) && textLanguage(text) === 'ja'
+  }
+  return franc(text) === 'eng'
+}
+import { franc } from 'franc-min'

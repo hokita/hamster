@@ -19,8 +19,10 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs())
 
 it('generates a separate concise plain-text summary from article content', async () => {
-  generateContent.mockResolvedValue({ text: ' The main\n takeaway. ' })
-  await expect(summarizeShort('Title', 'Article body')).resolves.toBe('The main takeaway.')
+  generateContent.mockResolvedValue({ text: ' The article explains\n developer growth. ' })
+  await expect(summarizeShort('Title', 'Article body')).resolves.toBe(
+    'The article explains developer growth.'
+  )
   const call = generateContent.mock.calls[0][0]
   expect(JSON.parse(call.contents)).toEqual({ title: 'Title', detailedSummary: 'Article body' })
   expect(call.config.systemInstruction).toContain('one concise, complete sentence')
@@ -95,4 +97,25 @@ it('also rejects Japanese answers for an English summary', async () => {
   await expect(summarizeShort('Title', 'The article explains developer growth.')).rejects.toThrow(
     'language does not match'
   )
+})
+
+it.each([
+  'El artículo explica cómo mejorar el crecimiento de los desarrolladores.',
+  'Cet article explique comment améliorer la croissance des développeurs.',
+  '이 기사는 개발자의 성장과 학습 방법을 설명합니다.',
+])('rejects non-English output for an English summary: %s', async (text) => {
+  generateContent.mockResolvedValue({ text })
+  await expect(summarizeShort('Title', 'The article explains developer growth.')).rejects.toThrow(
+    'language does not match'
+  )
+  expect(generateContent).toHaveBeenCalledTimes(2)
+})
+
+it('retries Chinese output for a Japanese summary', async () => {
+  generateContent.mockResolvedValueOnce({ text: '这篇文章介绍了开发人员的成长和学习方法。' })
+  generateContent.mockResolvedValueOnce({ text: 'この記事は開発者の成長について説明しています。' })
+  await expect(summarizeShort('Title', '開発者の成長についての詳しい解説です。')).resolves.toBe(
+    'この記事は開発者の成長について説明しています。'
+  )
+  expect(generateContent).toHaveBeenCalledTimes(2)
 })
