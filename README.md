@@ -58,9 +58,11 @@ generation still running for a deleted bookmark fails its own write rather than 
 
 The article list and article page use separate AI summaries. The list shows one concise, complete
 sentence, stored as `shortSummary`, that wraps naturally without a line limit or character cutoff.
-The article page shows the detailed Markdown `summary`. Both are generated from the same fetched
-article when a bookmark is saved or regenerated; the short version uses the lighter
-`gemini-3.5-flash-lite` model.
+The article page shows the detailed Markdown `summary`, generated from the article and then
+condensed into the short sentence in the same language when saved or regenerated. The short
+version uses the lighter `gemini-3.5-flash-lite` model. Its language is explicitly required and
+checked by a separate model language-classification call; a wrong-language answer is retried
+once under the same timeout and never stored.
 Older bookmarks keep their detailed summaries; use **Regenerate** on the article page to add the
 short version. A short-summary failure never loses the detailed summary, and regeneration clears
 any stale short summary if a fresh one could not be generated.

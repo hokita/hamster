@@ -1028,33 +1028,22 @@ describe('separate list summaries', () => {
       summary: 'Detailed overview.\n\n## Key points\n- Details.',
       shortSummary: 'The main takeaway in one sentence.',
     })
-    expect(summarizeShort).toHaveBeenCalledWith('Example', 'Article body')
+    expect(summarizeShort).toHaveBeenCalledWith('Example', res.body.summary)
     expect(fetchArticleText).toHaveBeenCalledTimes(1)
     expect(db.updateSummary).toHaveBeenCalledWith('1', res.body.summary, res.body.shortSummary)
   })
 
-  it('starts short generation while detailed generation is still pending', async () => {
-    let finishDetailed!: (summary: string) => void
-    vi.mocked(summarize).mockReturnValueOnce(
-      new Promise((resolve) => {
-        finishDetailed = resolve
-      })
+  it('uses the completed detailed summary as the source for the short sentence', async () => {
+    const detailed =
+      'この記事は開発者の成長について説明しています。\n\n## 要点\n- 経験と学習が大切です。'
+    vi.mocked(summarize).mockResolvedValueOnce(detailed)
+    vi.mocked(summarizeShort).mockResolvedValueOnce(
+      'この記事は開発者の成長に必要な学習と経験を解説しています。'
     )
-    vi.mocked(summarizeShort).mockResolvedValueOnce('A complete short sentence.')
-    const response = request(app)
-      .post('/api/bookmarks/1/summary')
-      .then((res) => res)
-
-    await vi.waitFor(() => expect(summarizeShort).toHaveBeenCalledWith('Example', 'Article body'))
-    expect(db.updateSummary).not.toHaveBeenCalled()
-    finishDetailed('Detailed summary.')
-    const res = await response
+    const res = await request(app).post('/api/bookmarks/1/summary')
     expect(res.status).toBe(200)
-    expect(db.updateSummary).toHaveBeenCalledWith(
-      '1',
-      'Detailed summary.',
-      'A complete short sentence.'
-    )
+    expect(summarizeShort).toHaveBeenCalledWith('Example', detailed)
+    expect(db.updateSummary).toHaveBeenCalledWith('1', detailed, res.body.shortSummary)
   })
 
   it('still stores detailed text and clears stale short text when short generation fails', async () => {
@@ -1077,6 +1066,6 @@ describe('separate list summaries', () => {
 
     expect(res.status).toBe(502)
     expect(db.updateSummary).not.toHaveBeenCalled()
-    expect(summarizeShort).toHaveBeenCalledWith('Example', 'Article body')
+    expect(summarizeShort).not.toHaveBeenCalled()
   })
 })

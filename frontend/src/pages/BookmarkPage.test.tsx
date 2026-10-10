@@ -749,10 +749,10 @@ describe('BookmarkPage summary polling', () => {
     const countAfterFailure = vi.mocked(api.getBookmark).mock.calls.length
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(60000)
+      await vi.advanceTimersByTimeAsync(90000)
     })
 
-    expect(vi.mocked(api.getBookmark).mock.calls.length).toBe(countAfterFailure + 30) // poll budget
+    expect(vi.mocked(api.getBookmark).mock.calls.length).toBe(countAfterFailure + 45) // poll budget
     expect(screen.getByText('First take.')).toBeInTheDocument()
     expect(screen.getByText(/Couldn't regenerate the summary/)).toBeInTheDocument()
   })
@@ -854,6 +854,26 @@ describe('BookmarkPage summary polling', () => {
     expect(screen.getByRole('button', { name: 'Translate to Japanese' })).toBeEnabled()
   })
 
+  it('picks up summaries that finish after the old 60-second polling window', async () => {
+    renderPage()
+    await flush()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(62000)
+    })
+    expect(screen.getByText('No summary yet.')).toBeInTheDocument()
+
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...bookmark,
+      summary: '遅れて届いた日本語の詳しい要約です。',
+      shortSummary: 'この記事の要点です。',
+      labels: ['testing'],
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000)
+    })
+    expect(screen.getByText('遅れて届いた日本語の詳しい要約です。')).toBeInTheDocument()
+  })
+
   it('stops polling once the budget is exhausted', async () => {
     vi.mocked(api.getBookmark).mockResolvedValue(bookmark)
     renderPage()
@@ -861,10 +881,10 @@ describe('BookmarkPage summary polling', () => {
     expect(api.getBookmark).toHaveBeenCalledTimes(1)
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(60000)
+      await vi.advanceTimersByTimeAsync(90000)
     })
     const countAtBudget = vi.mocked(api.getBookmark).mock.calls.length
-    expect(countAtBudget).toBe(31) // 1 initial load + 30 polls
+    expect(countAtBudget).toBe(46) // 1 initial load + 45 polls
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10000)
@@ -1030,9 +1050,7 @@ describe('article chat', () => {
 
   it('offers a question box once the bookmark has loaded', async () => {
     renderPage()
-    expect(
-      await screen.findByRole('textbox', { name: 'Ask a question' })
-    ).toBeInTheDocument()
+    expect(await screen.findByRole('textbox', { name: 'Ask a question' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Ask' })).toBeInTheDocument()
   })
 
@@ -1040,10 +1058,9 @@ describe('article chat', () => {
     vi.mocked(api.askQuestion).mockResolvedValue({ answer: 'An answer.' })
     renderPage()
 
-    fireEvent.change(
-      await screen.findByRole('textbox', { name: 'Ask a question' }),
-      { target: { value: 'A question?' } }
-    )
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Ask a question' }), {
+      target: { value: 'A question?' },
+    })
     fireEvent.click(screen.getByRole('button', { name: 'Ask' }))
 
     await screen.findByText('An answer.')

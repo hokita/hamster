@@ -23,13 +23,11 @@ import DeleteBookmarkButton from '../components/DeleteBookmarkButton'
 import ReadToggleButton from '../components/ReadToggleButton'
 import ArticleChat from '../components/ArticleChat'
 
-// Generation of the new whole-article summaries can take up to the backend's 45s timeout.
-// Polling every 2 seconds for up to 60 seconds (30 attempts) ensures the window outlives
-// the backend's worst case without polling indefinitely; once the budget is spent the existing
-// Generate button remains as a fallback. The endpoint this polls is a cheap Firestore read,
-// not a Gemini call, so polling costs nothing but a handful of extra reads.
+// Allow the bounded article fetch (8s), detailed summary (45s), short summary (10s),
+// and labels (10s) to finish, with margin for storage. The short call follows the detailed
+// one so both use the same language. Polling is still bounded and stops once content arrives.
 const POLL_INTERVAL_MS = 2000
-const MAX_POLL_ATTEMPTS = 30
+const MAX_POLL_ATTEMPTS = 45
 
 // Label equality, treating absent and present-but-different alike: the poll below adopts any
 // content change, including labels disappearing (the atomic clear that starts a regeneration).
