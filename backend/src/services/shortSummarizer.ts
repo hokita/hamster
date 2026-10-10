@@ -4,7 +4,8 @@ import { SummarizerUnavailableError } from './summarizer'
 
 // Use the same lighter model and bounded call settings as topic labelling.
 const MODEL = 'gemini-3.5-flash-lite'
-const TIMEOUT_MS = 10_000
+// Up to five sequential calls at typical 1–3s latency, plus scheduling margin.
+const TIMEOUT_MS = 20_000
 const SYSTEM_INSTRUCTION = [
   'Condense the detailed article summary into a short summary for a bookmark list.',
   'Return exactly one concise, complete sentence. Do not add a second sentence or a preamble.',
@@ -48,7 +49,7 @@ export async function summarizeShort(title: string, detailedSummary: string): Pr
       ? 'Write the short summary in Japanese. 短い要約は必ず自然な日本語の一文で書いてください。'
       : 'Write the short summary in English.'
 
-  // One retry for a wrong-language answer, sharing the same 10s deadline across classification and generation calls.
+  // One retry for a wrong-language answer, sharing the same 20s deadline across classification and generation calls.
   // A wrong-language result must never reach Firestore, even if the model ignores the prompt.
   for (let attempt = 0; attempt < 2; attempt++) {
     const response = await withSignal(

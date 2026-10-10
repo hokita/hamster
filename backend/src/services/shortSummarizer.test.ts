@@ -207,3 +207,33 @@ it('does not generate with an unclassified source language', async () => {
   )
   expect(generateContent).not.toHaveBeenCalled()
 })
+
+it('allows normal three-second call latency through the full mismatch retry', async () => {
+  vi.useFakeTimers()
+  const controller = new AbortController()
+  const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
+    setTimeout(() => controller.abort(), ms)
+    return controller.signal
+  })
+  const delayed = (text: string) =>
+    new Promise((resolve) => setTimeout(() => resolve({ text }), 3000))
+  verifyContent
+    .mockImplementationOnce(() => delayed('JAPANESE'))
+    .mockImplementationOnce(() => delayed('ENGLISH'))
+    .mockImplementationOnce(() => delayed('JAPANESE'))
+  generateContent
+    .mockImplementationOnce(() => delayed('This article discusses developer growth.'))
+    .mockImplementationOnce(() => delayed('この記事は開発者の成長について説明しています。'))
+  try {
+    const result = summarizeShort('Title', '開発者の成長についての詳しい解説です。')
+    await vi.advanceTimersByTimeAsync(15000)
+    await expect(result).resolves.toBe('この記事は開発者の成長について説明しています。')
+    expect(controller.signal.aborted).toBe(false)
+    expect(timeout).toHaveBeenCalledWith(20000)
+    expect(generateContent).toHaveBeenCalledTimes(2)
+    expect(verifyContent).toHaveBeenCalledTimes(3)
+  } finally {
+    timeout.mockRestore()
+    vi.useRealTimers()
+  }
+})
