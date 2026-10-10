@@ -11,7 +11,7 @@ vi.mock('@google/genai', async () => {
     GoogleGenAI: class {
       models = {
         generateContent: (args: { config: { systemInstruction: string } }) =>
-          args.config.systemInstruction.startsWith('Identify the language')
+          args.config.systemInstruction.startsWith('Identify the main language')
             ? verifyContent(args)
             : generateContent(args),
       }
@@ -119,7 +119,7 @@ it.each([
   '이 기사는 개발자의 성장과 학습 방법을 설명합니다.',
 ])('rejects non-English output for an English summary: %s', async (text) => {
   generateContent.mockResolvedValue({ text })
-  verifyContent.mockResolvedValue({ text: 'OTHER' })
+  verifyContent.mockResolvedValue({ text: 'OTHER' }).mockResolvedValueOnce({ text: 'ENGLISH' })
   await expect(summarizeShort('Title', 'The article explains developer growth.')).rejects.toThrow(
     'language does not match'
   )
@@ -128,7 +128,7 @@ it.each([
 
 it('retries Chinese output for a Japanese summary', async () => {
   generateContent.mockResolvedValueOnce({ text: '这篇文章介绍了开发人员的成长和学习方法。' })
-  verifyContent.mockResolvedValueOnce({ text: 'OTHER' })
+  verifyContent.mockResolvedValueOnce({ text: 'JAPANESE' }).mockResolvedValueOnce({ text: 'OTHER' })
   generateContent.mockResolvedValueOnce({ text: 'この記事は開発者の成長について説明しています。' })
   await expect(summarizeShort('Title', '開発者の成長についての詳しい解説です。')).resolves.toBe(
     'この記事は開発者の成長について説明しています。'
@@ -151,13 +151,13 @@ it.each([
   expect(verifyContent.mock.calls[0][0].config.abortSignal).toBe(
     generateContent.mock.calls[0][0].config.abortSignal
   )
-  expect(JSON.parse(verifyContent.mock.calls[0][0].contents)).toEqual({ text })
+  expect(JSON.parse(verifyContent.mock.calls[1][0].contents)).toEqual({ text })
   expect(verifyContent.mock.calls[0][0].config.maxOutputTokens).toBe(4096)
 })
 
 it('rejects an unusable verifier answer', async () => {
   generateContent.mockResolvedValue({ text: 'Teams ship faster.' })
-  verifyContent.mockResolvedValue({ text: 'UNKNOWN' })
+  verifyContent.mockResolvedValue({ text: 'UNKNOWN' }).mockResolvedValueOnce({ text: 'ENGLISH' })
   await expect(summarizeShort('Title', 'The article explains developer growth.')).rejects.toThrow(
     'language does not match'
   )
@@ -165,8 +165,45 @@ it('rejects an unusable verifier answer', async () => {
 
 it('rejects a token-truncated verification even if its text names the expected language', async () => {
   generateContent.mockResolvedValue({ text: 'Teams ship faster.' })
-  verifyContent.mockResolvedValue({ text: 'ENGLISH', candidates: [{ finishReason: 'MAX_TOKENS' }] })
+  verifyContent
+    .mockResolvedValue({ text: 'ENGLISH', candidates: [{ finishReason: 'MAX_TOKENS' }] })
+    .mockResolvedValueOnce({ text: 'ENGLISH' })
   await expect(summarizeShort('Title', 'The article explains developer growth.')).rejects.toThrow(
     'language does not match'
   )
+})
+
+it('uses classified English prose despite extensive Japanese quotations', async () => {
+  const detailed =
+    'The article compares Japanese phrases: 「開発者の成長についての詳しい解説です。開発者の成長についての詳しい解説です。」'
+  verifyContent.mockResolvedValue({ text: 'ENGLISH' })
+  generateContent.mockResolvedValue({ text: 'The article compares Japanese phrases.' })
+  await expect(summarizeShort('Title', detailed)).resolves.toBe(
+    'The article compares Japanese phrases.'
+  )
+  expect(generateContent.mock.calls[0][0].config.systemInstruction).toContain(
+    'Write the short summary in English.'
+  )
+  expect(JSON.parse(verifyContent.mock.calls[0][0].contents)).toEqual({ text: detailed })
+})
+
+it('uses classified Japanese prose despite extensive ASCII identifiers', async () => {
+  const detailed =
+    'TypeScript, React, Express, Firestore, GoogleGenAI, AbortSignal, Promise.allSettled を組み合わせます。'
+  verifyContent.mockResolvedValue({ text: 'JAPANESE' })
+  generateContent.mockResolvedValue({ text: '複数の技術を組み合わせて記事の要約を生成します。' })
+  await expect(summarizeShort('Title', detailed)).resolves.toBe(
+    '複数の技術を組み合わせて記事の要約を生成します。'
+  )
+  expect(generateContent.mock.calls[0][0].config.systemInstruction).toContain(
+    'Write the short summary in Japanese.'
+  )
+})
+
+it('does not generate with an unclassified source language', async () => {
+  verifyContent.mockResolvedValue({ text: 'OTHER' })
+  await expect(summarizeShort('Title', '这篇文章介绍了开发人员的成长。')).rejects.toThrow(
+    'language does not match'
+  )
+  expect(generateContent).not.toHaveBeenCalled()
 })
