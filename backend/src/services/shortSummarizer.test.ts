@@ -152,11 +152,20 @@ it.each([
     generateContent.mock.calls[0][0].config.abortSignal
   )
   expect(JSON.parse(verifyContent.mock.calls[0][0].contents)).toEqual({ text })
+  expect(verifyContent.mock.calls[0][0].config.maxOutputTokens).toBe(4096)
 })
 
 it('rejects an unusable verifier answer', async () => {
   generateContent.mockResolvedValue({ text: 'Teams ship faster.' })
   verifyContent.mockResolvedValue({ text: 'UNKNOWN' })
+  await expect(summarizeShort('Title', 'The article explains developer growth.')).rejects.toThrow(
+    'language does not match'
+  )
+})
+
+it('rejects a token-truncated verification even if its text names the expected language', async () => {
+  generateContent.mockResolvedValue({ text: 'Teams ship faster.' })
+  verifyContent.mockResolvedValue({ text: 'ENGLISH', candidates: [{ finishReason: 'MAX_TOKENS' }] })
   await expect(summarizeShort('Title', 'The article explains developer growth.')).rejects.toThrow(
     'language does not match'
   )
