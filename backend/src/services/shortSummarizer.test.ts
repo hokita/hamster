@@ -1,12 +1,20 @@
 import { it, expect, vi, beforeEach, afterEach } from 'vitest'
 
-const { generateContent } = vi.hoisted(() => ({ generateContent: vi.fn() }))
+const { generateContent, verifyContent } = vi.hoisted(() => ({
+  generateContent: vi.fn(),
+  verifyContent: vi.fn(),
+}))
 vi.mock('@google/genai', async () => {
   const actual = await vi.importActual<typeof import('@google/genai')>('@google/genai')
   return {
     ...actual,
     GoogleGenAI: class {
-      models = { generateContent }
+      models = {
+        generateContent: (args: { config: { systemInstruction: string } }) =>
+          args.config.systemInstruction.startsWith('Identify the language')
+            ? verifyContent(args)
+            : generateContent(args),
+      }
     },
   }
 })
@@ -15,6 +23,12 @@ import { summarizeShort } from './shortSummarizer'
 beforeEach(() => {
   vi.clearAllMocks()
   vi.stubEnv('GEMINI_API_KEY', 'test-key')
+  verifyContent.mockImplementation((args: { contents: string }) => {
+    const { text } = JSON.parse(args.contents)
+    return Promise.resolve({
+      text: /[\u3040-\u30ff]/u.test(text) ? 'JAPANESE' : 'ENGLISH',
+    })
+  })
 })
 afterEach(() => vi.unstubAllEnvs())
 
@@ -105,6 +119,7 @@ it.each([
   '이 기사는 개발자의 성장과 학습 방법을 설명합니다.',
 ])('rejects non-English output for an English summary: %s', async (text) => {
   generateContent.mockResolvedValue({ text })
+  verifyContent.mockResolvedValue({ text: 'OTHER' })
   await expect(summarizeShort('Title', 'The article explains developer growth.')).rejects.toThrow(
     'language does not match'
   )
@@ -113,9 +128,36 @@ it.each([
 
 it('retries Chinese output for a Japanese summary', async () => {
   generateContent.mockResolvedValueOnce({ text: '这篇文章介绍了开发人员的成长和学习方法。' })
+  verifyContent.mockResolvedValueOnce({ text: 'OTHER' })
   generateContent.mockResolvedValueOnce({ text: 'この記事は開発者の成長について説明しています。' })
   await expect(summarizeShort('Title', '開発者の成長についての詳しい解説です。')).resolves.toBe(
     'この記事は開発者の成長について説明しています。'
   )
   expect(generateContent).toHaveBeenCalledTimes(2)
+})
+
+it.each([
+  'The main takeaway.',
+  'Read more books.',
+  'Practice builds expertise.',
+  'Teams ship faster.',
+])('accepts valid brief English after independent verification: %s', async (text) => {
+  generateContent.mockResolvedValue({ text })
+  verifyContent.mockResolvedValue({ text: 'ENGLISH' })
+  await expect(summarizeShort('Title', 'The article explains developer growth.')).resolves.toBe(
+    text
+  )
+  expect(generateContent).toHaveBeenCalledTimes(1)
+  expect(verifyContent.mock.calls[0][0].config.abortSignal).toBe(
+    generateContent.mock.calls[0][0].config.abortSignal
+  )
+  expect(JSON.parse(verifyContent.mock.calls[0][0].contents)).toEqual({ text })
+})
+
+it('rejects an unusable verifier answer', async () => {
+  generateContent.mockResolvedValue({ text: 'Teams ship faster.' })
+  verifyContent.mockResolvedValue({ text: 'UNKNOWN' })
+  await expect(summarizeShort('Title', 'The article explains developer growth.')).rejects.toThrow(
+    'language does not match'
+  )
 })

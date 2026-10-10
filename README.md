@@ -61,7 +61,8 @@ sentence, stored as `shortSummary`, that wraps naturally without a line limit or
 The article page shows the detailed Markdown `summary`, generated from the article and then
 condensed into the short sentence in the same language when saved or regenerated. The short
 version uses the lighter `gemini-3.5-flash-lite` model. Its language is explicitly required and
-checked; a wrong-language answer is retried once under the same timeout and never stored.
+checked by a separate model language-classification call; a wrong-language answer is retried
+once under the same timeout and never stored.
 Older bookmarks keep their detailed summaries; use **Regenerate** on the article page to add the
 short version. A short-summary failure never loses the detailed summary, and regeneration clears
 any stale short summary if a fresh one could not be generated.
