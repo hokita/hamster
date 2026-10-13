@@ -1,4 +1,5 @@
 import { fetchAllowedUrl } from './safeFetch'
+import { fetchMediumRssArticle } from './mediumRss'
 import {
   HTML_CONTENT_TYPE,
   maskNonMarkup,
@@ -52,7 +53,9 @@ async function readBoundedBytes(response: Response): Promise<Uint8Array> {
 // it. Treating every '<' as a tag start deleted everything up to the next '>'.
 function opensTag(html: string, index: number): boolean {
   const next = html[index + 1]
-  return next !== undefined && (/[a-zA-Z]/.test(next) || next === '/' || next === '!' || next === '?')
+  return (
+    next !== undefined && (/[a-zA-Z]/.test(next) || next === '/' || next === '!' || next === '?')
+  )
 }
 
 // quoteAware=false ends every tag at its first '>', ignoring quotes entirely. Both modes visit each
@@ -125,12 +128,10 @@ function extractText(html: string): string {
     first.abortedAt === null
       ? first.text
       : first.text + stripTags(masked.slice(first.abortedAt), false).text
-  return decodeEntities(text)
-    .replace(/\s+/g, ' ')
-    .trim()
+  return decodeEntities(text).replace(/\s+/g, ' ').trim()
 }
 
-export async function fetchArticleText(url: string): Promise<string | null> {
+async function fetchOriginalArticleText(url: string): Promise<string | null> {
   try {
     const allowed = await fetchAllowedUrl(url, AbortSignal.timeout(FETCH_TIMEOUT_MS))
     if (!allowed) return null
@@ -138,7 +139,10 @@ export async function fetchArticleText(url: string): Promise<string | null> {
     // fetchAllowedUrl already chased 3xx redirects, so anything left outside 2xx is a served error
     // page (404, 500, 403, ...) rendered as ordinary HTML. That page's text is not article content —
     // extracting and summarizing it would silently present the site's error page as the bookmark.
-    if (allowed.response.status < 200 || allowed.response.status >= 300) return null
+    if (allowed.response.status < 200 || allowed.response.status >= 300) {
+      await allowed.response.body?.cancel().catch(() => {})
+      return null
+    }
 
     const contentType = allowed.response.headers.get('content-type') ?? ''
     if (!HTML_CONTENT_TYPE.test(contentType)) return null
@@ -152,4 +156,13 @@ export async function fetchArticleText(url: string): Promise<string | null> {
   } catch {
     return null
   }
+}
+
+export async function fetchArticleText(url: string): Promise<string | null> {
+  const original = await fetchOriginalArticleText(url)
+  if (original) return original
+  const article = await fetchMediumRssArticle(url)
+  if (!article) return null
+  const text = extractText(article.html)
+  return text ? text.slice(0, MAX_CHARS) : null
 }

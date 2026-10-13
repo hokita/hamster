@@ -22,6 +22,7 @@ function mockResponse(
       get: (name: string) => (name.toLowerCase() === 'content-type' ? contentType : null),
     },
     body: {
+      cancel: vi.fn(async () => {}),
       getReader: () => ({
         read: async () => {
           if (index < chunks.length) {
@@ -79,6 +80,37 @@ beforeEach(() => {
 })
 
 describe('fetchMetadata', () => {
+  it('uses the Medium RSS title instead of a Cloudflare error-page title', async () => {
+    const url = 'https://copyconstruct.medium.com/article-bd3dcb2c5f7b'
+    mockFetch
+      .mockResolvedValueOnce(
+        mockResponse(['<title>Attention Required! | Cloudflare</title>'], { status: 403 })
+      )
+      .mockResolvedValueOnce(
+        mockResponse(
+          [
+            `<rss xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel><item><title><![CDATA[Actual article & title]]></title><link>${url}</link><content:encoded><![CDATA[<p>Article content</p>]]></content:encoded></item></channel></rss>`,
+          ],
+          { contentType: 'application/rss+xml' }
+        )
+      )
+    await expect(fetchMetadata(url)).resolves.toEqual({
+      title: 'Actual article & title',
+      faviconUrl: 'https://copyconstruct.medium.com/favicon.ico',
+    })
+  })
+
+  it('does not save error-page titles for other sites either', async () => {
+    const response = mockResponse(['<title>Forbidden</title>'], { status: 403 })
+    mockFetch.mockResolvedValue(response)
+    await expect(fetchMetadata('https://example.com')).resolves.toEqual({
+      title: null,
+      faviconUrl: 'https://example.com/favicon.ico',
+    })
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+    expect(response.body.cancel).toHaveBeenCalledTimes(1)
+  })
+
   it('extracts and decodes the page title from a successful HTML response', async () => {
     mockFetch.mockResolvedValue(
       mockResponse(['<html><head><title>Tom &amp; Jerry</title></head></html>'])

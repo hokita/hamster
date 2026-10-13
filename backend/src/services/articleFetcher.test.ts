@@ -17,6 +17,7 @@ function htmlResponse(html: string, contentType = 'text/html; charset=utf-8', st
       get: (name: string) => (name.toLowerCase() === 'content-type' ? contentType : null),
     },
     body: {
+      cancel: vi.fn(async () => {}),
       getReader: () => ({
         read: async () => {
           if (sent) return { done: true, value: undefined }
@@ -39,6 +40,37 @@ function allow(html: string, contentType?: string, status?: number) {
 beforeEach(() => vi.clearAllMocks())
 
 describe('fetchArticleText', () => {
+  it('cancels the body of a rejected article response', async () => {
+    const response = htmlResponse('<p>Forbidden</p>', undefined, 403)
+    vi.mocked(fetchAllowedUrl).mockResolvedValue({
+      response: response as unknown as Response,
+      finalUrl: 'https://example.com',
+    })
+    await expect(fetchArticleText('https://example.com')).resolves.toBeNull()
+    expect(response.body.cancel).toHaveBeenCalledTimes(1)
+  })
+
+  it('falls back to the matching Medium RSS article when the page is blocked', async () => {
+    const url = 'https://copyconstruct.medium.com/article-bd3dcb2c5f7b'
+    vi.mocked(fetchAllowedUrl)
+      .mockResolvedValueOnce({ response: new Response('Blocked', { status: 403 }), finalUrl: url })
+      .mockResolvedValueOnce({
+        response: new Response(
+          `<rss xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel><item><title>Article</title><link>${url}</link><content:encoded><![CDATA[<p>The article &amp; its conclusion.</p><script>hidden</script>]]></content:encoded></item></channel></rss>`
+        ),
+        finalUrl: 'https://copyconstruct.medium.com/feed',
+      })
+    await expect(fetchArticleText(url)).resolves.toBe('The article & its conclusion.')
+  })
+
+  it('does not request RSS when the original Medium article is readable', async () => {
+    allow('<p>Original content</p>')
+    await expect(
+      fetchArticleText('https://copyconstruct.medium.com/article-bd3dcb2c5f7b')
+    ).resolves.toBe('Original content')
+    expect(fetchAllowedUrl).toHaveBeenCalledTimes(1)
+  })
+
   it('returns the visible text of the page', async () => {
     allow('<html><body><h1>Title</h1><p>Hello world.</p></body></html>')
     await expect(fetchArticleText('https://example.com')).resolves.toBe('Title Hello world.')
@@ -153,7 +185,7 @@ describe('fetchArticleText', () => {
   })
 
   it('handles > in single-quoted attribute values', async () => {
-    allow('<div title=\'a > b\'>Text</div>')
+    allow("<div title='a > b'>Text</div>")
     await expect(fetchArticleText('https://example.com')).resolves.toBe('Text')
   })
 
@@ -161,9 +193,7 @@ describe('fetchArticleText', () => {
     // A quote only opens an attribute value when it is the first non-whitespace character after
     // '='. The unescaped apostrophe in "it's a test" must not be treated as an attribute-value
     // opener, or the next apostrophe in "don't" would wrongly close it and swallow the sentence.
-    allow(
-      "<div title='it's a test'>IMPORTANT TEXT HERE, don't miss this</div><p>foo</p>"
-    )
+    allow("<div title='it's a test'>IMPORTANT TEXT HERE, don't miss this</div><p>foo</p>")
     await expect(fetchArticleText('https://example.com')).resolves.toBe(
       "IMPORTANT TEXT HERE, don't miss this foo"
     )
