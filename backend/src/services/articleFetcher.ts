@@ -1,4 +1,5 @@
 import { fetchAllowedUrl } from './safeFetch'
+import { fetchMediumRssArticle } from './mediumRss'
 import {
   HTML_CONTENT_TYPE,
   maskNonMarkup,
@@ -52,7 +53,9 @@ async function readBoundedBytes(response: Response): Promise<Uint8Array> {
 // it. Treating every '<' as a tag start deleted everything up to the next '>'.
 function opensTag(html: string, index: number): boolean {
   const next = html[index + 1]
-  return next !== undefined && (/[a-zA-Z]/.test(next) || next === '/' || next === '!' || next === '?')
+  return (
+    next !== undefined && (/[a-zA-Z]/.test(next) || next === '/' || next === '!' || next === '?')
+  )
 }
 
 // quoteAware=false ends every tag at its first '>', ignoring quotes entirely. Both modes visit each
@@ -125,12 +128,10 @@ function extractText(html: string): string {
     first.abortedAt === null
       ? first.text
       : first.text + stripTags(masked.slice(first.abortedAt), false).text
-  return decodeEntities(text)
-    .replace(/\s+/g, ' ')
-    .trim()
+  return decodeEntities(text).replace(/\s+/g, ' ').trim()
 }
 
-export async function fetchArticleText(url: string): Promise<string | null> {
+async function fetchOriginalArticleText(url: string): Promise<string | null> {
   try {
     const allowed = await fetchAllowedUrl(url, AbortSignal.timeout(FETCH_TIMEOUT_MS))
     if (!allowed) return null
@@ -152,4 +153,13 @@ export async function fetchArticleText(url: string): Promise<string | null> {
   } catch {
     return null
   }
+}
+
+export async function fetchArticleText(url: string): Promise<string | null> {
+  const original = await fetchOriginalArticleText(url)
+  if (original) return original
+  const article = await fetchMediumRssArticle(url)
+  if (!article) return null
+  const text = extractText(article.html)
+  return text ? text.slice(0, MAX_CHARS) : null
 }

@@ -83,6 +83,13 @@ it runs a fresh generation; if that fails, the existing summary is left as it wa
 Summarization needs `GEMINI_API_KEY`. Without it the app works normally and every
 bookmark page simply shows its empty state.
 
+When a Medium page cannot be fetched, the backend tries the author's public RSS feed
+and matches the article by its ID. This fallback supplies the title and article text
+for summaries, labels, and article chat while keeping the original URL as the bookmark.
+It supports `author.medium.com` and `medium.com/@author` article links. Feeds contain
+recent posts only and may omit full paywalled content, so the fallback cannot recover
+every Medium article. Error pages such as Cloudflare blocks are never used as titles.
+
 Saving a bookmark also assigns it a handful of short topic labels, generated with the
 lighter `gemini-3.5-flash-lite` model from the same page content. Labels appear as chips
 in the list and on each bookmark's page. They are best-effort: a labelling failure never

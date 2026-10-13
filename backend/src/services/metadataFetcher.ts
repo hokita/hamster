@@ -1,4 +1,5 @@
 import { fetchAllowedUrl, isDisallowedHost } from './safeFetch'
+import { fetchMediumRssArticle } from './mediumRss'
 
 export const HTML_CONTENT_TYPE = /^(text\/html|application\/xhtml\+xml)/i
 const TITLE_REGEX = /<title[^>]*>([^<]*)<\/title>/i
@@ -480,6 +481,11 @@ async function fetchMetadataInner(url: string, signal: AbortSignal): Promise<Pag
   // origin favicon is always a usable answer even when the body is unparseable.
   const originFavicon = new URL('/favicon.ico', finalUrl).toString()
 
+  // A blocked page's title (e.g. Cloudflare's) is not the article's metadata.
+  if (response.status < 200 || response.status >= 300) {
+    return { title: null, faviconUrl: originFavicon }
+  }
+
   const contentType = response.headers.get('content-type') ?? ''
   if (!HTML_CONTENT_TYPE.test(contentType)) return { title: null, faviconUrl: originFavicon }
 
@@ -516,9 +522,13 @@ async function fetchMetadataInner(url: string, signal: AbortSignal): Promise<Pag
 }
 
 export async function fetchMetadata(url: string): Promise<PageMetadata> {
+  let metadata = EMPTY_METADATA
   try {
-    return await fetchMetadataInner(url, AbortSignal.timeout(FETCH_TIMEOUT_MS))
+    metadata = await fetchMetadataInner(url, AbortSignal.timeout(FETCH_TIMEOUT_MS))
   } catch {
-    return EMPTY_METADATA
+    // Medium's RSS feed may still work when the original page fetch failed.
   }
+  if (metadata.title) return metadata
+  const article = await fetchMediumRssArticle(url)
+  return article ? { ...metadata, title: article.title } : metadata
 }
