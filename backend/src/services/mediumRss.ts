@@ -31,6 +31,23 @@ function mediumSource(url: string): { feedUrl: string; articleId: string } | nul
   }
 }
 
+// These URLs identify entries in an already fetched Medium feed; they are never fetched.
+// Canonical article links can belong to publications or their custom domains.
+function entryArticleId(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  try {
+    const parsed = new URL(value.trim())
+    if (!['http:', 'https:'].includes(parsed.protocol)) return null
+    const guidId =
+      parsed.hostname === 'medium.com'
+        ? parsed.pathname.match(/^\/p\/([a-f0-9]{12})\/?$/i)?.[1]
+        : null
+    return (guidId ?? parsed.pathname.match(/-([a-f0-9]{12})\/?$/i)?.[1])?.toLowerCase() ?? null
+  } catch {
+    return null
+  }
+}
+
 export async function fetchMediumRssArticle(url: string): Promise<MediumArticle | null> {
   const source = mediumSource(url)
   if (!source) return null
@@ -64,8 +81,8 @@ export async function fetchMediumRssArticle(url: string): Promise<MediumArticle 
     const items = parser.parse(xml)?.rss?.channel?.item
     if (!Array.isArray(items)) return null
     for (const item of items) {
-      if (typeof item.link !== 'string') continue
-      if (mediumSource(item.link.trim())?.articleId !== source.articleId) continue
+      const articleId = entryArticleId(item.guid) ?? entryArticleId(item.link)
+      if (articleId !== source.articleId) continue
       const title = item.title
       const html = item['content:encoded']
       // Do not substitute the feed's description: it may be only a teaser.

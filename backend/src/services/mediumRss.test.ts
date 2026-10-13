@@ -50,6 +50,33 @@ describe('fetchMediumRssArticle', () => {
   })
 
   it.each([
+    'https://medium.com/publication/article-bd3dcb2c5f7b',
+    'https://publication.example/article-bd3dcb2c5f7b',
+  ])('matches canonical publication links without fetching them: %s', async (link) => {
+    respond(feed(item.replace(`${url}?source=rss`, link)))
+    await expect(fetchMediumRssArticle(url)).resolves.not.toBeNull()
+    expect(fetchAllowedUrl).toHaveBeenCalledTimes(1)
+  })
+
+  it('matches the stable GUID when the custom-domain link has no article ID', async () => {
+    respond(
+      feed(
+        item.replace(
+          `<link>${url}?source=rss</link>`,
+          '<guid isPermaLink="false">https://medium.com/p/bd3dcb2c5f7b</guid><link>https://publication.example/debugging</link>'
+        )
+      )
+    )
+    await expect(fetchMediumRssArticle(url)).resolves.not.toBeNull()
+    expect(fetchAllowedUrl).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not accept a different stable GUID despite a matching link', async () => {
+    respond(feed(item.replace('<item>', '<item><guid>https://medium.com/p/aaaaaaaaaaaa</guid>')))
+    await expect(fetchMediumRssArticle(url)).resolves.toBeNull()
+  })
+
+  it.each([
     'https://medium.com.evil.test/article-bd3dcb2c5f7b',
     'https://evilmedium.com/article-bd3dcb2c5f7b',
     'https://example.com/article-bd3dcb2c5f7b',
