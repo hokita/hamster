@@ -22,6 +22,7 @@ function mockResponse(
       get: (name: string) => (name.toLowerCase() === 'content-type' ? contentType : null),
     },
     body: {
+      cancel: vi.fn(async () => {}),
       getReader: () => ({
         read: async () => {
           if (index < chunks.length) {
@@ -100,12 +101,14 @@ describe('fetchMetadata', () => {
   })
 
   it('does not save error-page titles for other sites either', async () => {
-    mockFetch.mockResolvedValue(mockResponse(['<title>Forbidden</title>'], { status: 403 }))
+    const response = mockResponse(['<title>Forbidden</title>'], { status: 403 })
+    mockFetch.mockResolvedValue(response)
     await expect(fetchMetadata('https://example.com')).resolves.toEqual({
       title: null,
       faviconUrl: 'https://example.com/favicon.ico',
     })
     expect(mockFetch).toHaveBeenCalledTimes(1)
+    expect(response.body.cancel).toHaveBeenCalledTimes(1)
   })
 
   it('extracts and decodes the page title from a successful HTML response', async () => {

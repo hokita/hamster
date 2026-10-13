@@ -139,7 +139,10 @@ async function fetchOriginalArticleText(url: string): Promise<string | null> {
     // fetchAllowedUrl already chased 3xx redirects, so anything left outside 2xx is a served error
     // page (404, 500, 403, ...) rendered as ordinary HTML. That page's text is not article content —
     // extracting and summarizing it would silently present the site's error page as the bookmark.
-    if (allowed.response.status < 200 || allowed.response.status >= 300) return null
+    if (allowed.response.status < 200 || allowed.response.status >= 300) {
+      await allowed.response.body?.cancel().catch(() => {})
+      return null
+    }
 
     const contentType = allowed.response.headers.get('content-type') ?? ''
     if (!HTML_CONTENT_TYPE.test(contentType)) return null

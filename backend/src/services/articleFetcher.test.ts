@@ -17,6 +17,7 @@ function htmlResponse(html: string, contentType = 'text/html; charset=utf-8', st
       get: (name: string) => (name.toLowerCase() === 'content-type' ? contentType : null),
     },
     body: {
+      cancel: vi.fn(async () => {}),
       getReader: () => ({
         read: async () => {
           if (sent) return { done: true, value: undefined }
@@ -39,6 +40,16 @@ function allow(html: string, contentType?: string, status?: number) {
 beforeEach(() => vi.clearAllMocks())
 
 describe('fetchArticleText', () => {
+  it('cancels the body of a rejected article response', async () => {
+    const response = htmlResponse('<p>Forbidden</p>', undefined, 403)
+    vi.mocked(fetchAllowedUrl).mockResolvedValue({
+      response: response as unknown as Response,
+      finalUrl: 'https://example.com',
+    })
+    await expect(fetchArticleText('https://example.com')).resolves.toBeNull()
+    expect(response.body.cancel).toHaveBeenCalledTimes(1)
+  })
+
   it('falls back to the matching Medium RSS article when the page is blocked', async () => {
     const url = 'https://copyconstruct.medium.com/article-bd3dcb2c5f7b'
     vi.mocked(fetchAllowedUrl)

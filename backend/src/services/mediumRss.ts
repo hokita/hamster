@@ -54,7 +54,11 @@ export async function fetchMediumRssArticle(url: string): Promise<MediumArticle 
   try {
     // Feeds and every redirect pass through the same SSRF guard as ordinary page fetches.
     const allowed = await fetchAllowedUrl(source.feedUrl, AbortSignal.timeout(FETCH_TIMEOUT_MS))
-    if (!allowed || allowed.response.status < 200 || allowed.response.status >= 300) return null
+    if (!allowed) return null
+    if (allowed.response.status < 200 || allowed.response.status >= 300) {
+      await allowed.response.body?.cancel().catch(() => {})
+      return null
+    }
     const reader = allowed.response.body?.getReader()
     if (!reader) return null
     const chunks: Uint8Array[] = []

@@ -483,6 +483,7 @@ async function fetchMetadataInner(url: string, signal: AbortSignal): Promise<Pag
 
   // A blocked page's title (e.g. Cloudflare's) is not the article's metadata.
   if (response.status < 200 || response.status >= 300) {
+    await response.body?.cancel().catch(() => {})
     return { title: null, faviconUrl: originFavicon }
   }
 

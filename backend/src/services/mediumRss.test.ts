@@ -118,6 +118,17 @@ describe('fetchMediumRssArticle', () => {
     await expect(fetchMediumRssArticle(url)).resolves.toBeNull()
   })
 
+  it('cancels the body of a rejected feed response', async () => {
+    const response = new Response('Blocked', { status: 403 })
+    const cancel = vi.spyOn(response.body!, 'cancel')
+    vi.mocked(fetchAllowedUrl).mockResolvedValue({
+      response,
+      finalUrl: 'https://copyconstruct.medium.com/feed',
+    })
+    await expect(fetchMediumRssArticle(url)).resolves.toBeNull()
+    expect(cancel).toHaveBeenCalledTimes(1)
+  })
+
   it('returns null on network failure', async () => {
     vi.mocked(fetchAllowedUrl).mockRejectedValue(new Error('network failure'))
     await expect(fetchMediumRssArticle(url)).resolves.toBeNull()
