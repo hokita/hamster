@@ -47,6 +47,14 @@ class SummaryStorageError extends Error {
   }
 }
 
+// The video id is derived from the url on every read rather than stored, so it can never disagree
+// with the url and needs no migration for existing bookmarks. The key is left out entirely for a
+// non-video bookmark, rather than set to undefined or null.
+function withVideoId(bookmark: BookmarkDoc): BookmarkDoc & { videoId?: string } {
+  const videoId = parseYouTubeVideoId(bookmark.url)
+  return videoId ? { ...bookmark, videoId } : bookmark
+}
+
 export function createBookmarksRouter(): Router {
   const router = Router()
 
@@ -130,7 +138,7 @@ export function createBookmarksRouter(): Router {
   router.get('/', async (_req: Request, res: Response) => {
     try {
       const bookmarks = await db.listBookmarks()
-      res.json(bookmarks)
+      res.json(bookmarks.map(withVideoId))
     } catch {
       res.status(500).json({ error: 'Failed to list bookmarks' })
     }
@@ -155,7 +163,7 @@ export function createBookmarksRouter(): Router {
         ? { title: videoTitle, faviconUrl: YOUTUBE_FAVICON_URL }
         : await fetchMetadata(url)
       const bookmark = await db.createBookmark(url, title ?? url, faviconUrl)
-      res.status(201).json(bookmark)
+      res.status(201).json(withVideoId(bookmark))
     } catch {
       res.status(500).json({ error: 'Failed to create bookmark' })
     }
@@ -168,7 +176,7 @@ export function createBookmarksRouter(): Router {
         res.status(404).json({ error: 'Bookmark not found' })
         return
       }
-      res.json(bookmark)
+      res.json(withVideoId(bookmark))
     } catch {
       res.status(500).json({ error: 'Failed to load bookmark' })
     }

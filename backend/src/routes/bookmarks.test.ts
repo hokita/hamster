@@ -116,6 +116,55 @@ describe('GET /api/bookmarks', () => {
   })
 })
 
+describe('videoId in bookmark responses', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  const video = {
+    id: 'v1',
+    url: 'https://youtu.be/O_zcc6Xl12g?si=x',
+    title: 'Video',
+    createdAt: '2024-01-01T00:00:00.000Z',
+  }
+  const article = {
+    id: 'a1',
+    url: 'https://example.com/post',
+    title: 'Article',
+    createdAt: '2024-01-01T00:00:00.000Z',
+  }
+
+  it('GET / adds videoId for a YouTube bookmark and omits it for an article', async () => {
+    vi.mocked(db.listBookmarks).mockResolvedValue([video, article])
+    const res = await request(app).get('/api/bookmarks')
+    expect(res.body[0].videoId).toBe('O_zcc6Xl12g')
+    expect('videoId' in res.body[1]).toBe(false)
+  })
+
+  it('GET /:id adds videoId for a YouTube bookmark and omits it for an article', async () => {
+    vi.mocked(db.getBookmark).mockResolvedValueOnce(video)
+    const withId = await request(app).get('/api/bookmarks/v1')
+    expect(withId.body.videoId).toBe('O_zcc6Xl12g')
+    vi.mocked(db.getBookmark).mockResolvedValueOnce(article)
+    const without = await request(app).get('/api/bookmarks/a1')
+    expect('videoId' in without.body).toBe(false)
+  })
+
+  it('POST / returns videoId but does not pass it to createBookmark', async () => {
+    vi.mocked(fetchYouTubeTitle).mockResolvedValue('Video')
+    vi.mocked(db.createBookmark).mockResolvedValue(video)
+    const res = await request(app).post('/api/bookmarks').send({ url: video.url })
+    expect(res.status).toBe(201)
+    expect(res.body.videoId).toBe('O_zcc6Xl12g')
+    expect(db.createBookmark).toHaveBeenCalledWith(video.url, 'Video', YOUTUBE_FAVICON_URL)
+  })
+
+  it('POST / omits videoId for an article', async () => {
+    vi.mocked(fetchMetadata).mockResolvedValue({ title: 'Article', faviconUrl: null })
+    vi.mocked(db.createBookmark).mockResolvedValue(article)
+    const res = await request(app).post('/api/bookmarks').send({ url: article.url })
+    expect('videoId' in res.body).toBe(false)
+  })
+})
+
 describe('POST /api/bookmarks', () => {
   beforeEach(() => vi.clearAllMocks())
 
