@@ -1,4 +1,22 @@
 import { FieldValue, getFirestore, Timestamp } from 'firebase-admin/firestore'
+import { VIDEO_MODEL } from './videoSummarizer'
+
+export type VideoSummaryCode =
+  | 'video_too_long'
+  | 'video_unavailable'
+  | 'video_live'
+  | 'video_no_content'
+  | 'video_length_unknown'
+  | 'generic'
+
+const VIDEO_SUMMARY_CODES: readonly string[] = [
+  'video_too_long',
+  'video_unavailable',
+  'video_live',
+  'video_no_content',
+  'video_length_unknown',
+  'generic',
+]
 
 export interface BookmarkDoc {
   id: string
@@ -12,6 +30,7 @@ export interface BookmarkDoc {
   // "the field is missing" is not a third state a caller should have to think about. Documents
   // written before this feature simply have no `isRead` key, which toBookmark reads as unread.
   isRead: boolean
+  videoSummaryState?: { status: 'running' | 'failed'; code?: VideoSummaryCode; updatedAt: string }
   createdAt: string
 }
 
@@ -39,6 +58,23 @@ export async function createBookmark(
   }
 }
 
+// A state that doesn't match the shape is dropped rather than failing the bookmark: the field is
+// transient bookkeeping, and a hand-edited or half-migrated value must not hide the whole row.
+function toVideoSummaryState(value: unknown): BookmarkDoc['videoSummaryState'] {
+  const state = value as { status?: unknown; code?: unknown; updatedAt?: { toDate?: () => Date } }
+  if (typeof state !== 'object' || state === null) return undefined
+  if (state.status !== 'running' && state.status !== 'failed') return undefined
+  if (typeof state.updatedAt?.toDate !== 'function') return undefined
+  if (state.code !== undefined && !VIDEO_SUMMARY_CODES.includes(state.code as string)) {
+    return undefined
+  }
+  return {
+    status: state.status,
+    ...(state.code !== undefined ? { code: state.code as VideoSummaryCode } : {}),
+    updatedAt: state.updatedAt.toDate().toISOString(),
+  }
+}
+
 // Shared by listBookmarks and getBookmark. Returns null for any document that doesn't carry the
 // fields the app requires, so one malformed document can't break a whole listing.
 function toBookmark(id: string, data: unknown): BookmarkDoc | null {
@@ -50,6 +86,7 @@ function toBookmark(id: string, data: unknown): BookmarkDoc | null {
     shortSummary?: unknown
     labels?: unknown
     isRead?: unknown
+    videoSummaryState?: unknown
     createdAt?: { toDate?: () => Date }
   }
   if (
@@ -62,6 +99,7 @@ function toBookmark(id: string, data: unknown): BookmarkDoc | null {
   // faviconUrl and summary are deliberately absent from the validation above: every document
   // written before those fields existed lacks them, and gating on them would drop the entire
   // back catalogue.
+  const videoSummaryState = toVideoSummaryState(doc.videoSummaryState)
   return {
     id,
     url: doc.url,
@@ -77,6 +115,7 @@ function toBookmark(id: string, data: unknown): BookmarkDoc | null {
     // of as whatever that value happens to be truthy for. Absent — every bookmark saved before
     // this feature — is unread, which is what "I haven't marked it read" means.
     isRead: doc.isRead === true,
+    ...(videoSummaryState ? { videoSummaryState } : {}),
     createdAt: doc.createdAt.toDate().toISOString(),
   }
 }
@@ -177,9 +216,74 @@ export async function listAllLabels(): Promise<string[]> {
   return mostFrequent.sort()
 }
 
+// The transcript lives in its own collection (so bookmark listings never carry it), which means
+// deleting a bookmark must remove both documents together or leave an orphaned transcript behind.
+// Batch deletes of missing documents succeed, so this stays idempotent.
 export async function deleteBookmark(id: string): Promise<void> {
   const db = getFirestore()
-  await db.collection('bookmarks').doc(id).delete()
+  const batch = db.batch()
+  batch.delete(db.collection('bookmarks').doc(id))
+  batch.delete(db.collection('transcripts').doc(id))
+  await batch.commit()
+}
+
+export async function getTranscript(bookmarkId: string): Promise<string | null> {
+  const db = getFirestore()
+  const snap = await db.collection('transcripts').doc(bookmarkId).get()
+  if (!snap.exists) return null
+  const transcript = (snap.data() as { transcript?: unknown } | undefined)?.transcript
+  return typeof transcript === 'string' ? transcript : null
+}
+
+// One batch so the transcript and the summary land together or not at all. batch.update() on the
+// bookmark fails the whole commit with NOT_FOUND if it was deleted meanwhile, so no orphaned
+// transcript is created for a bookmark that no longer exists; that rejection propagates.
+export async function saveVideoSummary(
+  id: string,
+  data: {
+    videoId: string
+    transcript: string
+    summary: string
+    shortSummary?: string
+    title?: string
+  }
+): Promise<void> {
+  const db = getFirestore()
+  const batch = db.batch()
+  batch.set(db.collection('transcripts').doc(id), {
+    videoId: data.videoId,
+    transcript: data.transcript,
+    model: VIDEO_MODEL,
+    createdAt: Timestamp.now(),
+  })
+  // Same clearing rules as updateSummary: labels belong to the previous summary, and so does the
+  // short summary when its replacement is missing. The state is cleared because the run is over.
+  batch.update(db.collection('bookmarks').doc(id), {
+    summary: data.summary,
+    shortSummary: data.shortSummary ?? FieldValue.delete(),
+    labels: FieldValue.delete(),
+    videoSummaryState: FieldValue.delete(),
+    ...(data.title !== undefined ? { title: data.title } : {}),
+  })
+  await batch.commit()
+}
+
+// Swallows only NOT_FOUND: a bookmark deleted mid-run has nothing left to mark. Anything else is
+// the caller's to log, since a failed status write must not mask the summary outcome.
+export async function setVideoSummaryState(
+  id: string,
+  state: { status: 'running' } | { status: 'failed'; code: VideoSummaryCode }
+): Promise<void> {
+  const db = getFirestore()
+  try {
+    await db
+      .collection('bookmarks')
+      .doc(id)
+      .update({ videoSummaryState: { ...state, updatedAt: Timestamp.now() } })
+  } catch (error) {
+    if ((error as { code?: unknown }).code === NOT_FOUND) return
+    throw error
+  }
 }
 
 export async function listBookmarks(): Promise<BookmarkDoc[]> {

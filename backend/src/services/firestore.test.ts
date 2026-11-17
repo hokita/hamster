@@ -8,16 +8,27 @@ const mockUpdate = vi.fn()
 const mockDelete = vi.fn()
 const mockDoc = vi.fn(() => ({ get: mockDocGet, update: mockUpdate, delete: mockDelete }))
 const mockSelect = vi.fn(() => ({ get: mockGet }))
-const mockCollection = vi.fn(() => ({
+// Refs carry their path so a batch spy can tell transcripts/{id} from bookmarks/{id}.
+const mockCollection = vi.fn((name: string) => ({
   orderBy: mockOrderBy,
   add: mockAdd,
-  doc: mockDoc,
+  doc: (id: string) => ({ ...mockDoc(id), path: `${name}/${id}` }),
   select: mockSelect,
+}))
+const mockBatchSet = vi.fn()
+const mockBatchUpdate = vi.fn()
+const mockBatchDelete = vi.fn()
+const mockBatchCommit = vi.fn()
+const mockBatch = vi.fn(() => ({
+  set: mockBatchSet,
+  update: mockBatchUpdate,
+  delete: mockBatchDelete,
+  commit: mockBatchCommit,
 }))
 const fixedDate = new Date('2024-01-01T00:00:00.000Z')
 
 vi.mock('firebase-admin/firestore', () => ({
-  getFirestore: () => ({ collection: mockCollection }),
+  getFirestore: () => ({ collection: mockCollection, batch: mockBatch }),
   Timestamp: { now: () => ({ toDate: () => fixedDate }) },
   FieldValue: { delete: () => 'DELETE_SENTINEL' },
 }))
@@ -31,11 +42,15 @@ import {
   listAllLabels,
   deleteBookmark,
   setReadState,
+  getTranscript,
+  saveVideoSummary,
+  setVideoSummaryState,
 } from './firestore'
 
 beforeEach(() => {
   vi.clearAllMocks()
   mockAdd.mockResolvedValue({ id: 'new-id' })
+  mockBatchCommit.mockResolvedValue(undefined)
 })
 
 describe('listBookmarks', () => {
@@ -236,18 +251,19 @@ describe('updateSummary', () => {
 })
 
 describe('deleteBookmark', () => {
-  it('deletes the document with the given id', async () => {
-    mockDelete.mockResolvedValue(undefined)
-
+  it('deletes the bookmark and its transcript in one batch', async () => {
     await deleteBookmark('abc')
 
-    expect(mockCollection).toHaveBeenCalledWith('bookmarks')
-    expect(mockDoc).toHaveBeenCalledWith('abc')
-    expect(mockDelete).toHaveBeenCalled()
+    expect(mockBatchDelete).toHaveBeenCalledTimes(2)
+    expect(mockBatchDelete).toHaveBeenCalledWith(expect.objectContaining({ path: 'bookmarks/abc' }))
+    expect(mockBatchDelete).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'transcripts/abc' })
+    )
+    expect(mockBatchCommit).toHaveBeenCalledTimes(1)
   })
 
   it('propagates a Firestore failure to the caller', async () => {
-    mockDelete.mockRejectedValue(new Error('firestore down'))
+    mockBatchCommit.mockRejectedValue(new Error('firestore down'))
 
     await expect(deleteBookmark('abc')).rejects.toThrow('firestore down')
   })
@@ -559,4 +575,137 @@ describe('separate summary storage', () => {
       }
     }
   )
+})
+
+describe('getTranscript', () => {
+  it('returns the stored transcript', async () => {
+    mockDocGet.mockResolvedValue({ exists: true, data: () => ({ transcript: 'hello' }) })
+
+    expect(await getTranscript('abc')).toBe('hello')
+    expect(mockCollection).toHaveBeenCalledWith('transcripts')
+    expect(mockDoc).toHaveBeenCalledWith('abc')
+  })
+
+  it('returns null when there is no transcript document', async () => {
+    mockDocGet.mockResolvedValue({ exists: false, data: () => undefined })
+
+    expect(await getTranscript('abc')).toBeNull()
+  })
+
+  it('returns null when the transcript is not a string', async () => {
+    mockDocGet.mockResolvedValue({ exists: true, data: () => ({ transcript: 42 }) })
+
+    expect(await getTranscript('abc')).toBeNull()
+  })
+})
+
+describe('saveVideoSummary', () => {
+  const data = { videoId: 'vid1', transcript: 'T', summary: 'S', shortSummary: 'SS', title: 'Talk' }
+
+  it('writes transcript and bookmark fields in one batch', async () => {
+    await saveVideoSummary('abc', data)
+
+    expect(mockBatch).toHaveBeenCalledTimes(1)
+    expect(mockBatchSet).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'transcripts/abc' }),
+      { videoId: 'vid1', transcript: 'T', model: 'gemini-3.8-flash', createdAt: expect.anything() }
+    )
+    expect(mockBatchUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'bookmarks/abc' }),
+      {
+        summary: 'S',
+        shortSummary: 'SS',
+        labels: 'DELETE_SENTINEL',
+        videoSummaryState: 'DELETE_SENTINEL',
+        title: 'Talk',
+      }
+    )
+    expect(mockBatchCommit).toHaveBeenCalledTimes(1)
+  })
+
+  it('deletes the short summary and leaves the title alone when they are not given', async () => {
+    await saveVideoSummary('abc', { videoId: 'vid1', transcript: 'T', summary: 'S' })
+
+    const update = mockBatchUpdate.mock.calls[0][1]
+    expect(update.shortSummary).toBe('DELETE_SENTINEL')
+    expect(update).not.toHaveProperty('title')
+  })
+
+  it('fails as a whole on a deleted bookmark', async () => {
+    const notFound = Object.assign(new Error('NOT_FOUND'), { code: 5 })
+    mockBatchCommit.mockRejectedValue(notFound)
+
+    await expect(saveVideoSummary('abc', data)).rejects.toBe(notFound)
+  })
+})
+
+describe('setVideoSummaryState', () => {
+  it('stamps the state with updatedAt', async () => {
+    mockUpdate.mockResolvedValue(undefined)
+
+    await setVideoSummaryState('abc', { status: 'failed', code: 'video_too_long' })
+
+    expect(mockCollection).toHaveBeenCalledWith('bookmarks')
+    expect(mockDoc).toHaveBeenCalledWith('abc')
+    expect(mockUpdate).toHaveBeenCalledWith({
+      videoSummaryState: { status: 'failed', code: 'video_too_long', updatedAt: expect.anything() },
+    })
+  })
+
+  it('resolves when the bookmark was deleted meanwhile', async () => {
+    mockUpdate.mockRejectedValue(Object.assign(new Error('NOT_FOUND'), { code: 5 }))
+
+    await expect(setVideoSummaryState('abc', { status: 'running' })).resolves.toBeUndefined()
+  })
+
+  it('rejects on any other failure', async () => {
+    mockUpdate.mockRejectedValue(Object.assign(new Error('unavailable'), { code: 14 }))
+
+    await expect(setVideoSummaryState('abc', { status: 'running' })).rejects.toThrow('unavailable')
+  })
+})
+
+describe('videoSummaryState on bookmarks', () => {
+  const base = { url: 'https://example.com', title: 'T', createdAt: { toDate: () => fixedDate } }
+  const read = async (videoSummaryState: unknown) => {
+    const doc = { ...base, videoSummaryState }
+    mockDocGet.mockResolvedValue({ exists: true, id: 'abc', data: () => doc })
+    return getBookmark('abc')
+  }
+  const updatedAt = { toDate: () => fixedDate }
+
+  it('returns a valid state with an ISO updatedAt', async () => {
+    expect(
+      (await read({ status: 'failed', code: 'video_live', updatedAt }))?.videoSummaryState
+    ).toEqual({
+      status: 'failed',
+      code: 'video_live',
+      updatedAt: '2024-01-01T00:00:00.000Z',
+    })
+    expect((await read({ status: 'running', updatedAt }))?.videoSummaryState).toEqual({
+      status: 'running',
+      updatedAt: '2024-01-01T00:00:00.000Z',
+    })
+  })
+
+  it.each([
+    ['unknown status', { status: 'done', updatedAt }],
+    ['unknown code', { status: 'failed', code: 'nope', updatedAt }],
+    ['missing updatedAt', { status: 'running' }],
+    ['non-timestamp updatedAt', { status: 'running', updatedAt: 'yesterday' }],
+    ['not an object', 'running'],
+  ])('drops a malformed state (%s) but still returns the bookmark', async (_name, state) => {
+    const bookmark = await read(state)
+
+    expect(bookmark?.id).toBe('abc')
+    expect(bookmark).not.toHaveProperty('videoSummaryState')
+  })
+
+  it('listBookmarks never reads transcripts', async () => {
+    mockGet.mockResolvedValue({ docs: [{ id: 'abc', data: () => ({ ...base }) }] })
+
+    await listBookmarks()
+
+    expect(mockCollection).not.toHaveBeenCalledWith('transcripts')
+  })
 })
