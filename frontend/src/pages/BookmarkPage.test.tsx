@@ -1690,6 +1690,42 @@ describe('BookmarkPage video summaries', () => {
     expect(screen.getByRole('button', { name: 'Try again' })).toBeEnabled()
   })
 
+  it('lets a running state outrank a click failure that carried no code', async () => {
+    // A request that died without an answer (a dropped connection, a gateway timeout during a
+    // long watch) says nothing about the run, which may well still be going server-side.
+    vi.mocked(api.generateSummary).mockRejectedValue(new Error('API error: 504'))
+    renderPage()
+    await advance(0)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Generate summary' }))
+    await advance(0)
+    expect(screen.getByText("Couldn't generate a summary.")).toBeInTheDocument()
+
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...video,
+      videoSummaryState: stateAgo(30000, 'running'),
+    })
+    await advance(2000)
+
+    expect(screen.getByText(RUNNING_COPY)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Generate summary' })).toBeDisabled()
+  })
+
+  it('keeps the usual in-flight text while a click is still waiting for its answer', async () => {
+    // videoId is derived from the URL whether or not the server takes the video path, so a
+    // request in flight is no evidence that a video is being watched.
+    vi.mocked(api.generateSummary).mockReturnValue(new Promise(() => {}))
+    renderPage()
+    await advance(0)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Generate summary' }))
+    await advance(0)
+
+    expect(screen.getByText('No summary yet.')).toBeInTheDocument()
+    expect(screen.queryByText(RUNNING_COPY)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Generating/ })).toBeDisabled()
+  })
+
   it('offers no retry after a click is refused as too long', async () => {
     vi.mocked(api.generateSummary).mockRejectedValue(apiError(422, 'video_too_long'))
     renderPage()

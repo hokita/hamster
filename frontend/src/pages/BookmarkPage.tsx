@@ -700,36 +700,33 @@ export default function BookmarkPage() {
   const canTranslate = Boolean(bookmark.summary && textLanguage(bookmark.summary) === 'en')
   const showingTranslation = showTranslation && currentTranslation !== null
 
-  // What the page says when there is no summary, most immediate first. A click's own answer beats
-  // the stored state for the rest of the visit: it is newer, and it is what the reader just did.
-  // An article only ever reaches the generating, failed and "No summary yet." lines, as before.
+  // What the page says when there is no summary, most immediate first. A click that failed with a
+  // code beats the stored state for the rest of the visit: it is newer, and it is what the reader
+  // just did. A click that failed without one — a dropped connection, a gateway timeout during a
+  // long watch — says nothing about the run, which may still be going, so the stored state decides
+  // and the generic failure is only the fallback. An article never has a code or a stored state,
+  // so it only ever reaches the in-flight, generic failure and "No summary yet." lines, as before.
   function describeEmptyState(): {
     message: string
     failed: boolean
     running: boolean
     offersButton: boolean
   } {
-    const isVideo = Boolean(bookmark?.videoId)
+    const failed = (code: string | undefined) => ({
+      message: videoSummaryMessage(code),
+      failed: true,
+      running: false,
+      // Retrying cannot change a video's length, and each try is a request for nothing.
+      offersButton: code !== 'video_too_long',
+    })
+    // Today's in-flight line, video or not: videoId is derived from the URL even when the server
+    // takes the article path, so a pending request is no evidence that a video is being watched.
     if (isGenerating) {
-      // The server marks the run as started straight away, so say what a reload would say.
-      const message = isVideo ? VIDEO_SUMMARY_RUNNING_MESSAGE : 'No summary yet.'
-      return { message, failed: false, running: false, offersButton: true }
+      return { message: 'No summary yet.', failed: false, running: false, offersButton: true }
     }
+    if (generateFailed && generateFailureCode !== undefined) return failed(generateFailureCode)
     // A stale `running` has no code, so it reads as the generic failure — which it is.
-    const failureCode = generateFailed
-      ? generateFailureCode
-      : videoState && !videoRunning
-        ? videoState.code
-        : null
-    if (failureCode !== null) {
-      return {
-        message: videoSummaryMessage(failureCode),
-        failed: true,
-        running: false,
-        // Retrying cannot change a video's length, and each try is a request for nothing.
-        offersButton: failureCode !== 'video_too_long',
-      }
-    }
+    if (videoState && !videoRunning) return failed(videoState.code)
     if (videoRunning) {
       return {
         message: VIDEO_SUMMARY_RUNNING_MESSAGE,
@@ -738,6 +735,7 @@ export default function BookmarkPage() {
         offersButton: true,
       }
     }
+    if (generateFailed) return failed(undefined)
     return { message: 'No summary yet.', failed: false, running: false, offersButton: true }
   }
   const emptyState = describeEmptyState()
