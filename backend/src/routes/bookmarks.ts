@@ -4,6 +4,8 @@ import * as db from '../services/firestore'
 import type { BookmarkDoc } from '../services/firestore'
 import { fetchMetadata } from '../services/metadataFetcher'
 import { fetchArticleText } from '../services/articleFetcher'
+import { parseYouTubeVideoId } from '../services/youtube'
+import { fetchYouTubeTitle, YOUTUBE_FAVICON_URL } from '../services/youtubeOembed'
 import {
   summarize,
   isSummarizerConfigured,
@@ -145,7 +147,13 @@ export function createBookmarksRouter(): Router {
       return
     }
     try {
-      const { title, faviconUrl } = await fetchMetadata(url)
+      // Independent of YOUTUBE_SUMMARIES: the oEmbed title is wanted whether or not videos are
+      // summarized. A failed oEmbed falls through to the ordinary metadata fetch.
+      const videoId = parseYouTubeVideoId(url)
+      const videoTitle = videoId ? await fetchYouTubeTitle(videoId) : null
+      const { title, faviconUrl } = videoTitle
+        ? { title: videoTitle, faviconUrl: YOUTUBE_FAVICON_URL }
+        : await fetchMetadata(url)
       const bookmark = await db.createBookmark(url, title ?? url, faviconUrl)
       res.status(201).json(bookmark)
     } catch {

@@ -15,6 +15,15 @@ vi.mock('../services/firestore', () => ({
 vi.mock('../services/metadataFetcher', () => ({
   fetchMetadata: vi.fn(),
 }))
+vi.mock('../services/youtubeOembed', async () => {
+  const actual = await vi.importActual<typeof import('../services/youtubeOembed')>(
+    '../services/youtubeOembed'
+  )
+  return {
+    fetchYouTubeTitle: vi.fn(),
+    YOUTUBE_FAVICON_URL: actual.YOUTUBE_FAVICON_URL,
+  }
+})
 vi.mock('../services/articleFetcher', () => ({
   fetchArticleText: vi.fn(),
 }))
@@ -56,6 +65,7 @@ import { createBookmarksRouter } from './bookmarks'
 import * as db from '../services/firestore'
 import { fetchMetadata } from '../services/metadataFetcher'
 import { fetchArticleText } from '../services/articleFetcher'
+import { fetchYouTubeTitle, YOUTUBE_FAVICON_URL } from '../services/youtubeOembed'
 import {
   summarize,
   isSummarizerConfigured,
@@ -334,6 +344,59 @@ describe('PUT /api/bookmarks/:id/read', () => {
 
     expect(res.status).toBe(500)
     expect(res.body).toEqual({ error: expect.any(String) })
+  })
+})
+
+describe('POST /api/bookmarks with a YouTube video link', () => {
+  const videoUrl = 'https://youtu.be/O_zcc6Xl12g?si=x'
+  beforeEach(() => {
+    vi.resetAllMocks()
+    delete process.env.YOUTUBE_SUMMARIES
+    vi.mocked(db.createBookmark).mockResolvedValue({
+      id: '1',
+      url: videoUrl,
+      title: 'x',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    })
+  })
+
+  it('titles the bookmark from oEmbed with the YouTube favicon, skipping fetchMetadata', async () => {
+    vi.mocked(fetchYouTubeTitle).mockResolvedValue('All Code Is Slop')
+    const res = await request(app).post('/api/bookmarks').send({ url: videoUrl })
+    expect(res.status).toBe(201)
+    expect(fetchYouTubeTitle).toHaveBeenCalledWith('O_zcc6Xl12g')
+    expect(db.createBookmark).toHaveBeenCalledWith(
+      videoUrl,
+      'All Code Is Slop',
+      YOUTUBE_FAVICON_URL
+    )
+    expect(fetchMetadata).not.toHaveBeenCalled()
+  })
+
+  it('falls back to fetchMetadata when oEmbed has no title', async () => {
+    vi.mocked(fetchYouTubeTitle).mockResolvedValue(null)
+    vi.mocked(fetchMetadata).mockResolvedValue({
+      title: 'Page title',
+      faviconUrl: 'https://f/i.ico',
+    })
+    const res = await request(app).post('/api/bookmarks').send({ url: videoUrl })
+    expect(res.status).toBe(201)
+    expect(db.createBookmark).toHaveBeenCalledWith(videoUrl, 'Page title', 'https://f/i.ico')
+  })
+
+  it('uses the URL as the title when neither source has one', async () => {
+    vi.mocked(fetchYouTubeTitle).mockResolvedValue(null)
+    vi.mocked(fetchMetadata).mockResolvedValue({ title: null, faviconUrl: null })
+    await request(app).post('/api/bookmarks').send({ url: videoUrl })
+    expect(db.createBookmark).toHaveBeenCalledWith(videoUrl, videoUrl, null)
+  })
+
+  it('uses only fetchMetadata for a non-video YouTube URL', async () => {
+    const channel = 'https://www.youtube.com/@somechannel'
+    vi.mocked(fetchMetadata).mockResolvedValue({ title: 'Channel', faviconUrl: null })
+    await request(app).post('/api/bookmarks').send({ url: channel })
+    expect(fetchYouTubeTitle).not.toHaveBeenCalled()
+    expect(db.createBookmark).toHaveBeenCalledWith(channel, 'Channel', null)
   })
 })
 
