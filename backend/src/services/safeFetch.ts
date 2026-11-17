@@ -38,18 +38,27 @@ export interface AllowedResponse {
 // would let the runtime chase a redirect into a private address behind our back. Returns null for
 // any outcome that means "there is nothing safe to read here": a non-http(s) protocol, a disallowed
 // host, an exhausted redirect budget, or a redirect with no destination.
+// `headers` (e.g. an API key) are sent only while a hop stays on the original URL's origin, so a
+// redirect to another site can never receive them.
 export async function fetchAllowedUrl(
   url: string,
-  signal: AbortSignal
+  signal: AbortSignal,
+  headers?: Record<string, string>
 ): Promise<AllowedResponse | null> {
   let currentUrl = url
+  const originalOrigin = new URL(url).origin
 
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     const parsed = new URL(currentUrl)
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null
     if (await isDisallowedHost(parsed.hostname, signal)) return null
 
-    const response = await fetch(currentUrl, { redirect: 'manual', signal })
+    const sendHeaders = headers && parsed.origin === originalOrigin
+    const response = await fetch(currentUrl, {
+      redirect: 'manual',
+      signal,
+      ...(sendHeaders ? { headers } : {}),
+    })
 
     if (response.status >= 300 && response.status < 400) {
       if (hop === MAX_REDIRECTS) return null
