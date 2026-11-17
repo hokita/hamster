@@ -1520,3 +1520,220 @@ describe('BookmarkPage read flag', () => {
     }
   })
 })
+
+describe('BookmarkPage video summaries', () => {
+  const video = {
+    id: '1',
+    url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    title: 'A Video',
+    videoId: 'dQw4w9WgXcQ',
+    isRead: false,
+    createdAt: '2024-01-01T00:00:00.000Z',
+  }
+  const RUNNING_COPY = 'Summarizing the video — this can take a few minutes.'
+  const UNAVAILABLE_COPY =
+    "Couldn't watch this video. Only public YouTube videos can be summarized — it may be " +
+    'private, unlisted, members-only, age-restricted or removed.'
+
+  // Shaped like what api.ts throws. Built by hand because this file mocks '../api' wholesale, and
+  // the page reads the code off the error rather than relying on the class.
+  function apiError(status: number, code?: string) {
+    return Object.assign(new Error(`API error: ${status}`), { status, code })
+  }
+
+  function stateAgo(ms: number, status: 'running' | 'failed', code?: string) {
+    return { status, code, updatedAt: new Date(Date.now() - ms).toISOString() }
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.useFakeTimers()
+    vi.mocked(api.getBookmark).mockResolvedValue(video)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  async function advance(ms: number) {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms)
+    })
+  }
+
+  it('shows a stored too-long failure with no retry, and does not poll', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...video,
+      videoSummaryState: stateAgo(5000, 'failed', 'video_too_long'),
+    })
+    renderPage()
+    await advance(0)
+
+    expect(
+      screen.getByText("This video is longer than 60 minutes, so it wasn't summarized.")
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Generate summary' })).not.toBeInTheDocument()
+
+    await advance(20000)
+    expect(api.getBookmark).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows a stored unavailable failure with a retry, and does not poll', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...video,
+      videoSummaryState: stateAgo(5000, 'failed', 'video_unavailable'),
+    })
+    renderPage()
+    await advance(0)
+
+    expect(screen.getByText(UNAVAILABLE_COPY)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeEnabled()
+
+    await advance(20000)
+    expect(api.getBookmark).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows a fresh running state, disables Generate, and keeps polling past 90 s', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...video,
+      videoSummaryState: stateAgo(1000, 'running'),
+    })
+    renderPage()
+    await advance(0)
+
+    expect(screen.getByText(RUNNING_COPY)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Generate summary' })).toBeDisabled()
+
+    await advance(200000)
+    expect(api.getBookmark).toHaveBeenCalledTimes(101) // 1 initial load + 100 polls
+    expect(screen.getByText(RUNNING_COPY)).toBeInTheDocument()
+  })
+
+  it('shows a stale running state as a generic failure with a retry, and does not poll', async () => {
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...video,
+      videoSummaryState: stateAgo(700000, 'running'),
+    })
+    renderPage()
+    await advance(0)
+
+    expect(screen.getByText("Couldn't generate a summary.")).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeEnabled()
+    expect(screen.queryByText(RUNNING_COPY)).not.toBeInTheDocument()
+
+    await advance(20000)
+    expect(api.getBookmark).toHaveBeenCalledTimes(1)
+  })
+
+  it('turns a running state into a generic failure once it goes stale while on screen', async () => {
+    // The instance running it died or was redeployed; nothing will ever clear the state, so the
+    // page has to stop promising a summary on its own clock.
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...video,
+      videoSummaryState: stateAgo(600000, 'running'),
+    })
+    renderPage()
+    await advance(0)
+    expect(screen.getByText(RUNNING_COPY)).toBeInTheDocument()
+
+    await advance(61000)
+    expect(screen.getByText("Couldn't generate a summary.")).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeEnabled()
+    const countAtStale = vi.mocked(api.getBookmark).mock.calls.length
+
+    await advance(20000)
+    expect(api.getBookmark).toHaveBeenCalledTimes(countAtStale)
+  })
+
+  it('adopts a running state that appears mid-poll and keeps polling past 90 s', async () => {
+    const running = { ...video, videoSummaryState: stateAgo(0, 'running') }
+    vi.mocked(api.getBookmark)
+      .mockResolvedValueOnce(video)
+      .mockResolvedValueOnce(video)
+      .mockResolvedValueOnce(video)
+      .mockResolvedValue(running)
+    renderPage()
+    await advance(0)
+    expect(screen.getByText('No summary yet.')).toBeInTheDocument()
+
+    await advance(6000)
+    expect(screen.getByText(RUNNING_COPY)).toBeInTheDocument()
+
+    // Adopting the state restarts the poll, so even the article budget would run on to
+    // 1 + 3 + 45 calls; only the video budget gets past that.
+    await advance(194000)
+    expect(api.getBookmark).toHaveBeenCalledTimes(1 + 3 + 97)
+  })
+
+  it('picks up the summary when a running video finishes', async () => {
+    vi.mocked(api.getBookmark)
+      .mockResolvedValueOnce({ ...video, videoSummaryState: stateAgo(1000, 'running') })
+      .mockResolvedValue({ ...video, summary: 'The video explains widgets.', labels: ['widgets'] })
+    renderPage()
+    await advance(0)
+
+    await advance(2000)
+    expect(screen.getByText('The video explains widgets.')).toBeInTheDocument()
+    expect(screen.queryByText(RUNNING_COPY)).not.toBeInTheDocument()
+  })
+
+  it("shows the clicked generation's code over the stored state", async () => {
+    vi.mocked(api.generateSummary).mockRejectedValue(apiError(422, 'video_unavailable'))
+    renderPage()
+    await advance(0)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Generate summary' }))
+    await advance(0)
+
+    expect(screen.getByText(UNAVAILABLE_COPY)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeEnabled()
+  })
+
+  it('offers no retry after a click is refused as too long', async () => {
+    vi.mocked(api.generateSummary).mockRejectedValue(apiError(422, 'video_too_long'))
+    renderPage()
+    await advance(0)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Generate summary' }))
+    await advance(0)
+
+    expect(
+      screen.getByText("This video is longer than 60 minutes, so it wasn't summarized.")
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument()
+  })
+
+  it('shows the running copy and keeps polling when another instance is already summarizing', async () => {
+    vi.mocked(api.generateSummary).mockRejectedValue(apiError(409, 'video_summary_running'))
+    renderPage()
+    await advance(0)
+    vi.mocked(api.getBookmark).mockResolvedValue({
+      ...video,
+      videoSummaryState: stateAgo(30000, 'running'),
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Generate summary' }))
+    await advance(0)
+
+    expect(screen.getByText(RUNNING_COPY)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Generate summary' })).toBeDisabled()
+    const countAfterConflict = vi.mocked(api.getBookmark).mock.calls.length
+
+    await advance(120000)
+    expect(api.getBookmark).toHaveBeenCalledTimes(countAfterConflict + 60)
+  })
+
+  it('still shows the running copy after a conflict when the re-read fails', async () => {
+    vi.mocked(api.generateSummary).mockRejectedValue(apiError(409, 'video_summary_running'))
+    renderPage()
+    await advance(0)
+    vi.mocked(api.getBookmark).mockRejectedValueOnce(new Error('API error: 500'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Generate summary' }))
+    await advance(0)
+
+    expect(screen.getByText(RUNNING_COPY)).toBeInTheDocument()
+    expect(screen.queryByText("Couldn't generate a summary.")).not.toBeInTheDocument()
+  })
+})
