@@ -1,7 +1,7 @@
 # YouTube video summaries — design
 
 Date: 2026-11-17
-Status: draft for review (design only; no product code yet)
+Status: approved design; the user's answers to the open questions are recorded in §15 (2026-11-17)
 
 Labels used in this doc:
 
@@ -57,7 +57,7 @@ slides and auto-generated captions only.
 - A UI redesign. The only UI work is the new messages, and "still working" behaviour long enough for a
   slow video summary.
 - Bulk backfill of existing YouTube bookmarks. The original spec excludes bulk backfill too.
-- Showing the transcript in the UI. It is stored for reuse only (builder's call, see §15 Q6).
+- Showing the transcript in the UI. It is stored for reuse only (user decision, §15 Q6).
 
 **Anti-goals** (the feature fails if any of these happen, even if it otherwise works)
 
@@ -99,16 +99,21 @@ slides and auto-generated captions only.
 | Models | "All Gemini models can process video data". `gemini-3.8-flash` (the summarizer's model) is listed for video, including agentic mode |
 | gemini-3.8-flash price | $0.75 / 1M input (all modalities), $3.75 / 1M output incl. thinking, through 2026-12-31. **Doubles on 2027-01-01** ($1.50 / $7.50) |
 
-**Cost, corrected.** The orchestrator's figures (≈¥14 for 17 min, ≈¥85 for 1 h) are roughly right
-**once YouTube input is billed**, and only at the 2027 rate. While the feature is in preview the video
-input is free and only output tokens are paid. Estimates at ~¥155/$, low resolution:
+**Cost.** While YouTube URL input is in preview, **video input is free** and only output tokens are
+paid. A 17-minute talk costs about **¥5 today** (~6k output tokens incl. thinking at $3.75/1M, ~¥155/$).
+Costs rise in two steps:
 
-| Video | Input tokens | Input cost 2026 / 2027 | Output (~6k / ~28k tokens) |
+1. When Google starts billing YouTube video input (the docs say preview pricing "is likely to change").
+   The input is then ~100 tokens per second at low resolution.
+2. Again from **2027-01-01**, when gemini-3.8-flash prices double.
+
+| Video | Today (preview) | Video input billed, 2026 rate | Video input billed, 2027 rate |
 |---|---|---|---|
-| 17.5 min | ~105k | ¥12 / ¥24 | ~¥4 / ¥7 |
-| 60 min | ~360k | ¥42 / ¥84 | ~¥16 / ¥33 |
+| 17.5 min (~105k input, ~6k output) | ~¥4–5 | ~¥16 | ~¥31 |
+| 60 min (~360k input, ~28k output) | ~¥16 | ~¥58 | ~¥117 |
 
-The 60-minute limit and "watch once" still matter, because Google says preview pricing will change.
+The orchestrator's earlier figures (≈¥14 for 17 min, ≈¥85 for 1 h) describe the billed-input case, not
+today's cost. The 60-minute limit and "watch once" are there for when billing starts.
 
 ## 4. Approaches
 
@@ -186,18 +191,15 @@ oEmbed has no duration. The options, from a Cloud Run server:
 | Innertube `youtubei/v1/player` | No | Unofficial, same IP blocking, can break without notice | Same as watch page | — |
 | Ask Gemini | No | Gemini has to see the video to know its length, which is the cost the check is meant to avoid | — | Up to the full video |
 
-**Recommendation: Data API v3, sending the key in the `X-Goog-Api-Key` header (never the query
+**User decision (§15 Q1): Data API v3, sending the key in the `X-Goog-Api-Key` header (never the query
 string).** It's the only reliable option, and the same call does the privacy, live and age checks that
-§9 needs. This needs a new secret and the user asked for no key "if possible", so the choice goes to
-the user (§15 Q1).
+§9 needs.
 
 **Backstop, whichever option is chosen (builder's call):** the Gemini request always sets
 `videoMetadata.endOffset = '3600s'` (the limit). If a length check is ever wrong or skipped, the spend
 is still capped at 60 minutes of video. The prompt is never told the video was cut, so the backstop must
-not stand in for the check. When the length is unknown, the behaviour is a user decision (§15 Q4).
-Recommended: if the Data API is chosen, refuse with a retryable "Couldn't check this video" message
-(unknown length should be rare). If the keyless option is chosen, refuse as well and accept that more
-videos fail.
+not stand in for the check. **User decision (§15 Q4): when the length is unknown, refuse** with the
+retryable `video_length_unknown` message. No Gemini call is made.
 
 The Data API call goes through `fetchAllowedUrl` like every other outbound fetch, with a 5 s timeout.
 ISO-8601 durations (`PT1H2M3S`, `P1DT2H`) are parsed by a small tested helper. `P0D` or a missing
@@ -251,8 +253,7 @@ A new service, `backend/src/services/videoSummarizer.ts` (builder's call on the 
   5. **"Did it really watch?" guard (builder's call):** `usageMetadata.promptTokensDetails` VIDEO
      modality tokens must be at least ~50% of `min(duration, 3600) × 66 tokens/s`. If not, treat it as
      unwatchable and log the counts. This catches the anti-goal where Gemini answers from the URL or
-     title alone. When the length is unknown (only possible if §15 Q4 allows it), require a non-trivial
-     video token count (e.g. > 1,000).
+     title alone. (The length is always known by this point: an unknown length is refused, §15 Q4.)
   6. Transcript under ~200 characters with `status: ok` on a video over 2 minutes: treated as
      `no_content`.
 
@@ -275,7 +276,7 @@ Checks run in this order, the free ones before any paid call:
 | Live now / upcoming | Data API `liveBroadcastContent` ≠ `none`, or no duration | 422 `video_live` | "This is a live or upcoming stream. Try again after it has ended." | Shown |
 | Members-only, age-restricted, region-blocked | Not reliably detectable beforehand. Gemini error, `status: unwatchable`, or the token guard | 502 `video_unavailable` | same as private | Shown |
 | No speech or text | `status: no_content` or the transcript check | 422 `video_no_content` | "This video has no speech or on-screen text to summarize." | Shown |
-| Length unknown (if §15 Q4 = refuse) | Data API failure or missing key | 502 `video_length_unknown` | "Couldn't check this video's length. Try again later." | Shown |
+| Length unknown (§15 Q4) | Data API failure or missing key | 502 `video_length_unknown` | "Couldn't check this video's length. Try again later." | Shown |
 | Gemini timeout, 5xx, 429 / quota, MAX_TOKENS, malformed output | Call or result checks | 502 (no code) | Today's "Couldn't generate a summary." | Shown (paid: re-watches) |
 | Already running on another instance | Fresh `running` state (§10) | 409 `video_summary_running` | "Summarizing the video — this can take a few minutes." | Page keeps polling |
 | No `GEMINI_API_KEY` | `isSummarizerConfigured` | 503, as today | as today | as today |
@@ -368,7 +369,7 @@ running. So the server records what it is doing (builder's call):
   - Transcript stored: re-summarize from the transcript with the text summarizer, using video wording and
     the same fencing. No video is sent; 45 s timeout path.
   - No transcript (first watch failed, or a bookmark from before this feature): do the first watch (§8).
-  - There's no "re-watch" action (builder's call; §15 Q5 asks whether one is wanted).
+  - There's no "re-watch" action (user decision, §15 Q5).
 - **Generation order** in `generateSummary` for a video: configured? → parse id → free checks (length,
   availability) → transcript stored? → (summary from transcript) or (first watch) → short summary → batch
   write → labels. The in-flight dedup map covers both branches unchanged.
@@ -402,7 +403,7 @@ running. So the server records what it is doing (builder's call):
   placed in a system instruction. The oEmbed/Data API title is fenced the same way.
 - **No secrets or content in logs:** the Data API key goes in a header, so it can't appear in a logged URL
   or fetch error. Logs carry bookmark id, video id, error class/status and token counts. Never transcript
-  text, summary text or keys. A new key (if §15 Q1 = Data API) is stored in Secret Manager and added to
+  text, summary text or keys. The new YouTube key is stored in Secret Manager and added to
   `--set-secrets`; it's never in the repo, `.env` examples or test fixtures. Restrict it to YouTube Data
   API v3.
 - Summaries render through the existing Markdown sanitising path, unchanged.
@@ -421,8 +422,14 @@ links use today's article path for summaries, but keep the oEmbed title (§6), w
 The flag lets the feature merge and deploy before it's verified live, and be switched off without a
 revert if a guard turns out wrong in production.
 
-**Deploy ordering (if §15 Q1 = Data API).** The user does these steps before the deploy that references
-the key. A missing secret fails the deploy.
+**Ships on (builder's call, made after §15 Q2).** The deploy workflow sets `YOUTUBE_SUMMARIES=on`. The
+PR is merged only after the live check passes, so there's no unverified period to protect. Emergency
+off without a deploy: `gcloud run services update hamster-backend --region asia-northeast1
+--update-env-vars YOUTUBE_SUMMARIES=off`. That lasts until the next deploy, because the workflow's
+`--set-env-vars` resets it. A lasting off is a one-line PR to the workflow.
+
+**Deploy ordering.** A worker does these steps with `gcloud` (the user authorised this), before the
+deploy that references the key. A missing secret fails the deploy. The plan has the exact commands.
 
 1. Enable YouTube Data API v3 in `hamster-52b093`.
 2. Create an API key restricted to that API.
@@ -434,13 +441,15 @@ deploy step.
 
 **Unverified until a live call (no Gemini key on disk; no paid calls in this work)**
 
-When the live check happens is a user decision (§15 Q2). It uses the sample video. Points to check: the `fileData` and
+**User decision (§15 Q2):** one live check before the PR is merged. A local script calls the real code
+once on the sample video `https://www.youtube.com/watch?v=O_zcc6Xl12g` (at most 2 Gemini calls in
+total). The results go in the PR description. Points to check: the `fileData` and
 `videoMetadata` shapes on gemini-3.8-flash, JSON mode with a ~20k-token string, the
 `promptTokensDetails` VIDEO count, the error shapes for private/unlisted/members-only videos, the
 real latency for 17 and 60 minutes, and the model's maximum output tokens. Each guard above is designed to
 fail closed if one of these turns out different.
 
-## 14. What's left to the builder, and open questions
+## 14. What's left to the builder
 
 **Builder's calls already made in this doc** (revisable with reason): module names; stored URL unchanged
 plus computed `videoId`; fixed YouTube favicon; oEmbed fallback chain; `endOffset` backstop; low media
@@ -448,48 +457,27 @@ resolution; JSON output schema and transcript format; `maxOutputTokens 49_152`; 
 Cloud Run timeouts; streaming; the token-count "did it watch" guard; error codes and messages; persisted
 `videoSummaryState` with a stale-after-11-min rule and 409 on a running duplicate; age-restricted not
 refused up front; 10-minute poll only while `running`; `transcripts/{id}` collection, batch writes and
-the 300k-char cap; labels from summary + transcript; no re-watch action; no daily cap; title repair on
+the 300k-char cap; labels from summary + transcript; no daily cap; title repair on
 regenerate; the `YOUTUBE_SUMMARIES` kill switch.
 
 **Also left to the builder:** sharing prompt text between article and video summarizers; how
 `generateSummary` is split so the article path stays byte-for-byte the same; exact Data API field
 handling.
 
-## 15. Questions for the user
+## 15. User decisions on the open questions (2026-11-17)
 
-Most important first. Until each is answered, the plan uses the **recommended** option.
+The user accepted the recommended option for all six.
 
-1. **How to get the video length: a YouTube Data API key, or keyless?**
-   - (a) **Data API v3 key (recommended).** Official and reliable from Cloud Run. One call also detects
-     unlisted, private, removed and live videos before any Gemini call. Costs nothing within the free
-     10,000 units/day. Needs the setup steps in §13, which the user does, before deploy.
-   - (b) **Keyless watch-page scrape.** No new secret. But it's the same unofficial, IP-blocked route that
-     got B rejected: often no length, no unlisted detection. Under Q4's recommendation many videos would
-     be refused.
-   - (c) **No pre-check:** send everything clipped to 60 minutes. Videos over 60 minutes would get a
-     partial summary with no warning, which contradicts the "too long" message.
-2. **Live verification before merge.** This design rests on Gemini behaviour nobody has checked live
-   (§13 list). Past work here shipped without a live call and hid a P1.
-   - (a) **Recommended:** before merge, the user runs (or lets the builder run) one manual call with the
-     sample video, using the production key. YouTube input is free in preview, so it costs about ¥5 of
-     output. The builder adds a small script for this that is never run in CI.
-   - (b) Merge with `YOUTUBE_SUMMARIES` off, deploy, then turn it on and check in production.
-   - (c) Ship on and fix whatever breaks.
-3. **Videos over 60 minutes (orchestrator's proposal).**
-   - (a) **Recommended:** no summary, show the "longer than 60 minutes" message.
-   - (b) Summarize the first 60 minutes, with a visible note saying so.
-   - (c) A different limit, e.g. 90 or 120 min. Cost per video scales linearly: ~¥85 input per hour
-     once billed at 2027 rates. Above ~2.7 h the transcript output budget no longer fits.
-4. **Length can't be determined** (Data API down or quota, or always under keyless).
-   - (a) **Recommended:** refuse with "Couldn't check this video's length. Try again later."
-   - (b) Send it clipped to 60 minutes anyway, and label the summary as possibly partial.
-5. **"Watch once" (orchestrator's proposal): is a "re-watch the video" action wanted?** Regenerate
-   re-summarizes from the stored transcript, so a bad transcript can never be fixed from the UI.
-   - (a) **Recommended:** no re-watch in v1. Deleting and re-saving the bookmark forces a fresh watch.
-   - (b) Add a separate, explicitly paid "Re-watch video" button.
-6. **Showing the transcript on the bookmark page.**
-   - (a) **Recommended:** not in v1. Stored for chat, labels and regenerate only.
-   - (b) A collapsed "Transcript" section under the summary. A small UI addition, outside "messages only".
+1. **Video length and availability: YouTube Data API v3 key.** It's used for the length, private,
+   unlisted, removed and live checks before any Gemini call. A worker sets up the key with `gcloud`
+   (§13).
+2. **One live Gemini test call before merge**, on the sample video `O_zcc6Xl12g`, about ¥5. It reads the
+   keys from Secret Manager without printing them, makes at most 2 calls in total, and the results go in
+   the PR description.
+3. **Over 60 minutes:** no summary. Show "This video is longer than 60 minutes, so it wasn't summarized."
+4. **Length unknown:** refuse with "Couldn't check this video's length. Try again later." No Gemini call.
+5. **No re-watch button in v1.** Regenerate re-summarizes from the stored transcript.
+6. **Transcript not shown in v1.** It's stored for chat, labels and regenerate only.
 
 ## 16. Tests (Gemini, oEmbed and Data API always mocked; no real video calls in CI)
 
@@ -538,6 +526,7 @@ Most important first. Until each is answered, the plan uses the **recommended** 
 
 **e2e (Playwright, no `GEMINI_API_KEY`)**
 
-- Saving a YouTube URL in e2e must not depend on youtube.com, so the builder adds a test seam (e.g. an
-  env-configurable oEmbed base URL pointed at a local fixture). Then: save `youtu.be/<id>` → the list
-  shows the fixture title. Opening it → Generate → the deterministic 503 path, as today.
+- No YouTube network in e2e. The SSRF guard would block a local oEmbed fixture anyway. Instead, the tests
+  seed video bookmarks straight into the Firestore emulator (the existing `seedBookmark` fixture,
+  extended) with a `failed` or `running` `videoSummaryState`, and check that the page shows the right
+  message and button state.
