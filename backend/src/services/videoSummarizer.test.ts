@@ -36,7 +36,8 @@ const SUMMARY = 'An overview.\n\n## Key points\n\n- **One** — detail.'
 
 interface ChunkOptions {
   videoTokens?: number | null
-  finishReason?: string
+  // null leaves the finish reason off entirely, as some streams do.
+  finishReason?: string | null
 }
 
 // Splits the reply across several chunks, as a real stream does; only the last carries the
@@ -50,7 +51,7 @@ function chunksFor(text: string, options: ChunkOptions = {}) {
       ? { text: part }
       : {
           text: part,
-          candidates: [{ finishReason }],
+          ...(finishReason === null ? {} : { candidates: [{ finishReason }] }),
           usageMetadata: {
             promptTokenCount: 80_000,
             candidatesTokenCount: 5_000,
@@ -186,6 +187,29 @@ describe('watchVideo', () => {
     expect(error).not.toBeInstanceOf(VideoNoContentError)
   })
 
+  it.each(['RECITATION', 'SAFETY', 'OTHER'])(
+    'throws a generic error naming the reason when the reply stopped early (%s)',
+    async (finishReason) => {
+      // A verbatim transcript can plausibly stop on RECITATION; a cleanly cut transcript still
+      // parses, and storing it would pass off a partial video as the whole one.
+      reply(ok, { finishReason })
+      const error = await watchVideo(VIDEO_ID, 'My Talk', DURATION).catch((e) => e)
+      expect(error).toBeInstanceOf(Error)
+      expect(error).not.toBeInstanceOf(VideoUnwatchableError)
+      expect(error).not.toBeInstanceOf(VideoNoContentError)
+      expect(error.message).toBe(`gemini video response ended early: ${finishReason}`)
+      expect(error.message).not.toContain('Hello')
+    }
+  )
+
+  it('accepts a reply with no finish reason reported', async () => {
+    reply(ok, { finishReason: null })
+    await expect(watchVideo(VIDEO_ID, 'My Talk', DURATION)).resolves.toMatchObject({
+      summary: SUMMARY,
+      finishReason: undefined,
+    })
+  })
+
   it('throws a generic error on invalid JSON, without echoing the model output', async () => {
     replyText('{"status":"ok","transcript":"secret words')
     const error = await watchVideo(VIDEO_ID, 'My Talk', DURATION).catch((e) => e)
@@ -267,6 +291,13 @@ describe('watchVideo', () => {
 
   it('unwraps a single json fence', async () => {
     replyText('```json\n' + JSON.stringify(ok) + '\n```')
+    await expect(watchVideo(VIDEO_ID, 'My Talk', DURATION)).resolves.toMatchObject({
+      summary: SUMMARY,
+    })
+  })
+
+  it('unwraps a json fence with CRLF line endings', async () => {
+    replyText('```json\r\n' + JSON.stringify(ok) + '\r\n```')
     await expect(watchVideo(VIDEO_ID, 'My Talk', DURATION)).resolves.toMatchObject({
       summary: SUMMARY,
     })

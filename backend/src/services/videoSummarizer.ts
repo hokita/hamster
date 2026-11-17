@@ -160,7 +160,7 @@ async function collect(stream: AsyncGenerator<GenerateContentResponse>): Promise
 // Anything else around the object (prose, a second block) means the reply is off-script.
 function parseReply(text: string): Record<string, unknown> {
   const trimmed = text.trim()
-  const fenced = trimmed.match(/^```(?:json)?\n([\s\S]*)\n```$/)
+  const fenced = trimmed.match(/^```(?:json)?\r?\n([\s\S]*?)\r?\n```$/)
   try {
     const parsed: unknown = JSON.parse(fenced ? fenced[1] : trimmed)
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
@@ -237,6 +237,12 @@ export async function watchVideo(
   // summary would silently mislead; surface it as a retryable failure instead.
   if (outcome.finishReason === 'MAX_TOKENS') {
     throw new Error('gemini video response was truncated at the token limit')
+  }
+  // Any other early stop (RECITATION is plausible for a verbatim transcript; SAFETY, OTHER) can
+  // leave a cleanly cut transcript that still parses — a partial video passed off as the whole.
+  // Only the reason goes in the message, never the output.
+  if (outcome.finishReason !== undefined && outcome.finishReason !== 'STOP') {
+    throw new Error(`gemini video response ended early: ${outcome.finishReason}`)
   }
 
   const reply = parseReply(outcome.text)
