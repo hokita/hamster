@@ -1015,6 +1015,72 @@ describe('POST /api/bookmarks/:id/chat', () => {
     const res = await request(app).post('/api/bookmarks/1/chat').send({ messages })
     expect(res.status).toBe(500)
   })
+
+  describe('YouTube videos', () => {
+    const originalFlag = process.env.YOUTUBE_SUMMARIES
+    const videoBookmark = {
+      ...chatBookmark,
+      url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+      title: 'A talk',
+    }
+
+    beforeEach(() => {
+      process.env.YOUTUBE_SUMMARIES = 'on'
+      vi.mocked(db.getBookmark).mockResolvedValue(videoBookmark)
+      vi.mocked(db.getTranscript).mockResolvedValue('[00:00] Stored transcript.')
+    })
+
+    afterEach(() => {
+      if (originalFlag === undefined) delete process.env.YOUTUBE_SUMMARIES
+      else process.env.YOUTUBE_SUMMARIES = originalFlag
+    })
+
+    it('answers from the stored transcript without fetching the page or re-sending the video', async () => {
+      const res = await request(app).post('/api/bookmarks/1/chat').send({ messages })
+      expect(res.status).toBe(200)
+      expect(answerQuestion).toHaveBeenCalledWith(
+        videoBookmark.title,
+        '[00:00] Stored transcript.',
+        messages,
+        'video'
+      )
+      expect(fetchArticleText).not.toHaveBeenCalled()
+      expect(watchVideo).not.toHaveBeenCalled()
+    })
+
+    it('answers without context when no transcript is stored', async () => {
+      vi.mocked(db.getTranscript).mockResolvedValue(null)
+      const res = await request(app).post('/api/bookmarks/1/chat').send({ messages })
+      expect(res.status).toBe(200)
+      expect(answerQuestion).toHaveBeenCalledWith(videoBookmark.title, null, messages, 'video')
+      expect(fetchArticleText).not.toHaveBeenCalled()
+      expect(watchVideo).not.toHaveBeenCalled()
+    })
+
+    it('answers without context when reading the transcript fails', async () => {
+      vi.mocked(db.getTranscript).mockRejectedValue(new Error('firestore down'))
+      const res = await request(app).post('/api/bookmarks/1/chat').send({ messages })
+      expect(res.status).toBe(200)
+      expect(answerQuestion).toHaveBeenCalledWith(videoBookmark.title, null, messages, 'video')
+    })
+
+    it('takes the article path when the switch is off', async () => {
+      process.env.YOUTUBE_SUMMARIES = 'off'
+      const res = await request(app).post('/api/bookmarks/1/chat').send({ messages })
+      expect(res.status).toBe(200)
+      expect(fetchArticleText).toHaveBeenCalledWith(videoBookmark.url)
+      expect(db.getTranscript).not.toHaveBeenCalled()
+      expect(answerQuestion).toHaveBeenCalledWith(videoBookmark.title, 'Article body', messages)
+      expect(watchVideo).not.toHaveBeenCalled()
+    })
+
+    it('returns 503 before reading the transcript when chat is not configured', async () => {
+      vi.mocked(isChatConfigured).mockReturnValue(false)
+      const res = await request(app).post('/api/bookmarks/1/chat').send({ messages })
+      expect(res.status).toBe(503)
+      expect(db.getTranscript).not.toHaveBeenCalled()
+    })
+  })
 })
 
 describe('POST /api/bookmarks/:id/translation', () => {

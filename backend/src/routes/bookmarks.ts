@@ -541,7 +541,8 @@ export function createBookmarksRouter(): Router {
   // The chat is not persisted, so the client sends the whole conversation each time and this
   // endpoint stays stateless — no cache to invalidate, and it works the same across Cloud Run
   // instances. The article is refetched per question; an 8s fetch plus one Flash call per
-  // question is a fine price for a single-user app.
+  // question is a fine price for a single-user app. A video is never refetched or re-sent to
+  // Gemini: the chat answers from the transcript stored when it was summarized.
   router.post('/:id/chat', async (req: Request, res: Response) => {
     const messages = parseChatMessages(req.body)
     if (!messages) {
@@ -569,14 +570,17 @@ export function createBookmarksRouter(): Router {
       return
     }
 
+    const isVideo = isYouTubeSummariesEnabled() && parseYouTubeVideoId(bookmark.url) !== null
     let text: string | null
     try {
-      text = await fetchArticleText(bookmark.url)
+      text = isVideo ? await db.getTranscript(bookmark.id) : await fetchArticleText(bookmark.url)
     } catch {
       text = null
     }
     try {
-      const answer = await answerQuestion(bookmark.title, text, messages)
+      const answer = isVideo
+        ? await answerQuestion(bookmark.title, text, messages, 'video')
+        : await answerQuestion(bookmark.title, text, messages)
       res.json({ answer })
     } catch (error) {
       // Vague bodies, logged cause — same contract as the summary route, for the same reason.
