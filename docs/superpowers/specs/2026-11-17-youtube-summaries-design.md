@@ -370,9 +370,11 @@ running. So the server records what it is doing (builder's call):
     the same fencing. No video is sent; 45 s timeout path.
   - No transcript (first watch failed, or a bookmark from before this feature): do the first watch (§8).
   - There's no "re-watch" action (user decision, §15 Q5).
-- **Generation order** in `generateSummary` for a video: configured? → parse id → free checks (length,
-  availability) → transcript stored? → (summary from transcript) or (first watch) → short summary → batch
-  write → labels. The in-flight dedup map covers both branches unchanged.
+- **Generation order** in `generateSummary` for a video: configured? → parse id → transcript stored? →
+  if yes, summary from transcript (the free checks are skipped: nothing is sent to Gemini's video input, so
+  length and availability no longer matter) → if no, free checks (length, availability) → first watch →
+  short summary → batch write → labels. The in-flight dedup map covers both branches unchanged. (Aligned
+  with the shipped code during implementation; the first draft ran the free checks first.)
 
 ## 13. Cost guardrails, security, existing bookmarks
 
