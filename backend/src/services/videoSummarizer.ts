@@ -32,10 +32,13 @@ const THINKING_LEVEL = ThinkingLevel.LOW
 // through, Gemini is never asked to watch (and bill for) more than the allowed hour.
 const END_OFFSET = `${MAX_VIDEO_SECONDS}s`
 
-// Gemini bills video at ~66 tokens/s at low media resolution (frames plus timestamps; audio is
-// counted separately). If the VIDEO count comes back at less than half of that, the model did not
-// really watch the video — it answered from the URL or title alone, which is the anti-goal this
-// feature must not ship. Half, not the full rate, so frame-sampling variance never trips it.
+// Gemini documents video at ~66 tokens/s at low media resolution (frames plus timestamps). On
+// gemini-3.8-flash the AUDIO modality count comes back undefined and the audio is folded into the
+// VIDEO count: the live check saw 95,649 VIDEO tokens for a 1,052 s video (~91 tokens/s), so the
+// threshold below is about a third of what a real watch reports, not half. If the VIDEO count comes
+// back under it, the model did not really watch the video — it answered from the URL or title alone
+// (~0 video tokens), which is the anti-goal this feature must not ship. Kept well below the observed
+// rate so frame-sampling variance, or a model that splits audio back out, never trips it.
 const VIDEO_TOKENS_PER_SECOND = 66
 const MIN_VIDEO_TOKENS_RATIO = 0.5
 // A talk over two minutes long that yields a couple of sentences of transcript is music, silence
