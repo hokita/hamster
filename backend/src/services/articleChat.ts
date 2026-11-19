@@ -124,7 +124,9 @@ export async function answerQuestion(
             {
               text: text
                 ? buildArticleTurn(title, text, source)
-                : 'Page content is unavailable for this conversation turn.',
+                : source === 'video'
+                  ? 'The video transcript is unavailable for this conversation turn.'
+                  : 'Page content is unavailable for this conversation turn.',
             },
             { text: firstMessage.text },
           ],
