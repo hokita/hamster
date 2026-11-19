@@ -1760,6 +1760,90 @@ describe('BookmarkPage video summaries', () => {
     expect(api.getBookmark).toHaveBeenCalledTimes(countAfterConflict + 60)
   })
 
+  describe('regenerating a video that already has a summary', () => {
+    // Every YouTube bookmark saved before video summaries has a thin page-derived summary, and
+    // Regenerate is how it gets a real one, so a refusal here needs its reason as much as an
+    // empty state does.
+    const summarized = { ...video, summary: 'A thin page summary.', labels: ['video'] }
+    const TOO_LONG_COPY = "This video is longer than 60 minutes, so it wasn't summarized."
+    const UNCHANGED = 'The summary above is unchanged.'
+
+    beforeEach(() => {
+      vi.mocked(api.getBookmark).mockResolvedValue(summarized)
+    })
+
+    it('says why a too-long video was refused, and offers no Regenerate', async () => {
+      vi.mocked(api.generateSummary).mockRejectedValue(apiError(422, 'video_too_long'))
+      renderPage()
+      await advance(0)
+
+      fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }))
+      await advance(0)
+
+      expect(screen.getByText(`${TOO_LONG_COPY} ${UNCHANGED}`)).toBeInTheDocument()
+      expect(screen.queryByText(/Couldn't regenerate the summary/)).not.toBeInTheDocument()
+      expect(screen.getByText('A thin page summary.')).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Regenerate' })).not.toBeInTheDocument()
+    })
+
+    it('says why an unavailable video was refused, and keeps Regenerate', async () => {
+      vi.mocked(api.generateSummary).mockRejectedValue(apiError(422, 'video_unavailable'))
+      renderPage()
+      await advance(0)
+
+      fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }))
+      await advance(0)
+
+      expect(screen.getByText(`${UNAVAILABLE_COPY} ${UNCHANGED}`)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Regenerate' })).toBeEnabled()
+    })
+
+    it('keeps the generic line for a failure that carried no code', async () => {
+      vi.mocked(api.generateSummary).mockRejectedValue(new Error('API error: 502'))
+      renderPage()
+      await advance(0)
+
+      fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }))
+      await advance(0)
+
+      expect(
+        screen.getByText(/Couldn't regenerate the summary — the one above is unchanged\./)
+      ).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Regenerate' })).toBeEnabled()
+    })
+
+    it('shows the running copy and picks up the summary when another instance is watching', async () => {
+      vi.mocked(api.generateSummary).mockRejectedValue(apiError(409, 'video_summary_running'))
+      renderPage()
+      await advance(0)
+      vi.mocked(api.getBookmark).mockResolvedValue({
+        ...summarized,
+        videoSummaryState: stateAgo(30000, 'running'),
+      })
+
+      fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }))
+      await advance(0)
+
+      expect(screen.getByText(RUNNING_COPY)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Regenerate' })).toBeDisabled()
+      expect(screen.queryByText(/Couldn't regenerate/)).not.toBeInTheDocument()
+
+      vi.mocked(api.getBookmark).mockResolvedValue({
+        ...video,
+        summary: 'The real video summary.',
+        labels: ['widgets'],
+      })
+      await advance(2000)
+
+      expect(screen.getByText('The real video summary.')).toBeInTheDocument()
+      expect(screen.queryByText(RUNNING_COPY)).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Regenerate' })).toBeEnabled()
+      const countAfterLanding = vi.mocked(api.getBookmark).mock.calls.length
+      await advance(20000)
+      expect(api.getBookmark).toHaveBeenCalledTimes(countAfterLanding)
+    })
+  })
+
   it('still shows the running copy after a conflict when the re-read fails', async () => {
     vi.mocked(api.generateSummary).mockRejectedValue(apiError(409, 'video_summary_running'))
     renderPage()

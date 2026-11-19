@@ -16,7 +16,11 @@ import {
 } from '@fortawesome/free-solid-svg-icons'
 import { api } from '../api'
 import type { ApiError, Bookmark, VideoSummaryState } from '../api'
-import { VIDEO_SUMMARY_RUNNING_MESSAGE, videoSummaryMessage } from '../videoSummaryMessages'
+import {
+  GENERIC_SUMMARY_FAILURE_MESSAGE,
+  VIDEO_SUMMARY_RUNNING_MESSAGE,
+  videoSummaryMessage,
+} from '../videoSummaryMessages'
 import { formatRelativeTime } from '../relativeTime'
 import { textLanguage } from '../textLanguage'
 import { describeBookmark } from '../bookmarkLabel'
@@ -361,10 +365,18 @@ export default function BookmarkPage() {
   useEffect(() => {
     if (!id) return
     if (!bookmark) return
-    // Three things are worth waiting for: a first summary, a replacement for one whose
-    // regeneration request died mid-flight, and the labels the backend writes just after a
-    // summary. Anything else is already up to date.
-    if (bookmark.summary && bookmark.summary !== supersededSummary && bookmark.labels) return
+    // Four things are worth waiting for: a first summary, a replacement for one whose
+    // regeneration request died mid-flight, the labels the backend writes just after a summary,
+    // and a video run in flight — a Regenerate another instance answered with 409 is a
+    // replacement on its way even with a summary and labels on screen. Anything else is already
+    // up to date.
+    if (
+      bookmark.summary &&
+      bookmark.summary !== supersededSummary &&
+      bookmark.labels &&
+      !videoRunning
+    )
+      return
     if (isGenerating) return
     // A video whose last run failed, or went stale, has nothing in flight to wait for. Without
     // this, every visit to a refused video would poll out a budget for a summary that never comes.
@@ -740,6 +752,49 @@ export default function BookmarkPage() {
   }
   const emptyState = describeEmptyState()
 
+  // The same reasons under an existing summary, which is where Regenerate on a YouTube bookmark
+  // saved before video summaries lands. Same order as above: a click's code, then a run in
+  // flight, then the generic line for a click that failed without one.
+  function describeRegenerateState(): {
+    message: string
+    failed: boolean
+    running: boolean
+    offersButton: boolean
+  } | null {
+    if (isGenerating) return null
+    if (
+      generateFailed &&
+      generateFailureCode !== undefined &&
+      videoSummaryMessage(generateFailureCode) !== GENERIC_SUMMARY_FAILURE_MESSAGE
+    ) {
+      return {
+        message: `${videoSummaryMessage(generateFailureCode)} The summary above is unchanged.`,
+        failed: true,
+        running: false,
+        // As in the empty state: retrying cannot change a video's length.
+        offersButton: generateFailureCode !== 'video_too_long',
+      }
+    }
+    if (videoRunning) {
+      return {
+        message: VIDEO_SUMMARY_RUNNING_MESSAGE,
+        failed: false,
+        running: true,
+        offersButton: true,
+      }
+    }
+    if (generateFailed) {
+      return {
+        message: "Couldn't regenerate the summary — the one above is unchanged.",
+        failed: true,
+        running: false,
+        offersButton: true,
+      }
+    }
+    return null
+  }
+  const regenerateState = describeRegenerateState()
+
   return (
     <div className="max-w-2xl mx-auto px-4 pt-6 pb-10">
       <Link
@@ -794,11 +849,14 @@ export default function BookmarkPage() {
                 is given, so the Japanese arrives marked as Japanese without anything extra here. */}
             <SummaryBody summary={showingTranslation ? currentTranslation : bookmark.summary} />
           </div>
-          {generateFailed && (
+          {regenerateState?.failed && (
             <p className="m-0 flex items-center gap-2 text-sm text-red-700">
               <FontAwesomeIcon icon={faTriangleExclamation} aria-hidden="true" />
-              Couldn&apos;t regenerate the summary — the one above is unchanged.
+              {regenerateState.message}
             </p>
+          )}
+          {regenerateState?.running && (
+            <p className="m-0 text-sm text-gray-500">{regenerateState.message}</p>
           )}
           {failedTranslationOf === bookmark.summary && (
             <p className="m-0 flex items-center gap-2 text-sm text-red-700">
@@ -833,18 +891,20 @@ export default function BookmarkPage() {
                       : 'Show Japanese'}
               </button>
             )}
-            <button
-              onClick={handleGenerate}
-              disabled={isGenerating || isTranslating}
-              className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-800 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-            >
-              <FontAwesomeIcon
-                icon={isGenerating ? faSpinner : faRotate}
-                spin={isGenerating}
-                aria-hidden="true"
-              />
-              {isGenerating ? 'Regenerating…' : 'Regenerate'}
-            </button>
+            {(regenerateState?.offersButton ?? true) && (
+              <button
+                onClick={handleGenerate}
+                disabled={isGenerating || isTranslating || Boolean(regenerateState?.running)}
+                className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-800 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+              >
+                <FontAwesomeIcon
+                  icon={isGenerating ? faSpinner : faRotate}
+                  spin={isGenerating}
+                  aria-hidden="true"
+                />
+                {isGenerating ? 'Regenerating…' : 'Regenerate'}
+              </button>
+            )}
           </div>
         </div>
       ) : (
