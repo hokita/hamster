@@ -1842,6 +1842,80 @@ describe('BookmarkPage video summaries', () => {
       await advance(20000)
       expect(api.getBookmark).toHaveBeenCalledTimes(countAfterLanding)
     })
+
+    it('says why the watch another instance was running failed', async () => {
+      vi.mocked(api.generateSummary).mockRejectedValue(apiError(409, 'video_summary_running'))
+      renderPage()
+      await advance(0)
+      vi.mocked(api.getBookmark).mockResolvedValue({
+        ...summarized,
+        videoSummaryState: stateAgo(30000, 'running'),
+      })
+
+      fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }))
+      await advance(0)
+      expect(screen.getByText(RUNNING_COPY)).toBeInTheDocument()
+
+      vi.mocked(api.getBookmark).mockResolvedValue({
+        ...summarized,
+        videoSummaryState: stateAgo(0, 'failed', 'video_unavailable'),
+      })
+      await advance(2000)
+
+      expect(screen.getByText(`${UNAVAILABLE_COPY} ${UNCHANGED}`)).toBeInTheDocument()
+      expect(screen.queryByText(RUNNING_COPY)).not.toBeInTheDocument()
+      expect(screen.getByText('A thin page summary.')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Regenerate' })).toBeEnabled()
+    })
+
+    it('shows the generic line once the run another instance was watching goes stale', async () => {
+      vi.mocked(api.generateSummary).mockRejectedValue(apiError(409, 'video_summary_running'))
+      renderPage()
+      await advance(0)
+      vi.mocked(api.getBookmark).mockResolvedValue({
+        ...summarized,
+        videoSummaryState: stateAgo(650_000, 'running'),
+      })
+
+      fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }))
+      await advance(0)
+      expect(screen.getByText(RUNNING_COPY)).toBeInTheDocument()
+
+      await advance(15_000)
+
+      expect(
+        screen.getByText(/Couldn't regenerate the summary — the one above is unchanged\./)
+      ).toBeInTheDocument()
+      expect(screen.queryByText(RUNNING_COPY)).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Regenerate' })).toBeEnabled()
+    })
+
+    it('shows a failure stored by an earlier visit, with no Regenerate for a too-long video', async () => {
+      vi.mocked(api.getBookmark).mockResolvedValue({
+        ...summarized,
+        videoSummaryState: stateAgo(60_000, 'failed', 'video_too_long'),
+      })
+      renderPage()
+      await advance(0)
+
+      expect(screen.getByText(`${TOO_LONG_COPY} ${UNCHANGED}`)).toBeInTheDocument()
+      expect(screen.getByText('A thin page summary.')).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Regenerate' })).not.toBeInTheDocument()
+    })
+
+    it('shows the generic line for a stored failure without a specific reason', async () => {
+      vi.mocked(api.getBookmark).mockResolvedValue({
+        ...summarized,
+        videoSummaryState: stateAgo(60_000, 'failed', 'generic'),
+      })
+      renderPage()
+      await advance(0)
+
+      expect(
+        screen.getByText(/Couldn't regenerate the summary — the one above is unchanged\./)
+      ).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Regenerate' })).toBeEnabled()
+    })
   })
 
   it('still shows the running copy after a conflict when the re-read fails', async () => {

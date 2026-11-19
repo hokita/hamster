@@ -754,26 +754,36 @@ export default function BookmarkPage() {
 
   // The same reasons under an existing summary, which is where Regenerate on a YouTube bookmark
   // saved before video summaries lands. Same order as above: a click's code, then a run in
-  // flight, then the generic line for a click that failed without one.
+  // flight or the stored outcome of one (a watch another instance ran, or a failure from an
+  // earlier visit), then the generic line for a click that failed without one.
   function describeRegenerateState(): {
     message: string
     failed: boolean
     running: boolean
     offersButton: boolean
   } | null {
+    const failed = (code: string | undefined) =>
+      code !== undefined && videoSummaryMessage(code) !== GENERIC_SUMMARY_FAILURE_MESSAGE
+        ? {
+            message: `${videoSummaryMessage(code)} The summary above is unchanged.`,
+            failed: true,
+            running: false,
+            // As in the empty state: retrying cannot change a video's length.
+            offersButton: code !== 'video_too_long',
+          }
+        : {
+            message: "Couldn't regenerate the summary — the one above is unchanged.",
+            failed: true,
+            running: false,
+            offersButton: true,
+          }
     if (isGenerating) return null
     if (
       generateFailed &&
       generateFailureCode !== undefined &&
       videoSummaryMessage(generateFailureCode) !== GENERIC_SUMMARY_FAILURE_MESSAGE
     ) {
-      return {
-        message: `${videoSummaryMessage(generateFailureCode)} The summary above is unchanged.`,
-        failed: true,
-        running: false,
-        // As in the empty state: retrying cannot change a video's length.
-        offersButton: generateFailureCode !== 'video_too_long',
-      }
+      return failed(generateFailureCode)
     }
     if (videoRunning) {
       return {
@@ -783,14 +793,9 @@ export default function BookmarkPage() {
         offersButton: true,
       }
     }
-    if (generateFailed) {
-      return {
-        message: "Couldn't regenerate the summary — the one above is unchanged.",
-        failed: true,
-        running: false,
-        offersButton: true,
-      }
-    }
+    // A stale `running` has no code, so it reads as the generic line — which it is.
+    if (videoState) return failed(videoState.code)
+    if (generateFailed) return failed(undefined)
     return null
   }
   const regenerateState = describeRegenerateState()
