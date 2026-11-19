@@ -18,6 +18,9 @@ export default defineConfig({
       port: 8081,
       reuseExistingServer: !process.env.CI,
       timeout: 60_000,
+      // firebase-tools spawns the java emulators detached, so Playwright's default force-kill of
+      // the CLI orphans them. SIGTERM lets the CLI shut its children down before exiting.
+      gracefulShutdown: { signal: 'SIGTERM', timeout: 15_000 },
     },
     {
       command: 'npm run start:e2e',

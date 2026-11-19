@@ -4,7 +4,7 @@ vi.mock('./firebase', () => ({
   auth: { currentUser: { getIdToken: vi.fn().mockResolvedValue('fake-token') } },
 }))
 
-import { api } from './api'
+import { api, ApiError } from './api'
 
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
@@ -155,6 +155,35 @@ describe('api.generateSummary', () => {
   it('throws when generation fails', async () => {
     mockFetch.mockResolvedValue({ ok: false, status: 502 })
     await expect(api.generateSummary('1')).rejects.toThrow('API error: 502')
+  })
+
+  it('carries the status and machine-readable code from the error body', async () => {
+    // The bookmark page picks its message from the code; the `error` text stays vague on purpose.
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 422,
+      json: async () => ({ error: 'Video summary refused', code: 'video_too_long' }),
+    })
+    const error = await api.generateSummary('1').catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(ApiError)
+    expect(error).toMatchObject({ status: 422, code: 'video_too_long' })
+    expect((error as ApiError).message).toBe('API error: 422')
+  })
+
+  it('throws an ApiError with no code when the error body is not JSON', async () => {
+    // A proxy or Cloud Run itself can answer with an HTML page; that must still surface as the
+    // status, not as a JSON parse error.
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 502,
+      json: async () => {
+        throw new SyntaxError('Unexpected token <')
+      },
+    })
+    const error = await api.generateSummary('1').catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(ApiError)
+    expect(error).toMatchObject({ status: 502, message: 'API error: 502' })
+    expect((error as ApiError).code).toBeUndefined()
   })
 })
 

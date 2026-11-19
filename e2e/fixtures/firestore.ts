@@ -4,12 +4,13 @@ const PROJECT_ID = 'demo-hamster-e2e'
 // Writes a bookmark straight into the emulator, bypassing the app's own add flow. The e2e
 // environment has no GEMINI_API_KEY, so a bookmark added through the UI can never reach the
 // "summary present" state — seeding is the only way to exercise what the page does once a
-// summary exists. Returns the new document's id so the test can navigate to /bookmarks/<id>.
+// summary (or a video summary state) exists. Returns the new document's id so the test can navigate to /bookmarks/<id>.
 export async function seedBookmark(fields: {
   url: string
   title: string
-  summary: string
+  summary?: string
   shortSummary?: string
+  videoSummaryState?: { status: string; code?: string; updatedAt: string }
 }): Promise<string> {
   const res = await fetch(
     `${FIRESTORE_EMULATOR_URL}/v1/projects/${PROJECT_ID}/databases/(default)/documents/bookmarks`,
@@ -20,8 +21,23 @@ export async function seedBookmark(fields: {
         fields: {
           url: { stringValue: fields.url },
           title: { stringValue: fields.title },
-          summary: { stringValue: fields.summary },
+          ...(fields.summary !== undefined ? { summary: { stringValue: fields.summary } } : {}),
           ...(fields.shortSummary ? { shortSummary: { stringValue: fields.shortSummary } } : {}),
+          ...(fields.videoSummaryState
+            ? {
+                videoSummaryState: {
+                  mapValue: {
+                    fields: {
+                      status: { stringValue: fields.videoSummaryState.status },
+                      ...(fields.videoSummaryState.code
+                        ? { code: { stringValue: fields.videoSummaryState.code } }
+                        : {}),
+                      updatedAt: { timestampValue: fields.videoSummaryState.updatedAt },
+                    },
+                  },
+                },
+              }
+            : {}),
           createdAt: { timestampValue: new Date().toISOString() },
         },
       }),

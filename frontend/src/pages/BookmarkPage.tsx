@@ -15,7 +15,12 @@ import {
   faWandMagicSparkles,
 } from '@fortawesome/free-solid-svg-icons'
 import { api } from '../api'
-import type { Bookmark } from '../api'
+import type { ApiError, Bookmark, VideoSummaryState } from '../api'
+import {
+  GENERIC_SUMMARY_FAILURE_MESSAGE,
+  VIDEO_SUMMARY_RUNNING_MESSAGE,
+  videoSummaryMessage,
+} from '../videoSummaryMessages'
 import { formatRelativeTime } from '../relativeTime'
 import { textLanguage } from '../textLanguage'
 import { describeBookmark } from '../bookmarkLabel'
@@ -28,6 +33,32 @@ import ArticleChat from '../components/ArticleChat'
 // one so both use the same language. Polling is still bounded and stops once content arrives.
 const POLL_INTERVAL_MS = 2000
 const MAX_POLL_ATTEMPTS = 45
+// A video summary is one Gemini call that can run for up to 8 minutes, so a video the server says
+// is still running gets 10 minutes of polling rather than 90 s. Only while it says so: a failed or
+// stale run has nothing to wait for, and a video with no state at all keeps the ordinary budget.
+const MAX_VIDEO_POLL_ATTEMPTS = 300
+// Matches the backend's cut-off: the Gemini timeout plus margin. A `running` state older than this
+// was left behind by an instance that died or was redeployed, and will never be cleared.
+const VIDEO_RUNNING_STALE_MS = 660_000
+
+// Takes the clock as an argument rather than reading it, so render stays pure — see `now` below.
+function isFreshRunning(state: VideoSummaryState | undefined, now: number): boolean {
+  return state?.status === 'running' && now - Date.parse(state.updatedAt) < VIDEO_RUNNING_STALE_MS
+}
+
+// Same treatment as sameLabels: compared by value, so a poll answering with the state the page
+// already shows is discarded rather than restarting the poll's budget.
+function sameVideoState(a?: VideoSummaryState, b?: VideoSummaryState): boolean {
+  if (!a || !b) return !a && !b
+  return a.status === b.status && a.code === b.code && a.updatedAt === b.updatedAt
+}
+
+// Read off the error's shape rather than with instanceof: only the code matters here, and anything
+// without one — a network failure, a 503 — is the generic failure it always was.
+function errorCode(error: unknown): string | undefined {
+  const code = (error as Partial<ApiError> | null)?.code
+  return typeof code === 'string' ? code : undefined
+}
 
 // Label equality, treating absent and present-but-different alike: the poll below adopts any
 // content change, including labels disappearing (the atomic clear that starts a regeneration).
@@ -174,6 +205,13 @@ export default function BookmarkPage() {
   const [loadError, setLoadError] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
   const [generateFailed, setGenerateFailed] = useState(false)
+  // The code a failed generation answered with, if any. Meaningful only while generateFailed is
+  // set; it is what lets a video failure say why, where an article's only ever says that it failed.
+  const [generateFailureCode, setGenerateFailureCode] = useState<string | undefined>(undefined)
+  // The clock a running video state's freshness is judged against. Held in state because render
+  // has to be pure; it is reset when a bookmark loads and moved on by the effect below at the
+  // moment a running state goes stale, which are the only times the answer can change.
+  const [now, setNow] = useState(() => Date.now())
   const [isDeleting, setIsDeleting] = useState(false)
   const [deleteFailed, setDeleteFailed] = useState(false)
   const [isTogglingRead, setIsTogglingRead] = useState(false)
@@ -226,6 +264,7 @@ export default function BookmarkPage() {
     setBookmark(null)
     setLoadError(false)
     setGenerateFailed(false)
+    setGenerateFailureCode(undefined)
     setIsGenerating(false)
     setSupersededSummary(null)
     setIsDeleting(false)
@@ -280,7 +319,11 @@ export default function BookmarkPage() {
     api
       .getBookmark(id)
       .then((result) => {
-        if (!cancelled) setBookmark(adopt(result, fid))
+        if (cancelled) return
+        setBookmark(adopt(result, fid))
+        // React Router reuses this page, so the clock may date from a bookmark opened long ago —
+        // and an old clock makes a long-dead run look fresh.
+        setNow(Date.now())
       })
       .catch(() => {
         if (!cancelled) setLoadError(true)
@@ -292,6 +335,22 @@ export default function BookmarkPage() {
       cancelled = true
     }
   }, [id])
+
+  // Only video bookmarks carry a run state; an article never has one, so everything below that
+  // keys off it leaves articles exactly as they were.
+  const videoState = bookmark?.videoId ? bookmark.videoSummaryState : undefined
+  const videoRunning = isFreshRunning(videoState, now)
+
+  // Nothing else re-renders the page when a running state crosses the stale line — the server
+  // never touches it again, so a poll keeps returning the same thing. Moving the clock at that
+  // moment is what turns "still working" into a failure the reader can retry, and stops the poll.
+  const runningSince = videoState?.status === 'running' ? videoState.updatedAt : undefined
+  useEffect(() => {
+    if (runningSince === undefined) return
+    const msUntilStale = Date.parse(runningSince) + VIDEO_RUNNING_STALE_MS - Date.now()
+    const timeoutId = setTimeout(() => setNow(Date.now()), Math.max(0, msUntilStale))
+    return () => clearTimeout(timeoutId)
+  }, [runningSince])
 
   // Adding a bookmark kicks off summary generation in the background from the list page; if the
   // user clicks into it immediately, this page's own fetch above usually wins the race and loads
@@ -306,17 +365,31 @@ export default function BookmarkPage() {
   useEffect(() => {
     if (!id) return
     if (!bookmark) return
-    // Three things are worth waiting for: a first summary, a replacement for one whose
-    // regeneration request died mid-flight, and the labels the backend writes just after a
-    // summary. Anything else is already up to date.
-    if (bookmark.summary && bookmark.summary !== supersededSummary && bookmark.labels) return
+    // Four things are worth waiting for: a first summary, a replacement for one whose
+    // regeneration request died mid-flight, the labels the backend writes just after a summary,
+    // and a video run in flight — a Regenerate another instance answered with 409 is a
+    // replacement on its way even with a summary and labels on screen. Anything else is already
+    // up to date.
+    if (
+      bookmark.summary &&
+      bookmark.summary !== supersededSummary &&
+      bookmark.labels &&
+      !videoRunning
+    )
+      return
     if (isGenerating) return
+    // A video whose last run failed, or went stale, has nothing in flight to wait for. Without
+    // this, every visit to a refused video would poll out a budget for a summary that never comes.
+    if (videoState && !videoRunning) return
+    // A fresh running state restarts this effect (it changes `bookmark`), so a run that shows up
+    // mid-poll trades the remaining article budget for the video one rather than stopping at 90 s.
+    const maxAttempts = videoRunning ? MAX_VIDEO_POLL_ATTEMPTS : MAX_POLL_ATTEMPTS
 
     let cancelled = false
     let attempts = 0
     const intervalId = setInterval(() => {
       attempts += 1
-      if (attempts >= MAX_POLL_ATTEMPTS) clearInterval(intervalId)
+      if (attempts >= maxAttempts) clearInterval(intervalId)
       const fid = ++bookmarkFetchId.current
       api
         .getBookmark(id)
@@ -345,7 +418,14 @@ export default function BookmarkPage() {
           // the endless re-polling the check above guards against either: this compares values,
           // so once applied, the next identical response is discarded as unchanged.
           const readAdvanced = reconciled.isRead !== bookmark.isRead
-          if (!summaryAdvanced && !labelsAdvanced && !readAdvanced) return
+          // A video's run state is the other thing that moves while the summary stands still:
+          // a run starting (which is what switches this poll onto the video budget) or failing
+          // (which ends it). Compared by value, for the same reason as the read flag.
+          const stateAdvanced = !sameVideoState(
+            reconciled.videoSummaryState,
+            bookmark.videoSummaryState
+          )
+          if (!summaryAdvanced && !labelsAdvanced && !readAdvanced && !stateAdvanced) return
           setBookmark(reconciled)
           if (summaryAdvanced || (labelsAdvanced && reconciled.labels)) {
             // A fresh labels write proves a generation run completed server-side even when the
@@ -366,7 +446,7 @@ export default function BookmarkPage() {
       cancelled = true
       clearInterval(intervalId)
     }
-  }, [id, bookmark, isGenerating, supersededSummary])
+  }, [id, bookmark, isGenerating, supersededSummary, videoState, videoRunning])
 
   // Drives both the empty state's "Generate summary" button and the "Regenerate" button shown
   // under an existing summary: POST /:id/summary always runs a fresh generation and overwrites
@@ -379,7 +459,15 @@ export default function BookmarkPage() {
     const summaryBefore = bookmark?.summary
     setIsGenerating(true)
     setGenerateFailed(false)
+    setGenerateFailureCode(undefined)
     setSupersededSummary(null)
+    // The server replaces the run state the moment this request starts, so the one on screen is
+    // already history. Dropping it also matters after a failure: a leftover `failed` would keep
+    // the poll from resuming, and a request that died mid-run would never see its summary land.
+    // The first poll brings back whatever the server holds now.
+    setBookmark((previous) =>
+      previous?.videoSummaryState ? { ...previous, videoSummaryState: undefined } : previous
+    )
     // Covers the one case the tag below cannot: a regeneration that returns byte-identical text,
     // where the failure would otherwise still match the summary on screen. Anything else is
     // retired by the comparison at render time.
@@ -396,8 +484,9 @@ export default function BookmarkPage() {
       setBookmark((previous) =>
         previous ? { ...previous, summary, shortSummary, labels } : previous
       )
-    } catch {
+    } catch (error) {
       if (requestedId !== latestId.current) return
+      const code = errorCode(error)
       // A failed request does not prove nothing was written: the summary is persisted before the
       // response is sent, so a connection dropped in between leaves a fresh summary in Firestore
       // that this page knows nothing about. Re-read the bookmark before reporting failure —
@@ -412,12 +501,33 @@ export default function BookmarkPage() {
           setBookmark(adopt(refreshed, fid))
           return
         }
+        // Another instance is already watching this video, and refused to pay for a second
+        // watch. Not a failure: the re-read carries its running state, which shows the running
+        // copy and puts the poll on the video budget.
+        if (code === 'video_summary_running') {
+          setBookmark(adopt(refreshed, fid))
+          return
+        }
       } catch {
         // The re-read failed too, so nothing was learned: fall through to the failure state,
         // which still describes what the user can see.
       }
       if (requestedId !== latestId.current) return
+      // The 409 itself says a run is going, so the page need not wait for a re-read to say so.
+      // Stamped with this moment: the poll replaces it with the server's own as soon as one lands.
+      if (code === 'video_summary_running') {
+        setBookmark((previous) =>
+          previous
+            ? {
+                ...previous,
+                videoSummaryState: { status: 'running', updatedAt: new Date().toISOString() },
+              }
+            : previous
+        )
+        return
+      }
       setGenerateFailed(true)
+      setGenerateFailureCode(code)
       // The re-read above is a single snapshot, and the losing request may simply have died before
       // the backend finished — it keeps generating regardless, so the write can still be seconds
       // out. Hand the text to the poll above to watch, rather than settling for "unchanged" on one
@@ -602,6 +712,94 @@ export default function BookmarkPage() {
   const canTranslate = Boolean(bookmark.summary && textLanguage(bookmark.summary) === 'en')
   const showingTranslation = showTranslation && currentTranslation !== null
 
+  // What the page says when there is no summary, most immediate first. A click that failed with a
+  // code beats the stored state for the rest of the visit: it is newer, and it is what the reader
+  // just did. A click that failed without one — a dropped connection, a gateway timeout during a
+  // long watch — says nothing about the run, which may still be going, so the stored state decides
+  // and the generic failure is only the fallback. An article never has a code or a stored state,
+  // so it only ever reaches the in-flight, generic failure and "No summary yet." lines, as before.
+  function describeEmptyState(): {
+    message: string
+    failed: boolean
+    running: boolean
+    offersButton: boolean
+  } {
+    const failed = (code: string | undefined) => ({
+      message: videoSummaryMessage(code),
+      failed: true,
+      running: false,
+      // Retrying cannot change a video's length, and each try is a request for nothing.
+      offersButton: code !== 'video_too_long',
+    })
+    // Today's in-flight line, video or not: videoId is derived from the URL even when the server
+    // takes the article path, so a pending request is no evidence that a video is being watched.
+    if (isGenerating) {
+      return { message: 'No summary yet.', failed: false, running: false, offersButton: true }
+    }
+    if (generateFailed && generateFailureCode !== undefined) return failed(generateFailureCode)
+    // A stale `running` has no code, so it reads as the generic failure — which it is.
+    if (videoState && !videoRunning) return failed(videoState.code)
+    if (videoRunning) {
+      return {
+        message: VIDEO_SUMMARY_RUNNING_MESSAGE,
+        failed: false,
+        running: true,
+        offersButton: true,
+      }
+    }
+    if (generateFailed) return failed(undefined)
+    return { message: 'No summary yet.', failed: false, running: false, offersButton: true }
+  }
+  const emptyState = describeEmptyState()
+
+  // The same reasons under an existing summary, which is where Regenerate on a YouTube bookmark
+  // saved before video summaries lands. Same order as above: a click's code, then a run in
+  // flight or the stored outcome of one (a watch another instance ran, or a failure from an
+  // earlier visit), then the generic line for a click that failed without one.
+  function describeRegenerateState(): {
+    message: string
+    failed: boolean
+    running: boolean
+    offersButton: boolean
+  } | null {
+    const failed = (code: string | undefined) =>
+      code !== undefined && videoSummaryMessage(code) !== GENERIC_SUMMARY_FAILURE_MESSAGE
+        ? {
+            message: `${videoSummaryMessage(code)} The summary above is unchanged.`,
+            failed: true,
+            running: false,
+            // As in the empty state: retrying cannot change a video's length.
+            offersButton: code !== 'video_too_long',
+          }
+        : {
+            message: "Couldn't regenerate the summary — the one above is unchanged.",
+            failed: true,
+            running: false,
+            offersButton: true,
+          }
+    if (isGenerating) return null
+    if (
+      generateFailed &&
+      generateFailureCode !== undefined &&
+      videoSummaryMessage(generateFailureCode) !== GENERIC_SUMMARY_FAILURE_MESSAGE
+    ) {
+      return failed(generateFailureCode)
+    }
+    if (videoRunning) {
+      return {
+        message: VIDEO_SUMMARY_RUNNING_MESSAGE,
+        failed: false,
+        running: true,
+        offersButton: true,
+      }
+    }
+    // A stale `running` has no code, so it reads as the generic line — which it is.
+    if (videoState) return failed(videoState.code)
+    if (generateFailed) return failed(undefined)
+    return null
+  }
+  const regenerateState = describeRegenerateState()
+
   return (
     <div className="max-w-2xl mx-auto px-4 pt-6 pb-10">
       <Link
@@ -656,11 +854,14 @@ export default function BookmarkPage() {
                 is given, so the Japanese arrives marked as Japanese without anything extra here. */}
             <SummaryBody summary={showingTranslation ? currentTranslation : bookmark.summary} />
           </div>
-          {generateFailed && (
+          {regenerateState?.failed && (
             <p className="m-0 flex items-center gap-2 text-sm text-red-700">
               <FontAwesomeIcon icon={faTriangleExclamation} aria-hidden="true" />
-              Couldn&apos;t regenerate the summary — the one above is unchanged.
+              {regenerateState.message}
             </p>
+          )}
+          {regenerateState?.running && (
+            <p className="m-0 text-sm text-gray-500">{regenerateState.message}</p>
           )}
           {failedTranslationOf === bookmark.summary && (
             <p className="m-0 flex items-center gap-2 text-sm text-red-700">
@@ -695,37 +896,39 @@ export default function BookmarkPage() {
                       : 'Show Japanese'}
               </button>
             )}
-            <button
-              onClick={handleGenerate}
-              disabled={isGenerating || isTranslating}
-              className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-800 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-            >
-              <FontAwesomeIcon
-                icon={isGenerating ? faSpinner : faRotate}
-                spin={isGenerating}
-                aria-hidden="true"
-              />
-              {isGenerating ? 'Regenerating…' : 'Regenerate'}
-            </button>
+            {(regenerateState?.offersButton ?? true) && (
+              <button
+                onClick={handleGenerate}
+                disabled={isGenerating || isTranslating || Boolean(regenerateState?.running)}
+                className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-800 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+              >
+                <FontAwesomeIcon
+                  icon={isGenerating ? faSpinner : faRotate}
+                  spin={isGenerating}
+                  aria-hidden="true"
+                />
+                {isGenerating ? 'Regenerating…' : 'Regenerate'}
+              </button>
+            )}
           </div>
         </div>
       ) : (
         <div className="flex flex-col items-start gap-3">
-          <p className="m-0 text-gray-500">
-            {generateFailed ? "Couldn't generate a summary." : 'No summary yet.'}
-          </p>
-          <button
-            onClick={handleGenerate}
-            disabled={isGenerating}
-            className="inline-flex items-center gap-2 rounded-md bg-amber-700 px-3 py-2 text-sm font-medium text-white hover:bg-amber-800 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-          >
-            <FontAwesomeIcon
-              icon={isGenerating ? faSpinner : faWandMagicSparkles}
-              spin={isGenerating}
-              aria-hidden="true"
-            />
-            {isGenerating ? 'Generating…' : generateFailed ? 'Try again' : 'Generate summary'}
-          </button>
+          <p className="m-0 text-gray-500">{emptyState.message}</p>
+          {emptyState.offersButton && (
+            <button
+              onClick={handleGenerate}
+              disabled={isGenerating || emptyState.running}
+              className="inline-flex items-center gap-2 rounded-md bg-amber-700 px-3 py-2 text-sm font-medium text-white hover:bg-amber-800 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+            >
+              <FontAwesomeIcon
+                icon={isGenerating ? faSpinner : faWandMagicSparkles}
+                spin={isGenerating}
+                aria-hidden="true"
+              />
+              {isGenerating ? 'Generating…' : emptyState.failed ? 'Try again' : 'Generate summary'}
+            </button>
+          )}
         </div>
       )}
 

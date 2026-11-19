@@ -123,4 +123,32 @@ describe('fetchAllowedUrl', () => {
       fetchAllowedUrl('https://example.com', AbortSignal.timeout(1000))
     ).resolves.toBeNull()
   })
+
+  it('sends the headers on the first hop', async () => {
+    mockFetch.mockResolvedValueOnce(response())
+    await fetchAllowedUrl('https://example.com/a', AbortSignal.timeout(1000), { 'X-Key': 'k' })
+    expect(mockFetch.mock.calls[0][1]).toMatchObject({ headers: { 'X-Key': 'k' } })
+  })
+
+  it('keeps the headers on a redirect within the same origin', async () => {
+    mockFetch
+      .mockResolvedValueOnce(response({ status: 302, location: '/b' }))
+      .mockResolvedValueOnce(response())
+    await fetchAllowedUrl('https://example.com/a', AbortSignal.timeout(1000), { 'X-Key': 'k' })
+    expect(mockFetch.mock.calls[1][1]).toMatchObject({ headers: { 'X-Key': 'k' } })
+  })
+
+  it('drops the headers after a redirect to another origin', async () => {
+    mockFetch
+      .mockResolvedValueOnce(response({ status: 302, location: 'https://other.test/b' }))
+      .mockResolvedValueOnce(response())
+    await fetchAllowedUrl('https://example.com/a', AbortSignal.timeout(1000), { 'X-Key': 'k' })
+    expect(mockFetch.mock.calls[1][1]).not.toHaveProperty('headers')
+  })
+
+  it('does not send a headers option when none were given', async () => {
+    mockFetch.mockResolvedValueOnce(response())
+    await fetchAllowedUrl('https://example.com/a', AbortSignal.timeout(1000))
+    expect(mockFetch.mock.calls[0][1]).not.toHaveProperty('headers')
+  })
 })

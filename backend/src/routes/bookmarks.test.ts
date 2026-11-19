@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { inspect } from 'node:util'
 import request from 'supertest'
 import express from 'express'
 
@@ -11,10 +12,35 @@ vi.mock('../services/firestore', () => ({
   listAllLabels: vi.fn(),
   deleteBookmark: vi.fn(),
   setReadState: vi.fn(),
+  getTranscript: vi.fn(),
+  saveVideoSummary: vi.fn(),
+  setVideoSummaryState: vi.fn(),
 }))
+vi.mock('../services/youtubeDataApi', () => ({
+  checkVideo: vi.fn(),
+}))
+vi.mock('../services/videoSummarizer', async () => {
+  const actual = await vi.importActual<typeof import('../services/videoSummarizer')>(
+    '../services/videoSummarizer'
+  )
+  return {
+    watchVideo: vi.fn(),
+    VideoUnwatchableError: actual.VideoUnwatchableError,
+    VideoNoContentError: actual.VideoNoContentError,
+  }
+})
 vi.mock('../services/metadataFetcher', () => ({
   fetchMetadata: vi.fn(),
 }))
+vi.mock('../services/youtubeOembed', async () => {
+  const actual = await vi.importActual<typeof import('../services/youtubeOembed')>(
+    '../services/youtubeOembed'
+  )
+  return {
+    fetchYouTubeTitle: vi.fn(),
+    YOUTUBE_FAVICON_URL: actual.YOUTUBE_FAVICON_URL,
+  }
+})
 vi.mock('../services/articleFetcher', () => ({
   fetchArticleText: vi.fn(),
 }))
@@ -25,6 +51,8 @@ vi.mock('../services/summarizer', async () => {
     summarize: vi.fn(),
     isSummarizerConfigured: vi.fn(),
     SummarizerUnavailableError: actual.SummarizerUnavailableError,
+    // videoSummarizer's real module (imported below for its error classes) reads this at load.
+    SUMMARY_FORMAT_RULES: actual.SUMMARY_FORMAT_RULES,
   }
 })
 vi.mock('../services/shortSummarizer', () => ({
@@ -56,6 +84,7 @@ import { createBookmarksRouter } from './bookmarks'
 import * as db from '../services/firestore'
 import { fetchMetadata } from '../services/metadataFetcher'
 import { fetchArticleText } from '../services/articleFetcher'
+import { fetchYouTubeTitle, YOUTUBE_FAVICON_URL } from '../services/youtubeOembed'
 import {
   summarize,
   isSummarizerConfigured,
@@ -63,6 +92,8 @@ import {
 } from '../services/summarizer'
 import { generateLabels } from '../services/labeler'
 import { summarizeShort } from '../services/shortSummarizer'
+import { checkVideo } from '../services/youtubeDataApi'
+import { watchVideo, VideoUnwatchableError, VideoNoContentError } from '../services/videoSummarizer'
 import { answerQuestion, isChatConfigured, ChatUnavailableError } from '../services/articleChat'
 import {
   translate,
@@ -103,6 +134,55 @@ describe('GET /api/bookmarks', () => {
     const res = await request(app).get('/api/bookmarks')
     expect(res.status).toBe(500)
     expect(res.body).toEqual({ error: expect.any(String) })
+  })
+})
+
+describe('videoId in bookmark responses', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  const video = {
+    id: 'v1',
+    url: 'https://youtu.be/O_zcc6Xl12g?si=x',
+    title: 'Video',
+    createdAt: '2024-01-01T00:00:00.000Z',
+  }
+  const article = {
+    id: 'a1',
+    url: 'https://example.com/post',
+    title: 'Article',
+    createdAt: '2024-01-01T00:00:00.000Z',
+  }
+
+  it('GET / adds videoId for a YouTube bookmark and omits it for an article', async () => {
+    vi.mocked(db.listBookmarks).mockResolvedValue([video, article])
+    const res = await request(app).get('/api/bookmarks')
+    expect(res.body[0].videoId).toBe('O_zcc6Xl12g')
+    expect('videoId' in res.body[1]).toBe(false)
+  })
+
+  it('GET /:id adds videoId for a YouTube bookmark and omits it for an article', async () => {
+    vi.mocked(db.getBookmark).mockResolvedValueOnce(video)
+    const withId = await request(app).get('/api/bookmarks/v1')
+    expect(withId.body.videoId).toBe('O_zcc6Xl12g')
+    vi.mocked(db.getBookmark).mockResolvedValueOnce(article)
+    const without = await request(app).get('/api/bookmarks/a1')
+    expect('videoId' in without.body).toBe(false)
+  })
+
+  it('POST / returns videoId but does not pass it to createBookmark', async () => {
+    vi.mocked(fetchYouTubeTitle).mockResolvedValue('Video')
+    vi.mocked(db.createBookmark).mockResolvedValue(video)
+    const res = await request(app).post('/api/bookmarks').send({ url: video.url })
+    expect(res.status).toBe(201)
+    expect(res.body.videoId).toBe('O_zcc6Xl12g')
+    expect(db.createBookmark).toHaveBeenCalledWith(video.url, 'Video', YOUTUBE_FAVICON_URL)
+  })
+
+  it('POST / omits videoId for an article', async () => {
+    vi.mocked(fetchMetadata).mockResolvedValue({ title: 'Article', faviconUrl: null })
+    vi.mocked(db.createBookmark).mockResolvedValue(article)
+    const res = await request(app).post('/api/bookmarks').send({ url: article.url })
+    expect('videoId' in res.body).toBe(false)
   })
 })
 
@@ -334,6 +414,59 @@ describe('PUT /api/bookmarks/:id/read', () => {
 
     expect(res.status).toBe(500)
     expect(res.body).toEqual({ error: expect.any(String) })
+  })
+})
+
+describe('POST /api/bookmarks with a YouTube video link', () => {
+  const videoUrl = 'https://youtu.be/O_zcc6Xl12g?si=x'
+  beforeEach(() => {
+    vi.resetAllMocks()
+    delete process.env.YOUTUBE_SUMMARIES
+    vi.mocked(db.createBookmark).mockResolvedValue({
+      id: '1',
+      url: videoUrl,
+      title: 'x',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    })
+  })
+
+  it('titles the bookmark from oEmbed with the YouTube favicon, skipping fetchMetadata', async () => {
+    vi.mocked(fetchYouTubeTitle).mockResolvedValue('All Code Is Slop')
+    const res = await request(app).post('/api/bookmarks').send({ url: videoUrl })
+    expect(res.status).toBe(201)
+    expect(fetchYouTubeTitle).toHaveBeenCalledWith('O_zcc6Xl12g')
+    expect(db.createBookmark).toHaveBeenCalledWith(
+      videoUrl,
+      'All Code Is Slop',
+      YOUTUBE_FAVICON_URL
+    )
+    expect(fetchMetadata).not.toHaveBeenCalled()
+  })
+
+  it('falls back to fetchMetadata when oEmbed has no title', async () => {
+    vi.mocked(fetchYouTubeTitle).mockResolvedValue(null)
+    vi.mocked(fetchMetadata).mockResolvedValue({
+      title: 'Page title',
+      faviconUrl: 'https://f/i.ico',
+    })
+    const res = await request(app).post('/api/bookmarks').send({ url: videoUrl })
+    expect(res.status).toBe(201)
+    expect(db.createBookmark).toHaveBeenCalledWith(videoUrl, 'Page title', 'https://f/i.ico')
+  })
+
+  it('uses the URL as the title when neither source has one', async () => {
+    vi.mocked(fetchYouTubeTitle).mockResolvedValue(null)
+    vi.mocked(fetchMetadata).mockResolvedValue({ title: null, faviconUrl: null })
+    await request(app).post('/api/bookmarks').send({ url: videoUrl })
+    expect(db.createBookmark).toHaveBeenCalledWith(videoUrl, videoUrl, null)
+  })
+
+  it('uses only fetchMetadata for a non-video YouTube URL', async () => {
+    const channel = 'https://www.youtube.com/@somechannel'
+    vi.mocked(fetchMetadata).mockResolvedValue({ title: 'Channel', faviconUrl: null })
+    await request(app).post('/api/bookmarks').send({ url: channel })
+    expect(fetchYouTubeTitle).not.toHaveBeenCalled()
+    expect(db.createBookmark).toHaveBeenCalledWith(channel, 'Channel', null)
   })
 })
 
@@ -882,6 +1015,72 @@ describe('POST /api/bookmarks/:id/chat', () => {
     const res = await request(app).post('/api/bookmarks/1/chat').send({ messages })
     expect(res.status).toBe(500)
   })
+
+  describe('YouTube videos', () => {
+    const originalFlag = process.env.YOUTUBE_SUMMARIES
+    const videoBookmark = {
+      ...chatBookmark,
+      url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+      title: 'A talk',
+    }
+
+    beforeEach(() => {
+      process.env.YOUTUBE_SUMMARIES = 'on'
+      vi.mocked(db.getBookmark).mockResolvedValue(videoBookmark)
+      vi.mocked(db.getTranscript).mockResolvedValue('[00:00] Stored transcript.')
+    })
+
+    afterEach(() => {
+      if (originalFlag === undefined) delete process.env.YOUTUBE_SUMMARIES
+      else process.env.YOUTUBE_SUMMARIES = originalFlag
+    })
+
+    it('answers from the stored transcript without fetching the page or re-sending the video', async () => {
+      const res = await request(app).post('/api/bookmarks/1/chat').send({ messages })
+      expect(res.status).toBe(200)
+      expect(answerQuestion).toHaveBeenCalledWith(
+        videoBookmark.title,
+        '[00:00] Stored transcript.',
+        messages,
+        'video'
+      )
+      expect(fetchArticleText).not.toHaveBeenCalled()
+      expect(watchVideo).not.toHaveBeenCalled()
+    })
+
+    it('answers without context when no transcript is stored', async () => {
+      vi.mocked(db.getTranscript).mockResolvedValue(null)
+      const res = await request(app).post('/api/bookmarks/1/chat').send({ messages })
+      expect(res.status).toBe(200)
+      expect(answerQuestion).toHaveBeenCalledWith(videoBookmark.title, null, messages, 'video')
+      expect(fetchArticleText).not.toHaveBeenCalled()
+      expect(watchVideo).not.toHaveBeenCalled()
+    })
+
+    it('answers without context when reading the transcript fails', async () => {
+      vi.mocked(db.getTranscript).mockRejectedValue(new Error('firestore down'))
+      const res = await request(app).post('/api/bookmarks/1/chat').send({ messages })
+      expect(res.status).toBe(200)
+      expect(answerQuestion).toHaveBeenCalledWith(videoBookmark.title, null, messages, 'video')
+    })
+
+    it('takes the article path when the switch is off', async () => {
+      process.env.YOUTUBE_SUMMARIES = 'off'
+      const res = await request(app).post('/api/bookmarks/1/chat').send({ messages })
+      expect(res.status).toBe(200)
+      expect(fetchArticleText).toHaveBeenCalledWith(videoBookmark.url)
+      expect(db.getTranscript).not.toHaveBeenCalled()
+      expect(answerQuestion).toHaveBeenCalledWith(videoBookmark.title, 'Article body', messages)
+      expect(watchVideo).not.toHaveBeenCalled()
+    })
+
+    it('returns 503 before reading the transcript when chat is not configured', async () => {
+      vi.mocked(isChatConfigured).mockReturnValue(false)
+      const res = await request(app).post('/api/bookmarks/1/chat').send({ messages })
+      expect(res.status).toBe(503)
+      expect(db.getTranscript).not.toHaveBeenCalled()
+    })
+  })
 })
 
 describe('POST /api/bookmarks/:id/translation', () => {
@@ -1067,5 +1266,381 @@ describe('separate list summaries', () => {
     expect(res.status).toBe(502)
     expect(db.updateSummary).not.toHaveBeenCalled()
     expect(summarizeShort).not.toHaveBeenCalled()
+  })
+})
+
+describe('POST /api/bookmarks/:id/summary — YouTube videos', () => {
+  const originalFlag = process.env.YOUTUBE_SUMMARIES
+  const videoUrl = 'https://www.youtube.com/watch?v=O_zcc6Xl12g'
+  const video = {
+    id: 'v1',
+    url: videoUrl,
+    title: 'Talk',
+    createdAt: '2024-01-01T00:00:00.000Z',
+  }
+  const watched = {
+    transcript: '[00:00] Hello and welcome.',
+    summary: 'The talk covers welcomes.',
+    usage: { promptTokens: 40_000, videoTokens: 39_600, outputTokens: 3_000 },
+    finishReason: 'STOP',
+    latencyMs: 120_000,
+  }
+  const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+  function deferred<T>() {
+    let resolve!: (value: T) => void
+    const promise = new Promise<T>((res) => {
+      resolve = res
+    })
+    return { promise, resolve }
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    process.env.YOUTUBE_SUMMARIES = 'on'
+    vi.mocked(isSummarizerConfigured).mockReturnValue(true)
+    vi.mocked(db.getBookmark).mockResolvedValue(video)
+    vi.mocked(db.getTranscript).mockResolvedValue(null)
+    vi.mocked(db.saveVideoSummary).mockResolvedValue(undefined)
+    vi.mocked(db.setVideoSummaryState).mockResolvedValue(undefined)
+    vi.mocked(db.updateSummary).mockResolvedValue(undefined)
+    vi.mocked(db.listAllLabels).mockResolvedValue([])
+    vi.mocked(db.updateLabels).mockResolvedValue(undefined)
+    vi.mocked(generateLabels).mockResolvedValue(['talks'])
+    vi.mocked(summarizeShort).mockResolvedValue(undefined as unknown as string)
+    vi.mocked(checkVideo).mockResolvedValue({
+      kind: 'ok',
+      durationSeconds: 600,
+      title: 'Real title',
+    })
+    vi.mocked(watchVideo).mockResolvedValue(watched)
+  })
+
+  afterEach(() => {
+    if (originalFlag === undefined) delete process.env.YOUTUBE_SUMMARIES
+    else process.env.YOUTUBE_SUMMARIES = originalFlag
+  })
+
+  describe('first watch', () => {
+    it('watches the video once and stores the transcript with the summary', async () => {
+      const res = await request(app).post('/api/bookmarks/v1/summary')
+
+      expect(res.status).toBe(200)
+      expect(res.body).toEqual({ summary: watched.summary, labels: ['talks'] })
+      expect(checkVideo).toHaveBeenCalledWith('O_zcc6Xl12g')
+      expect(watchVideo).toHaveBeenCalledTimes(1)
+      expect(watchVideo).toHaveBeenCalledWith('O_zcc6Xl12g', 'Real title', 600)
+      expect(db.saveVideoSummary).toHaveBeenCalledWith('v1', {
+        videoId: 'O_zcc6Xl12g',
+        transcript: watched.transcript,
+        summary: watched.summary,
+      })
+      expect(fetchArticleText).not.toHaveBeenCalled()
+      expect(summarize).not.toHaveBeenCalled()
+      expect(db.updateSummary).not.toHaveBeenCalled()
+    })
+
+    it('includes the short summary in the stored result and the response', async () => {
+      vi.mocked(summarizeShort).mockResolvedValueOnce('One line.')
+      const res = await request(app).post('/api/bookmarks/v1/summary')
+
+      expect(res.status).toBe(200)
+      expect(res.body).toEqual({
+        summary: watched.summary,
+        shortSummary: 'One line.',
+        labels: ['talks'],
+      })
+      expect(summarizeShort).toHaveBeenCalledWith('Real title', watched.summary)
+      expect(db.saveVideoSummary).toHaveBeenCalledWith(
+        'v1',
+        expect.objectContaining({ shortSummary: 'One line.' })
+      )
+    })
+
+    it('labels from the summary followed by the transcript, with video wording', async () => {
+      await request(app).post('/api/bookmarks/v1/summary')
+      expect(generateLabels).toHaveBeenCalledWith(
+        'Real title',
+        `${watched.summary}\n\n${watched.transcript}`,
+        [],
+        'video'
+      )
+      expect(db.updateLabels).toHaveBeenCalledWith('v1', ['talks'])
+    })
+
+    it('writes the running state before the watch starts', async () => {
+      await request(app).post('/api/bookmarks/v1/summary')
+      expect(db.setVideoSummaryState).toHaveBeenCalledWith('v1', { status: 'running' })
+      expect(vi.mocked(db.setVideoSummaryState).mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(watchVideo).mock.invocationCallOrder[0]
+      )
+    })
+
+    it('logs the watch token counts with the bookmark and video ids', async () => {
+      await request(app).post('/api/bookmarks/v1/summary')
+      expect(consoleLog).toHaveBeenCalledWith(
+        expect.stringContaining('v1'),
+        expect.objectContaining({
+          videoId: 'O_zcc6Xl12g',
+          latencyMs: watched.latencyMs,
+          usage: watched.usage,
+        })
+      )
+    })
+
+    it('still answers 200 when the running state cannot be written', async () => {
+      vi.mocked(db.setVideoSummaryState).mockRejectedValue(new Error('firestore down'))
+      const res = await request(app).post('/api/bookmarks/v1/summary')
+      expect(res.status).toBe(200)
+      expect(watchVideo).toHaveBeenCalledTimes(1)
+    })
+
+    it('returns 503 before any check or watch when the summarizer is not configured', async () => {
+      vi.mocked(isSummarizerConfigured).mockReturnValue(false)
+      const res = await request(app).post('/api/bookmarks/v1/summary')
+      expect(res.status).toBe(503)
+      expect(db.getTranscript).not.toHaveBeenCalled()
+      expect(checkVideo).not.toHaveBeenCalled()
+      expect(watchVideo).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('title repair', () => {
+    it('passes the Data API title when the bookmark was titled with its url', async () => {
+      vi.mocked(db.getBookmark).mockResolvedValue({ ...video, title: videoUrl })
+      await request(app).post('/api/bookmarks/v1/summary')
+      expect(db.saveVideoSummary).toHaveBeenCalledWith(
+        'v1',
+        expect.objectContaining({ title: 'Real title' })
+      )
+    })
+
+    it('leaves a real title alone', async () => {
+      await request(app).post('/api/bookmarks/v1/summary')
+      expect(vi.mocked(db.saveVideoSummary).mock.calls[0][1]).not.toHaveProperty('title')
+    })
+
+    it('passes no title when the Data API has none', async () => {
+      vi.mocked(db.getBookmark).mockResolvedValue({ ...video, title: videoUrl })
+      vi.mocked(checkVideo).mockResolvedValue({ kind: 'ok', durationSeconds: 600, title: null })
+      await request(app).post('/api/bookmarks/v1/summary')
+      expect(watchVideo).toHaveBeenCalledWith('O_zcc6Xl12g', videoUrl, 600)
+      expect(vi.mocked(db.saveVideoSummary).mock.calls[0][1]).not.toHaveProperty('title')
+    })
+  })
+
+  describe('free-check refusals', () => {
+    it.each([
+      [{ kind: 'too_long', durationSeconds: 3601 } as const, 422, 'video_too_long'],
+      [{ kind: 'unavailable' } as const, 422, 'video_unavailable'],
+      [{ kind: 'live' } as const, 422, 'video_live'],
+      [{ kind: 'unknown' } as const, 502, 'video_length_unknown'],
+    ])('%o answers %i %s without a Gemini call', async (check, status, code) => {
+      vi.mocked(checkVideo).mockResolvedValue(check)
+      const res = await request(app).post('/api/bookmarks/v1/summary')
+
+      expect(res.status).toBe(status)
+      expect(res.body).toEqual({ error: 'Could not summarize this video', code })
+      expect(db.setVideoSummaryState).toHaveBeenCalledTimes(1)
+      expect(db.setVideoSummaryState).toHaveBeenCalledWith('v1', { status: 'failed', code })
+      expect(watchVideo).not.toHaveBeenCalled()
+      expect(db.saveVideoSummary).not.toHaveBeenCalled()
+    })
+
+    it('still answers with the refusal when the failed state cannot be written', async () => {
+      vi.mocked(checkVideo).mockResolvedValue({ kind: 'live' })
+      vi.mocked(db.setVideoSummaryState).mockRejectedValue(new Error('firestore down'))
+      const res = await request(app).post('/api/bookmarks/v1/summary')
+      expect(res.status).toBe(422)
+      expect(res.body.code).toBe('video_live')
+    })
+  })
+
+  describe('watch failures', () => {
+    it.each([
+      [
+        new VideoUnwatchableError(),
+        502,
+        { error: 'Could not summarize this video', code: 'video_unavailable' },
+        'video_unavailable',
+      ],
+      [
+        new VideoNoContentError(),
+        422,
+        { error: 'Could not summarize this video', code: 'video_no_content' },
+        'video_no_content',
+      ],
+      [new Error('gemini 500'), 502, { error: 'Failed to generate a summary' }, 'generic'],
+    ])('%s answers %i and stores the failure', async (error, status, body, storedCode) => {
+      vi.mocked(watchVideo).mockRejectedValue(error)
+      const res = await request(app).post('/api/bookmarks/v1/summary')
+
+      expect(res.status).toBe(status)
+      expect(res.body).toEqual(body)
+      expect(db.setVideoSummaryState).toHaveBeenLastCalledWith('v1', {
+        status: 'failed',
+        code: storedCode,
+      })
+      expect(db.saveVideoSummary).not.toHaveBeenCalled()
+    })
+
+    it('deleted mid-watch answers 500 and does not throw from the state write', async () => {
+      vi.mocked(db.saveVideoSummary).mockRejectedValue(
+        Object.assign(new Error('NOT_FOUND'), { code: 5 })
+      )
+      const res = await request(app).post('/api/bookmarks/v1/summary')
+
+      expect(res.status).toBe(500)
+      expect(res.body).toEqual({ error: 'Failed to save the summary' })
+      expect(db.setVideoSummaryState).toHaveBeenLastCalledWith('v1', {
+        status: 'failed',
+        code: 'generic',
+      })
+      expect(generateLabels).not.toHaveBeenCalled()
+    })
+
+    it('never logs the transcript text', async () => {
+      const marker = 'UNIQUE-TRANSCRIPT-MARKER-7f3a'
+      vi.mocked(watchVideo).mockResolvedValue({ ...watched, transcript: `[00:00] ${marker}` })
+      vi.mocked(generateLabels).mockRejectedValue(new Error('labels down'))
+      vi.mocked(db.saveVideoSummary).mockRejectedValue(new Error('firestore down'))
+      await request(app).post('/api/bookmarks/v1/summary')
+      vi.mocked(db.saveVideoSummary).mockResolvedValue(undefined)
+      await request(app).post('/api/bookmarks/v1/summary')
+
+      expect(consoleError).toHaveBeenCalled()
+      for (const call of [...consoleError.mock.calls, ...consoleLog.mock.calls]) {
+        for (const arg of call) expect(inspect(arg, { depth: 10 })).not.toContain(marker)
+      }
+    })
+  })
+
+  describe('regenerate', () => {
+    it('regenerate from a stored transcript skips the Data API and never watches', async () => {
+      vi.mocked(db.getTranscript).mockResolvedValue('[00:00] Stored transcript.')
+      vi.mocked(summarize).mockResolvedValue('Regenerated summary.')
+      const res = await request(app).post('/api/bookmarks/v1/summary')
+
+      expect(res.status).toBe(200)
+      expect(res.body).toEqual({ summary: 'Regenerated summary.', labels: ['talks'] })
+      expect(summarize).toHaveBeenCalledWith('Talk', '[00:00] Stored transcript.', 'video')
+      expect(db.updateSummary).toHaveBeenCalledWith('v1', 'Regenerated summary.', undefined)
+      expect(generateLabels).toHaveBeenCalledWith(
+        'Talk',
+        'Regenerated summary.\n\n[00:00] Stored transcript.',
+        [],
+        'video'
+      )
+      expect(checkVideo).not.toHaveBeenCalled()
+      expect(watchVideo).not.toHaveBeenCalled()
+      expect(fetchArticleText).not.toHaveBeenCalled()
+      expect(db.setVideoSummaryState).not.toHaveBeenCalled()
+    })
+
+    it('answers 502 like an article when re-summarizing fails, without a state write', async () => {
+      vi.mocked(db.getTranscript).mockResolvedValue('[00:00] Stored transcript.')
+      vi.mocked(summarize).mockRejectedValue(new Error('gemini 500'))
+      const res = await request(app).post('/api/bookmarks/v1/summary')
+
+      expect(res.status).toBe(502)
+      expect(res.body).toEqual({ error: 'Failed to generate a summary' })
+      expect(db.setVideoSummaryState).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('running state', () => {
+    const runningSince = (msAgo: number) => ({
+      ...video,
+      videoSummaryState: {
+        status: 'running' as const,
+        updatedAt: new Date(Date.now() - msAgo).toISOString(),
+      },
+    })
+
+    it('answers 409 for a fresh running state with nothing in flight here', async () => {
+      vi.mocked(db.getBookmark).mockResolvedValue(runningSince(60_000))
+      const res = await request(app).post('/api/bookmarks/v1/summary')
+
+      expect(res.status).toBe(409)
+      expect(res.body).toEqual({
+        error: 'A summary for this video is already being generated',
+        code: 'video_summary_running',
+      })
+      expect(checkVideo).not.toHaveBeenCalled()
+      expect(watchVideo).not.toHaveBeenCalled()
+      expect(db.setVideoSummaryState).not.toHaveBeenCalled()
+    })
+
+    it('generates over a stale running state', async () => {
+      vi.mocked(db.getBookmark).mockResolvedValue(runningSince(11 * 60_000 + 1000))
+      const res = await request(app).post('/api/bookmarks/v1/summary')
+      expect(res.status).toBe(200)
+      expect(watchVideo).toHaveBeenCalledTimes(1)
+    })
+
+    it('joins the local generation instead of answering 409', async () => {
+      const localApp = express()
+      localApp.use(express.json())
+      localApp.use('/api/bookmarks', createBookmarksRouter())
+      // The second request reads the running state the first one wrote.
+      vi.mocked(db.getBookmark).mockResolvedValueOnce(video).mockResolvedValue(runningSince(1000))
+      const watch = deferred<typeof watched>()
+      vi.mocked(watchVideo).mockReturnValue(watch.promise)
+
+      const req1 = request(localApp)
+        .post('/api/bookmarks/v1/summary')
+        .then((r) => r)
+      await new Promise((r) => setTimeout(r, 20))
+      const req2 = request(localApp)
+        .post('/api/bookmarks/v1/summary')
+        .then((r) => r)
+      await new Promise((r) => setTimeout(r, 20))
+
+      watch.resolve(watched)
+      const [res1, res2] = await Promise.all([req1, req2])
+      expect(res1.status).toBe(200)
+      expect(res2.status).toBe(200)
+      expect(res2.body).toEqual(res1.body)
+      expect(watchVideo).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('kill switch', () => {
+    it('sends a YouTube bookmark down the article path when the flag is off', async () => {
+      delete process.env.YOUTUBE_SUMMARIES
+      vi.mocked(fetchArticleText).mockResolvedValue('Page text')
+      vi.mocked(summarize).mockResolvedValue('Page summary.')
+      const res = await request(app).post('/api/bookmarks/v1/summary')
+
+      expect(res.status).toBe(200)
+      expect(fetchArticleText).toHaveBeenCalledWith(videoUrl)
+      expect(summarize).toHaveBeenCalledWith('Talk', 'Page text')
+      expect(checkVideo).not.toHaveBeenCalled()
+      expect(watchVideo).not.toHaveBeenCalled()
+      expect(db.getTranscript).not.toHaveBeenCalled()
+    })
+
+    it('ignores a fresh running state when the flag is off', async () => {
+      process.env.YOUTUBE_SUMMARIES = 'off'
+      vi.mocked(db.getBookmark).mockResolvedValue({
+        ...video,
+        videoSummaryState: { status: 'running', updatedAt: new Date().toISOString() },
+      })
+      vi.mocked(fetchArticleText).mockResolvedValue('Page text')
+      vi.mocked(summarize).mockResolvedValue('Page summary.')
+      const res = await request(app).post('/api/bookmarks/v1/summary')
+      expect(res.status).toBe(200)
+      expect(watchVideo).not.toHaveBeenCalled()
+    })
+
+    it('keeps articles on the article path with the flag on', async () => {
+      vi.mocked(db.getBookmark).mockResolvedValue(bookmark)
+      vi.mocked(fetchArticleText).mockResolvedValue('Article body')
+      vi.mocked(summarize).mockResolvedValue('Article summary.')
+      const res = await request(app).post('/api/bookmarks/1/summary')
+      expect(res.status).toBe(200)
+      expect(summarize).toHaveBeenCalledWith('Example', 'Article body')
+      expect(checkVideo).not.toHaveBeenCalled()
+    })
   })
 })

@@ -1,9 +1,14 @@
 import { Router } from 'express'
 import type { Request, Response } from 'express'
 import * as db from '../services/firestore'
-import type { BookmarkDoc } from '../services/firestore'
+import type { BookmarkDoc, VideoSummaryCode } from '../services/firestore'
 import { fetchMetadata } from '../services/metadataFetcher'
 import { fetchArticleText } from '../services/articleFetcher'
+import { parseYouTubeVideoId, isYouTubeSummariesEnabled } from '../services/youtube'
+import { checkVideo } from '../services/youtubeDataApi'
+import type { VideoCheck } from '../services/youtubeDataApi'
+import { watchVideo, VideoUnwatchableError, VideoNoContentError } from '../services/videoSummarizer'
+import { fetchYouTubeTitle, YOUTUBE_FAVICON_URL } from '../services/youtubeOembed'
 import {
   summarize,
   isSummarizerConfigured,
@@ -45,6 +50,59 @@ class SummaryStorageError extends Error {
   }
 }
 
+// Thrown when a video can't be summarized for a reason the user can act on or should be told
+// about: too long, private, live, no speech, or its length couldn't be checked. It carries a
+// machine-readable code the bookmark page turns into a specific message, where every other failure
+// collapses to "Couldn't generate a summary." The text sent with it stays as vague as the rest.
+class VideoSummaryError extends Error {
+  constructor(
+    readonly code: Exclude<VideoSummaryCode, 'generic'> | 'video_summary_running',
+    readonly httpStatus: 409 | 422 | 502
+  ) {
+    super(`video summary refused: ${code}`)
+  }
+}
+
+// Each free-check refusal, mapped to the status it answers with. Too long, private and live are
+// facts about the video (422); an unknown length is our failure to check, so it is a 502.
+const REFUSALS: Record<
+  Exclude<VideoCheck['kind'], 'ok'>,
+  { code: Exclude<VideoSummaryCode, 'generic'>; httpStatus: 422 | 502 }
+> = {
+  too_long: { code: 'video_too_long', httpStatus: 422 },
+  unavailable: { code: 'video_unavailable', httpStatus: 422 },
+  live: { code: 'video_live', httpStatus: 422 },
+  unknown: { code: 'video_length_unknown', httpStatus: 502 },
+}
+
+// The text stays vague like every other summary error body; the code is what the page acts on.
+function sendVideoSummaryError(res: Response, error: VideoSummaryError): void {
+  res.status(error.httpStatus).json({
+    error:
+      error.code === 'video_summary_running'
+        ? 'A summary for this video is already being generated'
+        : 'Could not summarize this video',
+    code: error.code,
+  })
+}
+
+// A running state older than this outlived the watch's 480 s timeout plus margin: the instance
+// that wrote it died or was redeployed, so it no longer stands for a generation anyone is waiting on.
+const RUNNING_STALE_MS = 660_000
+
+function isFreshRunning(bookmark: BookmarkDoc): boolean {
+  const state = bookmark.videoSummaryState
+  return state?.status === 'running' && Date.now() - Date.parse(state.updatedAt) < RUNNING_STALE_MS
+}
+
+// The video id is derived from the url on every read rather than stored, so it can never disagree
+// with the url and needs no migration for existing bookmarks. The key is left out entirely for a
+// non-video bookmark, rather than set to undefined or null.
+function withVideoId(bookmark: BookmarkDoc): BookmarkDoc & { videoId?: string } {
+  const videoId = parseYouTubeVideoId(bookmark.url)
+  return videoId ? { ...bookmark, videoId } : bookmark
+}
+
 export function createBookmarksRouter(): Router {
   const router = Router()
 
@@ -71,7 +129,12 @@ export function createBookmarksRouter(): Router {
   function generateSummary(
     bookmark: BookmarkDoc
   ): Promise<{ summary: string; shortSummary?: string; labels: string[] | null }> {
+    // With the kill switch off, a YouTube link is summarized from its page exactly as before. The
+    // video branch is a separate function so the article path below stays as it was.
+    const videoId = isYouTubeSummariesEnabled() ? parseYouTubeVideoId(bookmark.url) : null
     const generation = (async () => {
+      if (videoId) return generateVideoSummary(bookmark, videoId)
+
       // Check configuration before doing any network work. Without a key the request can never
       // succeed, so fetching the article first only burns up to 8 seconds and bandwidth on a
       // request that was always going to fail — and, worse, it turns a deterministic 503 into a
@@ -125,10 +188,136 @@ export function createBookmarksRouter(): Router {
     return generation
   }
 
+  type Generated = { summary: string; shortSummary?: string; labels: string[] | null }
+
+  // A video generation takes minutes, so its progress and outcome are stored on the bookmark for
+  // the page to poll and to show after a reload. That record is a courtesy, never the result: a
+  // failed write is logged and swallowed so it can't replace the real outcome, which the waiting
+  // request still answers with. (setVideoSummaryState already ignores a bookmark deleted mid-run.)
+  async function writeVideoState(
+    id: string,
+    state: { status: 'running' } | { status: 'failed'; code: VideoSummaryCode }
+  ): Promise<void> {
+    try {
+      await db.setVideoSummaryState(id, state)
+    } catch (error) {
+      console.error(`video summary state write failed for bookmark ${id}:`, error)
+    }
+  }
+
+  // Same best-effort contract as the article path's short summary.
+  async function shortSummaryOf(id: string, title: string, summary: string) {
+    try {
+      return await summarizeShort(title, summary)
+    } catch (error) {
+      console.error(`short summary generation failed for bookmark ${id}:`, error)
+      return undefined
+    }
+  }
+
+  // Same best-effort contract as the article path's labels. The summary goes first: the labeler
+  // reads only the first 20k chars, about 25 minutes of a talk, and the summary covers all of it.
+  async function labelVideo(id: string, title: string, summary: string, transcript: string) {
+    try {
+      const existingLabels = await db.listAllLabels()
+      const labels = await generateLabels(
+        title,
+        `${summary}\n\n${transcript}`,
+        existingLabels,
+        'video'
+      )
+      await db.updateLabels(id, labels)
+      return labels
+    } catch (error) {
+      console.error(`label generation failed for bookmark ${id}:`, error)
+      return null
+    }
+  }
+
+  async function generateVideoSummary(bookmark: BookmarkDoc, videoId: string): Promise<Generated> {
+    if (!isSummarizerConfigured()) throw new SummarizerUnavailableError()
+
+    // Watch once: with a transcript stored, a regenerate is an ordinary text summary of it, the
+    // same fast call an article gets. No video is sent and the Data API isn't asked again, and no
+    // running state is written because there is no long wait for the page to poll through.
+    const transcript = await db.getTranscript(bookmark.id)
+    if (transcript !== null) return summarizeTranscript(bookmark, transcript)
+
+    // The free checks come before anything paid. A refusal is stored too, so the page can show
+    // why without regenerating.
+    const check = await checkVideo(videoId)
+    if (check.kind !== 'ok') {
+      const { code, httpStatus } = REFUSALS[check.kind]
+      await writeVideoState(bookmark.id, { status: 'failed', code })
+      throw new VideoSummaryError(code, httpStatus)
+    }
+
+    await writeVideoState(bookmark.id, { status: 'running' })
+    const title = check.title ?? bookmark.title
+    let watched
+    try {
+      watched = await watchVideo(videoId, title, check.durationSeconds)
+    } catch (error) {
+      // Rethrown as is, not wrapped, so the route's failure log names the real cause; the route
+      // maps these two classes to their codes.
+      const code: VideoSummaryCode =
+        error instanceof VideoUnwatchableError
+          ? 'video_unavailable'
+          : error instanceof VideoNoContentError
+            ? 'video_no_content'
+            : 'generic'
+      await writeVideoState(bookmark.id, { status: 'failed', code })
+      throw error
+    }
+    // Numbers only, so the real cost per video can be read from the logs. Never the text.
+    console.log(`video summary watched for bookmark ${bookmark.id}:`, {
+      videoId,
+      latencyMs: watched.latencyMs,
+      finishReason: watched.finishReason,
+      usage: watched.usage,
+    })
+
+    const shortSummary = await shortSummaryOf(bookmark.id, title, watched.summary)
+
+    // A bookmark saved with its url as the title (oEmbed and the page both failed) gets the real
+    // title now that the Data API has given one. A real title is never overwritten.
+    const repairTitle = bookmark.title === bookmark.url && check.title !== null
+    try {
+      await db.saveVideoSummary(bookmark.id, {
+        videoId,
+        transcript: watched.transcript,
+        summary: watched.summary,
+        shortSummary,
+        ...(repairTitle ? { title } : {}),
+      })
+    } catch (error) {
+      await writeVideoState(bookmark.id, { status: 'failed', code: 'generic' })
+      throw new SummaryStorageError(error)
+    }
+
+    const labels = await labelVideo(bookmark.id, title, watched.summary, watched.transcript)
+    return { summary: watched.summary, shortSummary, labels }
+  }
+
+  async function summarizeTranscript(
+    bookmark: BookmarkDoc,
+    transcript: string
+  ): Promise<Generated> {
+    const summary = await summarize(bookmark.title, transcript, 'video')
+    const shortSummary = await shortSummaryOf(bookmark.id, bookmark.title, summary)
+    try {
+      await db.updateSummary(bookmark.id, summary, shortSummary)
+    } catch (error) {
+      throw new SummaryStorageError(error)
+    }
+    const labels = await labelVideo(bookmark.id, bookmark.title, summary, transcript)
+    return { summary, shortSummary, labels }
+  }
+
   router.get('/', async (_req: Request, res: Response) => {
     try {
       const bookmarks = await db.listBookmarks()
-      res.json(bookmarks)
+      res.json(bookmarks.map(withVideoId))
     } catch {
       res.status(500).json({ error: 'Failed to list bookmarks' })
     }
@@ -145,9 +334,15 @@ export function createBookmarksRouter(): Router {
       return
     }
     try {
-      const { title, faviconUrl } = await fetchMetadata(url)
+      // Independent of YOUTUBE_SUMMARIES: the oEmbed title is wanted whether or not videos are
+      // summarized. A failed oEmbed falls through to the ordinary metadata fetch.
+      const videoId = parseYouTubeVideoId(url)
+      const videoTitle = videoId ? await fetchYouTubeTitle(videoId) : null
+      const { title, faviconUrl } = videoTitle
+        ? { title: videoTitle, faviconUrl: YOUTUBE_FAVICON_URL }
+        : await fetchMetadata(url)
       const bookmark = await db.createBookmark(url, title ?? url, faviconUrl)
-      res.status(201).json(bookmark)
+      res.status(201).json(withVideoId(bookmark))
     } catch {
       res.status(500).json({ error: 'Failed to create bookmark' })
     }
@@ -160,7 +355,7 @@ export function createBookmarksRouter(): Router {
         res.status(404).json({ error: 'Bookmark not found' })
         return
       }
-      res.json(bookmark)
+      res.json(withVideoId(bookmark))
     } catch {
       res.status(500).json({ error: 'Failed to load bookmark' })
     }
@@ -228,6 +423,18 @@ export function createBookmarksRouter(): Router {
 
     let generation = inFlight.get(bookmark.id)
     if (!generation) {
+      // A fresh running state with nothing in flight here means another instance is watching the
+      // video right now. Joining it isn't possible across instances, and starting a second watch
+      // would pay for the video twice, so the page is told to keep polling instead. A generation
+      // in flight on this instance is joined above as usual, running state or not.
+      if (
+        isYouTubeSummariesEnabled() &&
+        parseYouTubeVideoId(bookmark.url) &&
+        isFreshRunning(bookmark)
+      ) {
+        sendVideoSummaryError(res, new VideoSummaryError('video_summary_running', 409))
+        return
+      }
       generation = generateSummary(bookmark)
       inFlight.set(bookmark.id, generation)
     }
@@ -245,7 +452,13 @@ export function createBookmarksRouter(): Router {
       // status code in the Cloud Run request log. Log the real cause here, tagged with the bookmark
       // id, so the next failure is one log query rather than a bisect across revisions.
       console.error(`summary generation failed for bookmark ${bookmark.id}:`, error)
-      if (error instanceof SummarizerUnavailableError) {
+      if (error instanceof VideoSummaryError) {
+        sendVideoSummaryError(res, error)
+      } else if (error instanceof VideoUnwatchableError) {
+        sendVideoSummaryError(res, new VideoSummaryError('video_unavailable', 502))
+      } else if (error instanceof VideoNoContentError) {
+        sendVideoSummaryError(res, new VideoSummaryError('video_no_content', 422))
+      } else if (error instanceof SummarizerUnavailableError) {
         res.status(503).json({ error: 'Summarization is not configured' })
       } else if (error instanceof SummaryStorageError) {
         res.status(500).json({ error: 'Failed to save the summary' })
@@ -328,7 +541,8 @@ export function createBookmarksRouter(): Router {
   // The chat is not persisted, so the client sends the whole conversation each time and this
   // endpoint stays stateless — no cache to invalidate, and it works the same across Cloud Run
   // instances. The article is refetched per question; an 8s fetch plus one Flash call per
-  // question is a fine price for a single-user app.
+  // question is a fine price for a single-user app. A video is never refetched or re-sent to
+  // Gemini: the chat answers from the transcript stored when it was summarized.
   router.post('/:id/chat', async (req: Request, res: Response) => {
     const messages = parseChatMessages(req.body)
     if (!messages) {
@@ -356,14 +570,17 @@ export function createBookmarksRouter(): Router {
       return
     }
 
+    const isVideo = isYouTubeSummariesEnabled() && parseYouTubeVideoId(bookmark.url) !== null
     let text: string | null
     try {
-      text = await fetchArticleText(bookmark.url)
+      text = isVideo ? await db.getTranscript(bookmark.id) : await fetchArticleText(bookmark.url)
     } catch {
       text = null
     }
     try {
-      const answer = await answerQuestion(bookmark.title, text, messages)
+      const answer = isVideo
+        ? await answerQuestion(bookmark.title, text, messages, 'video')
+        : await answerQuestion(bookmark.title, text, messages)
       res.json({ answer })
     } catch (error) {
       // Vague bodies, logged cause — same contract as the summary route, for the same reason.
