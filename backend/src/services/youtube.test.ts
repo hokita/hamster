@@ -25,6 +25,10 @@ describe('parseYouTubeVideoId', () => {
     `https://www.youtube.com/v/${ID}`,
     `https://WWW.YOUTUBE.COM/watch?v=${ID}`,
     `https://youtu.be/${ID}/`,
+    `https://www.youtube.com/shorts/${ID}/`,
+    `https://www.youtube.com/shorts/${ID}/extra`,
+    `https://www.youtube.com/embed/${ID}/x/y`,
+    `https://youtu.be/${ID}/extra`,
   ])('accepts %s', (url) => {
     expect(parseYouTubeVideoId(url)).toBe(ID)
   })
@@ -39,6 +43,9 @@ describe('parseYouTubeVideoId', () => {
     'https://www.youtube.com/results?search_query=x',
     'https://www.youtube.com/feed/subscriptions',
     'https://www.youtube.com/watch?v=short',
+    'https://www.youtube.com/shorts/',
+    `https://www.youtube.com/shorts//${ID}`,
+    `https://www.youtube.com/shorts/${ID}x/extra`,
     `https://www.youtube.com/watch?v=${ID}%22x`,
     `https://youtube.com.evil.test/watch?v=${ID}`,
     `https://notyoutube.com/watch?v=${ID}`,

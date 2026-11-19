@@ -23,7 +23,8 @@ export function canonicalVideoUrl(videoId: string): string {
 }
 
 // Returns the video id only for links that point at one video. Channels, playlists and search
-// pages return null so they keep the article path. Extra query params (list, si, t) are ignored.
+// pages return null so they keep the article path. Extra query params (list, si, t) and any path
+// after the id (a trailing slash or extra segment, spec §5) are ignored.
 export function parseYouTubeVideoId(url: string): string | null {
   try {
     const parsed = new URL(url)
@@ -34,11 +35,11 @@ export function parseYouTubeVideoId(url: string): string | null {
 
     let candidate: string | null | undefined
     if (host === 'youtu.be') {
-      candidate = parsed.pathname.match(/^\/([^/]+)\/?$/)?.[1]
+      candidate = parsed.pathname.match(/^\/([^/]+)(?:\/.*)?$/)?.[1]
     } else if (parsed.pathname === '/watch') {
       candidate = parsed.searchParams.get('v')
     } else {
-      candidate = parsed.pathname.match(/^\/(?:shorts|live|embed|v)\/([^/]+)\/?$/)?.[1]
+      candidate = parsed.pathname.match(/^\/(?:shorts|live|embed|v)\/([^/]+)(?:\/.*)?$/)?.[1]
     }
     return candidate && VIDEO_ID.test(candidate) ? candidate : null
   } catch {
