@@ -8,8 +8,6 @@ function digest(value: string): Buffer {
   return createHash('sha256').update(value).digest()
 }
 
-// Returns a constant-time matcher for the configured API token, or null when
-// token auth is off (unset, or too short to be a real random token).
 export function apiTokenMatcher(
   configured: string | undefined
 ): ((token: string) => boolean) | null {

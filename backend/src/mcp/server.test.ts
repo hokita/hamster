@@ -294,6 +294,23 @@ describe('hamster MCP server', () => {
     expect(getBookmark).not.toHaveBeenCalled()
   })
 
+  it('rejects malformed ids on set_read and summarize_bookmark', async () => {
+    const client = await connect()
+    for (const id of ['', 'a/b', '../x', 'x'.repeat(65)]) {
+      for (const [name, args] of [
+        ['set_read', { id, isRead: true }],
+        ['summarize_bookmark', { id }],
+      ] as const) {
+        const result = await client.callTool({ name, arguments: args })
+        expect(result.isError).toBe(true)
+        expect(textOf(result)).toBe('Invalid bookmark id')
+      }
+    }
+    expect(setReadState).not.toHaveBeenCalled()
+    expect(getBookmark).not.toHaveBeenCalled()
+    expect(takeSummarySlot).not.toHaveBeenCalled()
+  })
+
   it('reports a missing bookmark', async () => {
     vi.mocked(getBookmark).mockResolvedValue(null)
     const result = await (

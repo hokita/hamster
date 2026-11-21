@@ -2,8 +2,7 @@ export interface RateLimiter {
   take(): { ok: true } | { ok: false; retryAfterSeconds: number }
 }
 
-// Rolling-window limiter kept in memory, so the limit is per Cloud Run
-// instance — fine for a single owner (see the agent notes spec).
+// In-memory, so the limit is per Cloud Run instance.
 export function createRateLimiter({
   limit,
   windowMs,

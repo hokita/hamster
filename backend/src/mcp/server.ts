@@ -34,8 +34,7 @@ function toolError(message: string): CallToolResult {
   return { ...text(message), isError: true }
 }
 
-// Each tool call takes from the token limiter;
-// protocol requests (initialize, tools/list) never reach a tool and aren't counted.
+// Protocol requests (initialize, tools/list) never reach a tool, so they aren't counted.
 function limited<A>(
   limiter: RateLimiter,
   failure: string,
@@ -334,9 +333,7 @@ export function createHamsterMcpServer(deps: McpDeps): McpServer {
   return server
 }
 
-// The SDK answers rejected requests (406, 415, bad protocol version, ...) itself
-// and reports them through onerror; log only the message so a failing
-// connector leaves a reason in the logs.
+// The SDK answers 406/415/bad protocol version itself and reports only through onerror.
 function logMcpError(err: Error) {
   console.error('MCP request failed:', err.message)
 }

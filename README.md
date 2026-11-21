@@ -203,7 +203,7 @@ URL=https://hamster-backend-ietnmc4quq-an.a.run.app/mcp
 BODY='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"check","version":"1"}}}'
 curl -s -o /dev/null -w '%{http_code}\n' -X POST "$URL" \
   -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -d "$BODY"
-curl -s -o /dev/null -w '%{http_code}\n' -X POST "$URL" -H "Authorization: Bearer <token>" \
+curl -s -o /dev/null -w '%{http_code}\n' -X POST "$URL" -H "Authorization: Bearer $(gcloud secrets versions access latest --secret hamster-mcp-token --project hamster-52b093)" \
   -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -d "$BODY"
 ```
 
