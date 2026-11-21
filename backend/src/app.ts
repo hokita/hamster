@@ -1,7 +1,14 @@
 import express from 'express'
 import cors from 'cors'
 import { authMiddleware } from './middleware/auth'
+import { apiTokenAuth, apiTokenMatcher } from './middleware/apiToken'
+import { createRateLimiter } from './middleware/rateLimit'
 import { createBookmarksRouter } from './routes/bookmarks'
+import { createMcpRequestHandler } from './mcp/server'
+import { createSummaryGenerator } from './services/summaryGeneration'
+import { takeSummarySlot } from './services/firestore'
+
+const MCP_CALLS_PER_HOUR = 60
 
 export function createApp() {
   const app = express()
@@ -11,6 +18,18 @@ export function createApp() {
   app.use(cors({ origin: process.env.FRONTEND_URL || '*' }))
   app.use(express.json())
   app.get('/health', (_req, res) => res.json({ ok: true }))
-  app.use('/api/bookmarks', authMiddleware, createBookmarksRouter())
+  const summaries = createSummaryGenerator()
+  const limiter = createRateLimiter({ limit: MCP_CALLS_PER_HOUR, windowMs: 3_600_000 })
+  app.use('/api/bookmarks', authMiddleware, createBookmarksRouter({ summaries }))
+  // All methods, so GET/DELETE reach the SDK, which answers 405 when stateless.
+  app.all(
+    '/mcp',
+    apiTokenAuth({ matches: apiTokenMatcher(process.env.HAMSTER_MCP_TOKEN) }),
+    createMcpRequestHandler({
+      limiter,
+      summaries,
+      takeSummarySlot,
+    })
+  )
   return app
 }

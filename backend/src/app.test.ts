@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, beforeEach } from 'vitest'
 import request from 'supertest'
 import { createApp } from './app'
 
@@ -35,5 +35,69 @@ describe('CORS', () => {
     process.env.FRONTEND_URL = 'http://localhost:5173'
     const res = await request(createApp()).get('/health')
     expect(res.headers['access-control-allow-origin']).toBe('http://localhost:5173')
+  })
+})
+
+describe('POST /mcp', () => {
+  const originalToken = process.env.HAMSTER_MCP_TOKEN
+  const token = 'a'.repeat(64)
+  const initialize = {
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'initialize',
+    params: {
+      protocolVersion: '2025-06-18',
+      capabilities: {},
+      clientInfo: { name: 'test', version: '0' },
+    },
+  }
+
+  beforeEach(() => {
+    process.env.HAMSTER_MCP_TOKEN = token
+  })
+
+  afterEach(() => {
+    if (originalToken === undefined) delete process.env.HAMSTER_MCP_TOKEN
+    else process.env.HAMSTER_MCP_TOKEN = originalToken
+  })
+
+  const post = (auth?: string) => {
+    const req = request(createApp())
+      .post('/mcp')
+      .set('Accept', 'application/json, text/event-stream')
+    return (auth ? req.set('Authorization', auth) : req).send(initialize)
+  }
+
+  it('rejects a missing header', async () => {
+    expect((await post()).status).toBe(401)
+  })
+
+  it('rejects a wrong token', async () => {
+    expect((await post('Bearer wrong')).status).toBe(401)
+  })
+
+  it('rejects a truncated token', async () => {
+    expect((await post(`Bearer ${token.slice(0, 43)}`)).status).toBe(401)
+  })
+
+  it('rejects everything when the configured token is too short', async () => {
+    process.env.HAMSTER_MCP_TOKEN = 'x'.repeat(42)
+    expect((await post(`Bearer ${'x'.repeat(42)}`)).status).toBe(401)
+  })
+
+  it('rejects everything when no token is configured', async () => {
+    delete process.env.HAMSTER_MCP_TOKEN
+    expect((await post(`Bearer ${token}`)).status).toBe(401)
+  })
+
+  it('does not let the MCP token into the REST API', async () => {
+    const res = await request(createApp())
+      .get('/api/bookmarks')
+      .set('Authorization', `Bearer ${token}`)
+    expect(res.status).toBe(401)
+  })
+
+  it('accepts initialize with the right token', async () => {
+    expect((await post(`Bearer ${token}`)).status).toBe(200)
   })
 })
