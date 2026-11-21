@@ -1597,11 +1597,11 @@ describe('POST /api/bookmarks/:id/summary — YouTube videos', () => {
       const req1 = request(localApp)
         .post('/api/bookmarks/v1/summary')
         .then((r) => r)
-      await new Promise((r) => setTimeout(r, 20))
+      await vi.waitFor(() => expect(watchVideo).toHaveBeenCalledTimes(1))
       const req2 = request(localApp)
         .post('/api/bookmarks/v1/summary')
         .then((r) => r)
-      await new Promise((r) => setTimeout(r, 20))
+      await vi.waitFor(() => expect(db.getBookmark).toHaveBeenCalledTimes(2))
 
       watch.resolve(watched)
       const [res1, res2] = await Promise.all([req1, req2])
