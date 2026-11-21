@@ -64,13 +64,23 @@ jobs:
           tags: asia-northeast1-docker.pkg.dev/hamster-52b093/hamster/backend:latest
 
       - name: Deploy to Cloud Run
+        env:
+          # Cloud Run fails a deploy that references a missing secret, so the
+          # token is only attached once the repo variable names one.
+          MCP_TOKEN_SECRET: ${{ vars.HAMSTER_MCP_TOKEN_SECRET }}
         run: |
+          SECRETS="ALLOWED_EMAILS=ALLOWED_EMAILS:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest,YOUTUBE_API_KEY=YOUTUBE_API_KEY:latest"
+          if [ -n "$MCP_TOKEN_SECRET" ]; then
+            SECRETS="$SECRETS,HAMSTER_MCP_TOKEN=${MCP_TOKEN_SECRET}:latest"
+          fi
+          # Video summaries keep running after the MCP reply and need CPU outside a request.
           gcloud run deploy hamster-backend \
             --image asia-northeast1-docker.pkg.dev/hamster-52b093/hamster/backend:latest \
             --region asia-northeast1 \
             --allow-unauthenticated \
+            --no-cpu-throttling \
             --min-instances 0 \
             --max-instances 2 \
             --timeout 600 \
             --set-env-vars "FIREBASE_PROJECT_ID=hamster-52b093,FRONTEND_URL=https://hamster-52b093.web.app,YOUTUBE_SUMMARIES=on" \
-            --set-secrets "ALLOWED_EMAILS=ALLOWED_EMAILS:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest,YOUTUBE_API_KEY=YOUTUBE_API_KEY:latest"
+            --set-secrets "$SECRETS"
