@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { findBookmarks } from './bookmarkSearch'
+import { findBookmarks, findSavedLink } from './bookmarkSearch'
 import type { BookmarkDoc } from './firestore'
 
 function bookmark(overrides: Partial<BookmarkDoc> = {}): BookmarkDoc {
@@ -69,5 +69,33 @@ describe('findBookmarks', () => {
     expect(result.bookmarks.every((b) => !('summary' in b))).toBe(true)
     expect(result.bookmarks[0]).toMatchObject({ hasSummary: true, shortSummary: 'short' })
     expect(findBookmarks(all, { limit: 0 }).bookmarks).toHaveLength(1)
+  })
+})
+
+describe('findSavedLink', () => {
+  it('matches the same trimmed url', () => {
+    const saved = bookmark({ id: 'saved', url: 'https://example.com/a' })
+    expect(
+      findSavedLink(
+        [bookmark({ id: 'other', url: 'https://x.com/' }), saved],
+        '  https://example.com/a \n'
+      )
+    ).toBe(saved)
+  })
+
+  it('matches youtu.be and watch?v= for one video', () => {
+    const saved = bookmark({ id: 'yt', url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' })
+    expect(findSavedLink([saved], 'https://youtu.be/dQw4w9WgXcQ')).toBe(saved)
+    expect(
+      findSavedLink([bookmark({ url: 'https://youtu.be/dQw4w9WgXcQ' })], saved.url)
+    ).toBeDefined()
+    expect(findSavedLink([saved], 'https://youtu.be/aaaaaaaaaaa')).toBeUndefined()
+  })
+
+  it('does not match a different path or query', () => {
+    const all = [bookmark({ url: 'https://example.com/a?x=1' })]
+    expect(findSavedLink(all, 'https://example.com/b?x=1')).toBeUndefined()
+    expect(findSavedLink(all, 'https://example.com/a?x=2')).toBeUndefined()
+    expect(findSavedLink(all, 'https://example.com/a')).toBeUndefined()
   })
 })

@@ -6,6 +6,7 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 
 vi.mock('../services/firestore', () => ({
   listBookmarks: vi.fn(),
+  createBookmark: vi.fn(),
   getBookmark: vi.fn(),
   getTranscript: vi.fn(),
   setReadState: vi.fn(),
@@ -48,8 +49,21 @@ vi.mock('../services/shortSummarizer', () => ({
 vi.mock('../services/labeler', () => ({
   generateLabels: vi.fn(),
 }))
+vi.mock('../services/metadataFetcher', () => ({
+  fetchMetadata: vi.fn(),
+}))
+vi.mock('../services/youtubeOembed', async () => {
+  const actual = await vi.importActual<typeof import('../services/youtubeOembed')>(
+    '../services/youtubeOembed'
+  )
+  return {
+    fetchYouTubeTitle: vi.fn(),
+    YOUTUBE_FAVICON_URL: actual.YOUTUBE_FAVICON_URL,
+  }
+})
 
 import {
+  createBookmark,
   getBookmark,
   getTranscript,
   listAllLabels,
@@ -66,6 +80,8 @@ import { fetchArticleText } from '../services/articleFetcher'
 import { isSummarizerConfigured, summarize } from '../services/summarizer'
 import { summarizeShort } from '../services/shortSummarizer'
 import { generateLabels } from '../services/labeler'
+import { fetchMetadata } from '../services/metadataFetcher'
+import { fetchYouTubeTitle } from '../services/youtubeOembed'
 import { createSummaryGenerator } from '../services/summaryGeneration'
 import type { SummaryGenerator } from '../services/summaryGeneration'
 import { createRateLimiter } from '../middleware/rateLimit'
@@ -149,6 +165,17 @@ beforeEach(() => {
   vi.mocked(saveVideoSummary).mockResolvedValue(undefined)
   vi.mocked(setVideoSummaryState).mockResolvedValue(undefined)
   vi.mocked(checkVideo).mockResolvedValue({ kind: 'ok', durationSeconds: 600, title: 'A talk' })
+  vi.mocked(listBookmarks).mockResolvedValue([])
+  vi.mocked(fetchMetadata).mockResolvedValue({ title: 'New post', faviconUrl: null })
+  vi.mocked(fetchYouTubeTitle).mockResolvedValue('A talk')
+  vi.mocked(createBookmark).mockImplementation(async (url, title, faviconUrl) => ({
+    id: 'new1',
+    url,
+    title,
+    ...(faviconUrl ? { faviconUrl } : {}),
+    isRead: false,
+    createdAt: '2026-11-21T00:00:00.000Z',
+  }))
 })
 
 afterEach(async () => {
@@ -169,6 +196,11 @@ function textOf(result: Awaited<ReturnType<Client['callTool']>>): string {
   return first.text
 }
 
+async function saveCall(link: string) {
+  const result = await (await connect()).callTool({ name: 'save_link', arguments: { url: link } })
+  return { result, body: result.isError ? undefined : JSON.parse(textOf(result)) }
+}
+
 async function summarizeCall(id: string) {
   return (await connect()).callTool({ name: 'summarize_bookmark', arguments: { id } })
 }
@@ -179,6 +211,7 @@ describe('hamster MCP server', () => {
     expect(Object.fromEntries(tools.map((t) => [t.name, t.annotations]))).toEqual({
       find_bookmarks: { readOnlyHint: true },
       open_bookmark: { readOnlyHint: true },
+      save_link: { destructiveHint: false, idempotentHint: true, openWorldHint: true },
       set_read: { idempotentHint: true, destructiveHint: false },
       summarize_bookmark: { destructiveHint: false, openWorldHint: true },
     })
@@ -450,5 +483,144 @@ describe('hamster MCP server', () => {
     )
     expect(setVideoSummaryState).toHaveBeenCalledWith('v1', { status: 'failed', code: 'generic' })
     error.mockRestore()
+  })
+
+  it('saves a new link and summarizes it like the app', async () => {
+    vi.mocked(fetchMetadata).mockResolvedValue({
+      title: 'New post',
+      faviconUrl: 'https://new.example/favicon.ico',
+    })
+    const { result, body } = await saveCall('  https://new.example/post \n')
+    expect(result.isError).toBeFalsy()
+    expect(createBookmark).toHaveBeenCalledTimes(1)
+    expect(createBookmark).toHaveBeenCalledWith(
+      'https://new.example/post',
+      'New post',
+      'https://new.example/favicon.ico'
+    )
+    expect(summarize).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(createBookmark).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(summarize).mock.invocationCallOrder[0]
+    )
+    expect(body).toEqual({
+      created: true,
+      bookmark: {
+        id: 'new1',
+        title: 'New post',
+        url: 'https://new.example/post',
+        labels: ['tech', 'ai'],
+        shortSummary: 'New short',
+        hasSummary: true,
+        isRead: false,
+        createdAt: '2026-11-21T00:00:00.000Z',
+      },
+      summaryStatus: 'ready',
+    })
+  })
+
+  it('returns the existing bookmark without saving or summarizing', async () => {
+    vi.mocked(listBookmarks).mockResolvedValue([bookmark] as never)
+    const { result, body } = await saveCall(` ${bookmark.url} `)
+    expect(result.isError).toBeFalsy()
+    expect(body).toEqual({
+      created: false,
+      bookmark: {
+        id: 'abc123',
+        title: 'A post',
+        url: 'https://example.com/post',
+        labels: ['tech'],
+        shortSummary: 'Short',
+        hasSummary: true,
+        isRead: false,
+        createdAt: '2026-11-01T00:00:00.000Z',
+      },
+    })
+    expect(fetchMetadata).not.toHaveBeenCalled()
+    expect(createBookmark).not.toHaveBeenCalled()
+    expect(takeSummarySlot).not.toHaveBeenCalled()
+    expect(summarize).not.toHaveBeenCalled()
+  })
+
+  it('two simultaneous saves of one link create one bookmark', async () => {
+    vi.mocked(fetchMetadata).mockImplementation(
+      () =>
+        new Promise((resolve) =>
+          setTimeout(() => resolve({ title: 'New post', faviconUrl: null }), 50)
+        )
+    )
+    const [a, b] = await Promise.all([
+      saveCall('https://new.example/post'),
+      saveCall(' https://new.example/post'),
+    ])
+    expect(createBookmark).toHaveBeenCalledTimes(1)
+    expect(takeSummarySlot).toHaveBeenCalledTimes(1)
+    expect(summarize).toHaveBeenCalledTimes(1)
+    const created = [a.body, b.body].find((body) => body.created)
+    const joined = [a.body, b.body].find((body) => !body.created)
+    expect(created).toMatchObject({ summaryStatus: 'ready', bookmark: { id: 'new1' } })
+    expect(joined).toEqual({ created: false, bookmark: expect.objectContaining({ id: 'new1' }) })
+
+    vi.mocked(fetchYouTubeTitle).mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve('A talk'), 50))
+    )
+    takeSummarySlot.mockResolvedValue({ ok: false, retryAfterSeconds: 600 })
+    const videos = await Promise.all([
+      saveCall('https://youtu.be/dQw4w9WgXcQ'),
+      saveCall('https://www.youtube.com/watch?v=dQw4w9WgXcQ'),
+    ])
+    expect(createBookmark).toHaveBeenCalledTimes(2)
+    expect(videos.filter((v) => v.body.created)).toHaveLength(1)
+  })
+
+  it('saves but does not summarize past the summary limit', async () => {
+    takeSummarySlot.mockResolvedValue({ ok: false, retryAfterSeconds: 600 })
+    const { result, body } = await saveCall('https://new.example/post')
+    expect(result.isError).toBeFalsy()
+    expect(createBookmark).toHaveBeenCalledTimes(1)
+    expect(summarize).not.toHaveBeenCalled()
+    expect(body).toMatchObject({
+      created: true,
+      bookmark: { id: 'new1', hasSummary: false },
+      summaryStatus: 'not_started',
+      summaryMessage: 'Summary limit reached (10 an hour): try again in 10 minutes',
+    })
+  })
+
+  it('reports a failed summary, not an internal error, when the summary step throws', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const boom = new Error('firestore down')
+    takeSummarySlot.mockRejectedValue(boom)
+    const { result, body } = await saveCall('https://new.example/post')
+    expect(result.isError).toBeFalsy()
+    expect(body).toMatchObject({
+      created: true,
+      bookmark: { id: 'new1' },
+      summaryStatus: 'failed',
+      summaryMessage: "Couldn't generate a summary. Try again later.",
+    })
+    expect(error).toHaveBeenCalledWith('summary generation failed for bookmark new1:', boom)
+    error.mockRestore()
+  })
+
+  it('rejects a non-http url and one over 2048 characters', async () => {
+    for (const link of ['javascript:alert(1)', 'ftp://x', 'https://a.com/' + 'x'.repeat(2048)]) {
+      const { result } = await saveCall(link)
+      expect(result.isError).toBe(true)
+      expect(textOf(result)).toBe('URL must be an http or https link up to 2048 characters')
+    }
+    expect(listBookmarks).not.toHaveBeenCalled()
+    expect(createBookmark).not.toHaveBeenCalled()
+  })
+
+  it('keeps a Japanese title from the page', async () => {
+    vi.mocked(fetchMetadata).mockResolvedValue({ title: 'はむすたーの記事', faviconUrl: null })
+    takeSummarySlot.mockResolvedValue({ ok: false, retryAfterSeconds: 600 })
+    const { body } = await saveCall('https://new.example/記事')
+    expect(createBookmark).toHaveBeenCalledWith(
+      'https://new.example/記事',
+      'はむすたーの記事',
+      null
+    )
+    expect(body.bookmark.title).toBe('はむすたーの記事')
   })
 })

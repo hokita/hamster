@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach, beforeEach } from 'vitest'
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
 import request from 'supertest'
 import { createApp } from './app'
 
@@ -81,8 +81,11 @@ describe('POST /mcp', () => {
   })
 
   it('rejects everything when the configured token is too short', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     process.env.HAMSTER_MCP_TOKEN = 'x'.repeat(42)
     expect((await post(`Bearer ${'x'.repeat(42)}`)).status).toBe(401)
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('HAMSTER_MCP_TOKEN'))
+    warn.mockRestore()
   })
 
   it('rejects everything when no token is configured', async () => {

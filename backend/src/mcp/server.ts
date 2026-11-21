@@ -5,13 +5,15 @@ import { toNodeHandler } from '@modelcontextprotocol/node'
 import { z } from 'zod'
 import * as db from '../services/firestore'
 import type { BookmarkDoc } from '../services/firestore'
-import { BOOKMARK_ID, findBookmarks } from '../services/bookmarkSearch'
+import { BOOKMARK_ID, findBookmarks, findSavedLink, toListItem } from '../services/bookmarkSearch'
+import { saveBookmark } from '../services/bookmarkSave'
 import { parseYouTubeVideoId } from '../services/youtube'
 import { describeSummaryFailure, RUNNING_ELSEWHERE } from '../services/summaryGeneration'
 import type { Generated, SummaryGenerator } from '../services/summaryGeneration'
 import type { RateLimiter } from '../middleware/rateLimit'
 
 const MAX_TRANSCRIPT_CHARS = 100_000
+const MAX_URL_CHARS = 2048
 const SUMMARY_WAIT_MS = 45_000
 const SUMMARY_BUDGET = { limit: 10, windowMs: 3_600_000 }
 const STILL_SUMMARIZING =
@@ -155,6 +157,40 @@ export async function runSummary(bookmark: BookmarkDoc, deps: McpDeps): Promise<
   }
 }
 
+type Saved = { created: boolean; bookmark: BookmarkDoc }
+
+// Per instance only: two instances can still both save one link, the same gap pendingClaims accepts.
+const pendingSaves = new Map<string, Promise<Saved>>()
+
+async function saveUnlessSaved(url: string): Promise<Saved> {
+  const existing = findSavedLink(await db.listBookmarks(), url)
+  if (existing) return { created: false, bookmark: existing }
+  return { created: true, bookmark: await saveBookmark(url) }
+}
+
+async function saveOnce(url: string): Promise<Saved> {
+  const videoId = parseYouTubeVideoId(url)
+  const key = videoId ? `yt:${videoId}` : url
+  const pending = pendingSaves.get(key)
+  if (pending) return { created: false, bookmark: (await pending).bookmark }
+  const save = saveUnlessSaved(url)
+  pendingSaves.set(key, save)
+  const cleanup = () => {
+    if (pendingSaves.get(key) === save) pendingSaves.delete(key)
+  }
+  save.then(cleanup, cleanup)
+  return save
+}
+
+async function summarizeSaved(bookmark: BookmarkDoc, deps: McpDeps): Promise<SummaryOutcome> {
+  try {
+    return await runSummary(bookmark, deps)
+  } catch (error) {
+    logFailure(bookmark.id, error)
+    return { status: 'failed', message: "Couldn't generate a summary. Try again later." }
+  }
+}
+
 export function createHamsterMcpServer(deps: McpDeps): McpServer {
   const { limiter } = deps
   const server = new McpServer({ name: 'hamster', version: '1.0.0' })
@@ -218,6 +254,42 @@ export function createHamsterMcpServer(deps: McpDeps): McpServer {
         if (transcript.length > MAX_TRANSCRIPT_CHARS) result.transcriptTruncated = true
       }
       return text(JSON.stringify(result))
+    })
+  )
+
+  server.registerTool(
+    'save_link',
+    {
+      description:
+        "Save a link to hamster, the same as saving it in the app: hamster reads its title and then summarizes it (waiting up to about 45 seconds). A link that is already saved isn't added again; the existing bookmark comes back instead.",
+      inputSchema: z.object({
+        url: z.string().describe('An http or https link'),
+      }),
+      annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    limited(limiter, 'Failed to save link', async ({ url: rawUrl }) => {
+      const url = rawUrl.trim()
+      if (!/^https?:\/\//.test(url) || url.length > MAX_URL_CHARS) {
+        return toolError('URL must be an http or https link up to 2048 characters')
+      }
+      const saved = await saveOnce(url)
+      if (!saved.created) {
+        return text(JSON.stringify({ created: false, bookmark: toListItem(saved.bookmark) }))
+      }
+      const outcome = await summarizeSaved(saved.bookmark, deps)
+      if (outcome.status === 'ready') {
+        const { summary, shortSummary, labels } = outcome
+        const bookmark = toListItem({ ...saved.bookmark, summary, shortSummary, labels })
+        return text(JSON.stringify({ created: true, bookmark, summaryStatus: 'ready' }))
+      }
+      return text(
+        JSON.stringify({
+          created: true,
+          bookmark: toListItem(saved.bookmark),
+          summaryStatus: outcome.status,
+          summaryMessage: outcome.message,
+        })
+      )
     })
   )
 

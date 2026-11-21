@@ -30,7 +30,7 @@ export function normalize(text: string): string {
   return text.normalize('NFKC').toLowerCase()
 }
 
-function toListItem(bookmark: BookmarkDoc): BookmarkListItem {
+export function toListItem(bookmark: BookmarkDoc): BookmarkListItem {
   const videoId = parseYouTubeVideoId(bookmark.url)
   return {
     id: bookmark.id,
@@ -81,4 +81,14 @@ export function findBookmarks(
     ...(end < matched.length && { nextOffset: end }),
     bookmarks: matched.slice(offset, end).map(toListItem),
   }
+}
+
+export function findSavedLink(all: BookmarkDoc[], url: string): BookmarkDoc | undefined {
+  const target = url.trim()
+  const videoId = parseYouTubeVideoId(target)
+  return all.find(
+    (bookmark) =>
+      bookmark.url.trim() === target ||
+      (videoId !== null && parseYouTubeVideoId(bookmark.url) === videoId)
+  )
 }

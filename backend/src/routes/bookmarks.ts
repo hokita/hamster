@@ -2,10 +2,9 @@ import { Router } from 'express'
 import type { Request, Response } from 'express'
 import * as db from '../services/firestore'
 import type { BookmarkDoc } from '../services/firestore'
-import { fetchMetadata } from '../services/metadataFetcher'
 import { fetchArticleText } from '../services/articleFetcher'
 import { parseYouTubeVideoId, isYouTubeSummariesEnabled } from '../services/youtube'
-import { fetchYouTubeTitle, YOUTUBE_FAVICON_URL } from '../services/youtubeOembed'
+import { saveBookmark } from '../services/bookmarkSave'
 import {
   createSummaryGenerator,
   describeSummaryFailure,
@@ -53,14 +52,7 @@ export function createBookmarksRouter({
       return
     }
     try {
-      // Independent of YOUTUBE_SUMMARIES: the oEmbed title is wanted whether or not videos are
-      // summarized. A failed oEmbed falls through to the ordinary metadata fetch.
-      const videoId = parseYouTubeVideoId(url)
-      const videoTitle = videoId ? await fetchYouTubeTitle(videoId) : null
-      const { title, faviconUrl } = videoTitle
-        ? { title: videoTitle, faviconUrl: YOUTUBE_FAVICON_URL }
-        : await fetchMetadata(url)
-      const bookmark = await db.createBookmark(url, title ?? url, faviconUrl)
+      const bookmark = await saveBookmark(url)
       res.status(201).json(withVideoId(bookmark))
     } catch {
       res.status(500).json({ error: 'Failed to create bookmark' })
