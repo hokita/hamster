@@ -7,10 +7,15 @@ import * as db from '../services/firestore'
 import type { BookmarkDoc } from '../services/firestore'
 import { BOOKMARK_ID, findBookmarks } from '../services/bookmarkSearch'
 import { parseYouTubeVideoId } from '../services/youtube'
-import type { SummaryGenerator } from '../services/summaryGeneration'
+import { describeSummaryFailure, RUNNING_ELSEWHERE } from '../services/summaryGeneration'
+import type { Generated, SummaryGenerator } from '../services/summaryGeneration'
 import type { RateLimiter } from '../middleware/rateLimit'
 
 const MAX_TRANSCRIPT_CHARS = 100_000
+const SUMMARY_WAIT_MS = 45_000
+const SUMMARY_BUDGET = { limit: 10, windowMs: 3_600_000 }
+const STILL_SUMMARIZING =
+  'Still summarizing. The run continues on the server; check back with open_bookmark in a few minutes.'
 
 export type McpDeps = {
   limiter: RateLimiter
@@ -62,7 +67,96 @@ async function loadBookmark(
   return { bookmark }
 }
 
-export function createHamsterMcpServer({ limiter }: McpDeps): McpServer {
+export type SummaryOutcome =
+  | { status: 'ready'; summary: string; shortSummary?: string; labels?: string[] }
+  | { status: 'running'; message: string }
+  | { status: 'failed'; message: string }
+  | { status: 'not_started'; message: string }
+
+type Claim = { generation: Promise<Generated> } | { refused: SummaryOutcome }
+
+// Calls for one id that arrive while a slot is being taken share that one Firestore take, so two
+// concurrent summarizes on this instance use one slot and one run.
+const pendingClaims = new WeakMap<SummaryGenerator, Map<string, Promise<Claim>>>()
+
+function minutes(seconds: number): string {
+  const n = Math.ceil(seconds / 60)
+  return n === 1 ? '1 minute' : `${n} minutes`
+}
+
+async function claimRun(bookmark: BookmarkDoc, deps: McpDeps): Promise<Claim> {
+  const slot = await deps.takeSummarySlot(SUMMARY_BUDGET)
+  if (!slot.ok) {
+    return {
+      refused: {
+        status: 'not_started',
+        message: `Summary limit reached (10 an hour): try again in ${minutes(slot.retryAfterSeconds)}`,
+      },
+    }
+  }
+  // The app's Generate may have started this id while the slot was being taken.
+  return { generation: deps.summaries.join(bookmark.id) ?? deps.summaries.start(bookmark) }
+}
+
+function claimFor(bookmark: BookmarkDoc, deps: McpDeps): Promise<Claim> {
+  let claims = pendingClaims.get(deps.summaries)
+  if (!claims) {
+    claims = new Map()
+    pendingClaims.set(deps.summaries, claims)
+  }
+  const pending = claims.get(bookmark.id)
+  if (pending) return pending
+  const claim = claimRun(bookmark, deps)
+  claims.set(bookmark.id, claim)
+  const cleanup = () => {
+    if (claims.get(bookmark.id) === claim) claims.delete(bookmark.id)
+  }
+  claim.then(cleanup, cleanup)
+  return claim
+}
+
+function logFailure(id: string, error: unknown) {
+  console.error(`summary generation failed for bookmark ${id}:`, error)
+}
+
+export async function runSummary(bookmark: BookmarkDoc, deps: McpDeps): Promise<SummaryOutcome> {
+  let generation = deps.summaries.join(bookmark.id)
+  if (!generation) {
+    if (deps.summaries.isRunningElsewhere(bookmark)) {
+      return { status: 'failed', message: RUNNING_ELSEWHERE.message }
+    }
+    const claim = await claimFor(bookmark, deps)
+    if ('refused' in claim) return claim.refused
+    generation = claim.generation
+  }
+
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), deps.summaryWaitMs ?? SUMMARY_WAIT_MS)
+  })
+  try {
+    const result = await Promise.race([generation, timeout])
+    if (result === 'timeout') {
+      generation.catch((error) => logFailure(bookmark.id, error))
+      return { status: 'running', message: STILL_SUMMARIZING }
+    }
+    const { summary, shortSummary, labels } = result
+    return {
+      status: 'ready',
+      summary,
+      ...(shortSummary ? { shortSummary } : {}),
+      ...(labels ? { labels } : {}),
+    }
+  } catch (error) {
+    logFailure(bookmark.id, error)
+    return { status: 'failed', message: describeSummaryFailure(error).message }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+export function createHamsterMcpServer(deps: McpDeps): McpServer {
+  const { limiter } = deps
   const server = new McpServer({ name: 'hamster', version: '1.0.0' })
 
   server.registerTool(
@@ -124,6 +218,44 @@ export function createHamsterMcpServer({ limiter }: McpDeps): McpServer {
         if (transcript.length > MAX_TRANSCRIPT_CHARS) result.transcriptTruncated = true
       }
       return text(JSON.stringify(result))
+    })
+  )
+
+  server.registerTool(
+    'set_read',
+    {
+      description: 'Mark a hamster bookmark as read or unread.',
+      inputSchema: z.object({
+        id: z.string().describe('The bookmark id from find_bookmarks or save_link'),
+        isRead: z.boolean().describe('true: read; false: unread'),
+      }),
+      annotations: { idempotentHint: true, destructiveHint: false },
+    },
+    limited(limiter, 'Failed to set read state', async ({ id: rawId, isRead }) => {
+      const id = parseBookmarkId(rawId)
+      if (!id) return toolError('Invalid bookmark id')
+      if (!(await db.setReadState(id, isRead))) return toolError(`No bookmark with id ${id}`)
+      return text(JSON.stringify({ id, isRead }))
+    })
+  )
+
+  server.registerTool(
+    'summarize_bookmark',
+    {
+      description:
+        "Make a fresh summary and labels for a hamster bookmark, replacing the current ones, the same as Generate in the app. Uses a paid AI call: at most 10 an hour, shared with save_link. Videos over 60 minutes can't be summarized. Waits up to about 45 seconds; a longer run keeps going, so check back with open_bookmark.",
+      inputSchema: z.object({
+        id: z.string().describe('The bookmark id from find_bookmarks or save_link'),
+      }),
+      annotations: { destructiveHint: false, openWorldHint: true },
+    },
+    limited(limiter, 'Failed to summarize bookmark', async ({ id }) => {
+      const loaded = await loadBookmark(id)
+      if ('error' in loaded) return loaded.error
+      const outcome = await runSummary(loaded.bookmark, deps)
+      if (outcome.status === 'ready') return text(JSON.stringify(outcome))
+      if (outcome.status === 'running') return text(outcome.message)
+      return toolError(outcome.message)
     })
   )
 

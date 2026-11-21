@@ -141,6 +141,25 @@ describe('createSummaryGenerator', () => {
     expect(summaries.join(article.id)).toBeUndefined()
   })
 
+  it('a run that settles after a newer run for the same id does not remove the newer entry', async () => {
+    vi.mocked(isSummarizerConfigured).mockReturnValue(true)
+    vi.mocked(db.listAllLabels).mockResolvedValue([])
+    vi.mocked(generateLabels).mockResolvedValue(['tech'])
+    let finishFirst!: (text: string) => void
+    vi.mocked(fetchArticleText)
+      .mockReturnValueOnce(new Promise((resolve) => (finishFirst = resolve)))
+      .mockReturnValueOnce(new Promise(() => {}))
+    vi.mocked(summarize).mockResolvedValue('Summary.')
+    const summaries = createSummaryGenerator()
+
+    const first = summaries.start(article)
+    const second = summaries.start(article)
+    finishFirst('Article body')
+    await first
+
+    expect(summaries.join(article.id)).toBe(second)
+  })
+
   it('isRunningElsewhere is true only for a video with a fresh running state and nothing in flight', async () => {
     const summaries = createSummaryGenerator()
 

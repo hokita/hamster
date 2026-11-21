@@ -316,7 +316,9 @@ export function createSummaryGenerator(): SummaryGenerator {
 
       // .then(cleanup, cleanup), not .finally(cleanup): a bare .finally on a rejecting promise
       // re-throws, creating a new unhandled rejected promise.
-      const cleanup = () => inFlight.delete(bookmark.id)
+      const cleanup = () => {
+        if (inFlight.get(bookmark.id) === generation) inFlight.delete(bookmark.id)
+      }
       generation.then(cleanup, cleanup)
 
       return generation
