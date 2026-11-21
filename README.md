@@ -141,6 +141,84 @@ A failed question stays in the chat with a Retry button next to the error.
 Like summaries, asking needs `GEMINI_API_KEY`; without it the box answers every question with
 the failure state.
 
+## Muse (MCP)
+
+The backend serves an MCP server (streamable HTTP, stateless) that Muse can use to find, read, save
+and summarize bookmarks:
+
+```
+https://hamster-backend-ietnmc4quq-an.a.run.app/mcp
+Authorization: Bearer <token>
+```
+
+It accepts only the token below, not a Firebase sign-in; a missing or wrong token gets `401`. The
+REST API (`/api/bookmarks`) still accepts only the signed-in app, so the token opens nothing there.
+
+| Tool | Arguments | Notes |
+|---|---|---|
+| `find_bookmarks` | `query` (up to 200 chars), `label`, `unread` (`true` unread, `false` read), `limit` (1–50, default 20), `offset` | Read-only. Newest first; matches title, link, labels and summaries |
+| `open_bookmark` | `id` | Read-only. Full summary, labels, read state, and the transcript of a summarized YouTube video (cut at 100 000 characters) |
+| `save_link` | `url` (`http(s)://`, up to 2048 chars) | Saves like the app, then summarizes and waits up to about 45 s. A link that is already saved is not added again; the existing bookmark comes back |
+| `set_read` | `id`, `isRead` | Marks a bookmark read or unread |
+| `summarize_bookmark` | `id` | Replaces the summary and labels, like **Generate** in the app. Videos over 60 minutes can't be summarized |
+
+There is no chat, translate or delete tool.
+
+**Limits:** MCP tool calls are limited to 60 an hour (counted in memory, per instance). Over the
+limit, a tool call returns a tool error `Rate limit reached: try again in <N> seconds`. Protocol
+requests (`initialize`, `tools/list`) aren't counted. Summaries started through Muse are limited to
+10 an hour in total, shared by `summarize_bookmark` and `save_link`.
+
+**Waiting:** `save_link` and `summarize_bookmark` wait about 45 s for the summary. If it isn't done
+they answer "Still summarizing" (not an error); the run keeps going on the server, so check back
+with `open_bookmark` in a few minutes.
+
+**One-time setup**
+
+```sh
+openssl rand -hex 32 | tr -d '\n' | gcloud secrets create hamster-mcp-token \
+  --project hamster-52b093 --replication-policy automatic --data-file=-
+gcloud secrets add-iam-policy-binding hamster-mcp-token --project hamster-52b093 \
+  --member serviceAccount:307699341719-compute@developer.gserviceaccount.com \
+  --role roles/secretmanager.secretAccessor
+gh variable set HAMSTER_MCP_TOKEN_SECRET --repo hokita/hamster --body hamster-mcp-token
+gh workflow run backend.yml --repo hokita/hamster --ref main   # redeploy
+```
+
+Until the repo variable `HAMSTER_MCP_TOKEN_SECRET` is set, deploys run without the token and `/mcp`
+answers `401`.
+
+**Muse setup:** add a custom connector with the URL above and the token as a Bearer header. Copy the
+token without printing it:
+
+```sh
+gcloud secrets versions access latest --secret hamster-mcp-token --project hamster-52b093 | pbcopy
+```
+
+Check it: without a token the first request
+answers `401`, with it the second answers `200`.
+
+```sh
+URL=https://hamster-backend-ietnmc4quq-an.a.run.app/mcp
+BODY='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"check","version":"1"}}}'
+curl -s -o /dev/null -w '%{http_code}\n' -X POST "$URL" \
+  -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -d "$BODY"
+curl -s -o /dev/null -w '%{http_code}\n' -X POST "$URL" -H "Authorization: Bearer $(gcloud secrets versions access latest --secret hamster-mcp-token --project hamster-52b093)" \
+  -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -d "$BODY"
+```
+
+If the connector can't send a custom `Authorization` header, it can't connect — OAuth isn't
+supported.
+
+**Rotation:**
+
+```sh
+openssl rand -hex 32 | tr -d '\n' | gcloud secrets versions add hamster-mcp-token --project hamster-52b093 --data-file=-
+gh workflow run backend.yml --repo hokita/hamster --ref main   # redeploy to pick up the new version
+```
+
+Then copy the new token into Muse.
+
 ## Local development
 
 **1. Start the Firebase emulators (Auth + Firestore)**
@@ -187,6 +265,7 @@ Open http://localhost:5173 and sign in — locally, sign-in goes through the Aut
 | `FIREBASE_PROJECT_ID` | Firebase project ID (`demo-hamster` for local dev — no real GCP project needed) |
 | `FRONTEND_URL` | Frontend origin for CORS |
 | `PORT` | Port the backend listens on |
+| `HAMSTER_MCP_TOKEN` | Optional. Token Muse uses for `/mcp` (≥ 43 chars; from Secret Manager in production); unset disables `/mcp` |
 | `GEMINI_API_KEY` | Gemini API key used to generate bookmark summaries, translate them into Japanese, and answer article and general questions (all are disabled when unset) |
 | `FIRESTORE_EMULATOR_HOST` | Host:port of the Firestore emulator (routes the Admin SDK to it instead of production) |
 | `FIREBASE_AUTH_EMULATOR_HOST` | Host:port of the Auth emulator (routes the Admin SDK to it instead of production) |
