@@ -30,11 +30,8 @@ export class ArticleUnreadableError extends Error {
 }
 
 export class SummaryStorageError extends Error {
-  readonly cause: unknown
-
   constructor(cause: unknown) {
-    super('Failed to save the summary')
-    this.cause = cause
+    super('Failed to save the summary', { cause })
   }
 }
 
