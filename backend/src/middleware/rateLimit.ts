@@ -2,7 +2,6 @@ export interface RateLimiter {
   take(): { ok: true } | { ok: false; retryAfterSeconds: number }
 }
 
-// In-memory, so the limit is per Cloud Run instance.
 export function createRateLimiter({
   limit,
   windowMs,

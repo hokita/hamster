@@ -297,8 +297,6 @@ export async function listBookmarks(): Promise<BookmarkDoc[]> {
   return bookmarks
 }
 
-// Two Cloud Run instances can start a summary at the same moment, so the read and the write
-// must share one transaction; a plain get-then-set would let both take the last slot.
 export async function takeSummarySlot({
   limit,
   windowMs,

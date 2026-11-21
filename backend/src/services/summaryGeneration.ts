@@ -30,8 +30,6 @@ export class ArticleUnreadableError extends Error {
 }
 
 export class SummaryStorageError extends Error {
-  // Declared explicitly rather than passed to super() as an ErrorOptions `cause`, which needs the
-  // ES2022 lib; this project targets ES2020.
   readonly cause: unknown
 
   constructor(cause: unknown) {
@@ -51,7 +49,6 @@ export class VideoSummaryError extends Error {
   }
 }
 
-// An unknown length is our failure to check, not a fact about the video, so it is a 502.
 const REFUSALS: Record<
   Exclude<VideoCheck['kind'], 'ok'>,
   { code: VideoRefusalCode; httpStatus: 422 | 502 }
@@ -88,8 +85,6 @@ function videoFailure(code: VideoRefusalCode, httpStatus: 422 | 502): SummaryFai
   }
 }
 
-// Deliberately uneven: video_unavailable answers 422 from the free check but 502 when the watch
-// itself fails.
 export function describeSummaryFailure(error: unknown): SummaryFailure {
   if (error instanceof VideoSummaryError) return videoFailure(error.code, error.httpStatus)
   if (error instanceof VideoUnwatchableError) return videoFailure('video_unavailable', 502)
@@ -122,8 +117,6 @@ export function describeSummaryFailure(error: unknown): SummaryFailure {
   }
 }
 
-// A running state older than this outlived the watch's 480 s timeout plus margin: the instance
-// that wrote it died or was redeployed, so it no longer stands for a generation anyone is waiting on.
 const RUNNING_STALE_MS = 660_000
 
 function isFreshRunning(bookmark: BookmarkDoc): boolean {
@@ -131,8 +124,6 @@ function isFreshRunning(bookmark: BookmarkDoc): boolean {
   return state?.status === 'running' && Date.now() - Date.parse(state.updatedAt) < RUNNING_STALE_MS
 }
 
-// Failures are logged and swallowed: the stored state is a courtesy for the page to poll, and a
-// failed write must never replace the real outcome the waiting caller gets.
 async function writeVideoState(
   id: string,
   state: { status: 'running' } | { status: 'failed'; code: VideoSummaryCode }
@@ -153,7 +144,6 @@ async function shortSummaryOf(id: string, title: string, summary: string) {
   }
 }
 
-// The summary goes first: the labeler reads only the first 20k chars, about 25 minutes of a talk.
 async function labelVideo(id: string, title: string, summary: string, transcript: string) {
   try {
     const existingLabels = await db.listAllLabels()
@@ -172,8 +162,6 @@ async function labelVideo(id: string, title: string, summary: string, transcript
 }
 
 async function generateArticleSummary(bookmark: BookmarkDoc): Promise<Generated> {
-  // Checked before any network work, so a missing key stays a 503 instead of turning into a 502
-  // whenever the page also happens to be unreachable.
   if (!isSummarizerConfigured()) throw new SummarizerUnavailableError()
 
   const text = await fetchArticleText(bookmark.url)
@@ -193,8 +181,6 @@ async function generateArticleSummary(bookmark: BookmarkDoc): Promise<Generated>
     throw new SummaryStorageError(error)
   }
 
-  // Labels come after the summary is stored and their failure is swallowed, so a labels failure
-  // can never cost the already-paid summary.
   let labels: string[] | null = null
   try {
     const existingLabels = await db.listAllLabels()
@@ -211,11 +197,9 @@ async function generateArticleSummary(bookmark: BookmarkDoc): Promise<Generated>
 async function generateVideoSummary(bookmark: BookmarkDoc, videoId: string): Promise<Generated> {
   if (!isSummarizerConfigured()) throw new SummarizerUnavailableError()
 
-  // With a transcript stored, no video is sent and no running state is written.
   const transcript = await db.getTranscript(bookmark.id)
   if (transcript !== null) return summarizeTranscript(bookmark, transcript)
 
-  // The free checks come before anything paid.
   const check = await checkVideo(videoId)
   if (check.kind !== 'ok') {
     const { code, httpStatus } = REFUSALS[check.kind]
@@ -229,7 +213,6 @@ async function generateVideoSummary(bookmark: BookmarkDoc, videoId: string): Pro
   try {
     watched = await watchVideo(videoId, title, check.durationSeconds)
   } catch (error) {
-    // Rethrown as is, not wrapped, so the failure log names the real cause.
     const code: VideoSummaryCode =
       error instanceof VideoUnwatchableError
         ? 'video_unavailable'
@@ -239,7 +222,6 @@ async function generateVideoSummary(bookmark: BookmarkDoc, videoId: string): Pro
     await writeVideoState(bookmark.id, { status: 'failed', code })
     throw error
   }
-  // Numbers only, never the text.
   console.log(`video summary watched for bookmark ${bookmark.id}:`, {
     videoId,
     latencyMs: watched.latencyMs,
@@ -249,7 +231,6 @@ async function generateVideoSummary(bookmark: BookmarkDoc, videoId: string): Pro
 
   const shortSummary = await shortSummaryOf(bookmark.id, title, watched.summary)
 
-  // Only a title that fell back to the url is replaced; a real title is never overwritten.
   const repairTitle = bookmark.title === bookmark.url && check.title !== null
   try {
     await db.saveVideoSummary(bookmark.id, {
@@ -281,14 +262,6 @@ async function summarizeTranscript(bookmark: BookmarkDoc, transcript: string): P
 }
 
 export function createSummaryGenerator(): SummaryGenerator {
-  // Each generation costs a paid Gemini call; a second request for an id already generating joins
-  // this promise instead of paying again. Per instance on purpose, not module scope, so each
-  // generator (and each test) gets its own map.
-  //
-  // In-memory, so it does not span Cloud Run instances: a generation running on another instance
-  // can't be seen or joined. Accepted: the add-then-retry case lands on the same warm instance in
-  // practice, and a Firestore lease would bring stale-lease and crashed-holder failure modes for a
-  // single-user app where an occasional duplicate call is cheap.
   const inFlight = new Map<string, Promise<Generated>>()
 
   return {
@@ -296,8 +269,6 @@ export function createSummaryGenerator(): SummaryGenerator {
       return inFlight.get(id)
     },
 
-    // A fresh running state with nothing in flight here means another instance is watching the
-    // video right now. Starting a second watch would pay for the video twice.
     isRunningElsewhere(bookmark) {
       return (
         !inFlight.has(bookmark.id) &&
@@ -314,8 +285,6 @@ export function createSummaryGenerator(): SummaryGenerator {
         : generateArticleSummary(bookmark)
       inFlight.set(bookmark.id, generation)
 
-      // .then(cleanup, cleanup), not .finally(cleanup): a bare .finally on a rejecting promise
-      // re-throws, creating a new unhandled rejected promise.
       const cleanup = () => {
         if (inFlight.get(bookmark.id) === generation) inFlight.delete(bookmark.id)
       }

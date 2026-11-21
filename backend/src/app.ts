@@ -21,7 +21,6 @@ export function createApp() {
   const summaries = createSummaryGenerator()
   const limiter = createRateLimiter({ limit: MCP_CALLS_PER_HOUR, windowMs: 3_600_000 })
   app.use('/api/bookmarks', authMiddleware, createBookmarksRouter({ summaries }))
-  // All methods, so GET/DELETE reach the SDK, which answers 405 when stateless.
   app.all(
     '/mcp',
     apiTokenAuth({ matches: apiTokenMatcher(process.env.HAMSTER_MCP_TOKEN) }),

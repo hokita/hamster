@@ -34,7 +34,6 @@ function toolError(message: string): CallToolResult {
   return { ...text(message), isError: true }
 }
 
-// Protocol requests (initialize, tools/list) never reach a tool, so they aren't counted.
 function limited<A>(
   limiter: RateLimiter,
   failure: string,
@@ -76,8 +75,6 @@ export type SummaryOutcome =
 
 type Claim = { generation: Promise<Generated> } | { refused: SummaryOutcome }
 
-// Calls for one id that arrive while a slot is being taken share that one Firestore take, so two
-// concurrent summarizes on this instance use one slot and one run.
 const pendingClaims = new WeakMap<SummaryGenerator, Map<string, Promise<Claim>>>()
 
 function minutes(seconds: number): string {
@@ -95,7 +92,6 @@ async function claimRun(bookmark: BookmarkDoc, deps: McpDeps): Promise<Claim> {
       },
     }
   }
-  // The app's Generate may have started this id while the slot was being taken.
   return { generation: deps.summaries.join(bookmark.id) ?? deps.summaries.start(bookmark) }
 }
 
@@ -158,7 +154,6 @@ export async function runSummary(bookmark: BookmarkDoc, deps: McpDeps): Promise<
 
 type Saved = { created: boolean; bookmark: BookmarkDoc }
 
-// Per instance only: two instances can still both save one link, the same gap pendingClaims accepts.
 const pendingSaves = new Map<string, Promise<Saved>>()
 
 async function saveUnlessSaved(url: string): Promise<Saved> {
@@ -333,17 +328,13 @@ export function createHamsterMcpServer(deps: McpDeps): McpServer {
   return server
 }
 
-// The SDK answers 406/415/bad protocol version itself and reports only through onerror.
 function logMcpError(err: Error) {
   console.error('MCP request failed:', err.message)
 }
 
-// Stateless: the SDK builds a fresh server per request. express.json() has
-// already read the body, so it's passed in rather than re-read from the stream.
 export function createMcpRequestHandler(deps: McpDeps): RequestHandler {
   const factory = () => {
     const server = createHamsterMcpServer(deps)
-    // Transport-level rejections reach the server instance, not the handler.
     server.server.onerror = logMcpError
     return server
   }

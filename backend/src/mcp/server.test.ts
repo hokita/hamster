@@ -39,7 +39,6 @@ vi.mock('../services/summarizer', async () => {
     summarize: vi.fn(),
     isSummarizerConfigured: vi.fn(),
     SummarizerUnavailableError: actual.SummarizerUnavailableError,
-    // videoSummarizer's real module (imported above for its error classes) reads this at load.
     SUMMARY_FORMAT_RULES: actual.SUMMARY_FORMAT_RULES,
   }
 })

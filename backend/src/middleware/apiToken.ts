@@ -1,7 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 import type { Request, Response, NextFunction } from 'express'
 
-// 32 random bytes in base64url; `openssl rand -hex 32` (64 chars) is longer.
 const MIN_TOKEN_LENGTH = 43
 
 function digest(value: string): Buffer {
@@ -11,7 +10,6 @@ function digest(value: string): Buffer {
 export function apiTokenMatcher(
   configured: string | undefined
 ): ((token: string) => boolean) | null {
-  // A trailing newline from a secret store would otherwise make the token unmatchable.
   const token = configured?.trim()
   if (!token) return null
   if (token.length < MIN_TOKEN_LENGTH) {
@@ -20,13 +18,10 @@ export function apiTokenMatcher(
     )
     return null
   }
-  // Comparing digests keeps both sides the same length, as timingSafeEqual requires.
   const expected = digest(token)
   return (candidate) => timingSafeEqual(digest(candidate), expected)
 }
 
-// For /mcp: the API token only, never a Firebase ID token. Not rate limited
-// here; the MCP tools take from the limiter per tool call.
 export function apiTokenAuth({ matches }: { matches: ((token: string) => boolean) | null }) {
   return (req: Request, res: Response, next: NextFunction) => {
     const token = req.headers.authorization?.split('Bearer ')[1]
