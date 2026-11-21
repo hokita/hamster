@@ -25,11 +25,23 @@ const mockBatch = vi.fn(() => ({
   delete: mockBatchDelete,
   commit: mockBatchCommit,
 }))
+const mockTxGet = vi.fn()
+const mockTxSet = vi.fn()
+const mockRunTransaction = vi.fn((fn: (tx: unknown) => unknown) =>
+  fn({ get: mockTxGet, set: mockTxSet })
+)
 const fixedDate = new Date('2024-01-01T00:00:00.000Z')
 
 vi.mock('firebase-admin/firestore', () => ({
-  getFirestore: () => ({ collection: mockCollection, batch: mockBatch }),
-  Timestamp: { now: () => ({ toDate: () => fixedDate }) },
+  getFirestore: () => ({
+    collection: mockCollection,
+    batch: mockBatch,
+    runTransaction: mockRunTransaction,
+  }),
+  Timestamp: {
+    now: () => ({ toDate: () => fixedDate }),
+    fromMillis: (ms: number) => ({ toMillis: () => ms }),
+  },
   FieldValue: { delete: () => 'DELETE_SENTINEL' },
 }))
 
@@ -45,6 +57,7 @@ import {
   getTranscript,
   saveVideoSummary,
   setVideoSummaryState,
+  takeSummarySlot,
 } from './firestore'
 
 beforeEach(() => {
@@ -707,5 +720,63 @@ describe('videoSummaryState on bookmarks', () => {
     await listBookmarks()
 
     expect(mockCollection).not.toHaveBeenCalledWith('transcripts')
+  })
+})
+
+describe('takeSummarySlot', () => {
+  const now = new Date('2024-06-01T12:00:00.000Z').getTime()
+  const minutesAgo = (minutes: number) => ({ toMillis: () => now - minutes * 60_000 })
+  const budget = { limit: 10, windowMs: 3_600_000 }
+  const snapshot = (data: unknown) => ({ exists: data !== undefined, data: () => data })
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(now)
+    return () => vi.useRealTimers()
+  })
+
+  it('takes a slot and records the start', async () => {
+    mockTxGet.mockResolvedValue(snapshot(undefined))
+
+    expect(await takeSummarySlot(budget)).toEqual({ ok: true })
+
+    expect(mockTxSet).toHaveBeenCalledTimes(1)
+    const stored = mockTxSet.mock.calls[0][1] as { startedAt: unknown[] }
+    expect(stored.startedAt).toHaveLength(1)
+  })
+
+  it('drops starts older than the window', async () => {
+    mockTxGet.mockResolvedValue(
+      snapshot({ startedAt: Array.from({ length: 10 }, () => minutesAgo(61)) })
+    )
+
+    expect(await takeSummarySlot(budget)).toEqual({ ok: true })
+
+    const stored = mockTxSet.mock.calls[0][1] as { startedAt: unknown[] }
+    expect(stored.startedAt).toHaveLength(1)
+  })
+
+  it('refuses the 11th start in an hour with the wait until the oldest expires', async () => {
+    mockTxGet.mockResolvedValue(
+      snapshot({
+        startedAt: [minutesAgo(50), ...Array.from({ length: 9 }, () => minutesAgo(5))],
+      })
+    )
+
+    expect(await takeSummarySlot(budget)).toEqual({ ok: false, retryAfterSeconds: 600 })
+    expect(mockTxSet).not.toHaveBeenCalled()
+  })
+
+  it('treats a missing or malformed startedAt as empty', async () => {
+    mockTxGet.mockResolvedValue(snapshot({ startedAt: 'nope' }))
+    expect(await takeSummarySlot(budget)).toEqual({ ok: true })
+
+    mockTxGet.mockResolvedValue(snapshot({}))
+    expect(await takeSummarySlot(budget)).toEqual({ ok: true })
+
+    mockTxGet.mockResolvedValue(snapshot({ startedAt: [null, 5, minutesAgo(1)] }))
+    await takeSummarySlot(budget)
+    const stored = mockTxSet.mock.calls[2][1] as { startedAt: unknown[] }
+    expect(stored.startedAt).toHaveLength(2)
   })
 })

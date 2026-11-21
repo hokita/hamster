@@ -296,3 +296,31 @@ export async function listBookmarks(): Promise<BookmarkDoc[]> {
   }
   return bookmarks
 }
+
+// Two Cloud Run instances can start a summary at the same moment, so the read and the write
+// must share one transaction; a plain get-then-set would let both take the last slot.
+export async function takeSummarySlot({
+  limit,
+  windowMs,
+}: {
+  limit: number
+  windowMs: number
+}): Promise<{ ok: true } | { ok: false; retryAfterSeconds: number }> {
+  const db = getFirestore()
+  const ref = db.collection('usage').doc('mcpSummaries')
+  return db.runTransaction(async (tx) => {
+    const now = Date.now()
+    const snap = await tx.get(ref)
+    const stored = (snap.data() as { startedAt?: unknown } | undefined)?.startedAt
+    const kept = (Array.isArray(stored) ? stored : [])
+      .filter((entry): entry is Timestamp => typeof entry?.toMillis === 'function')
+      .filter((entry) => entry.toMillis() > now - windowMs)
+      .sort((a, b) => a.toMillis() - b.toMillis())
+    if (kept.length >= limit) {
+      const waitMs = kept[0].toMillis() + windowMs - now
+      return { ok: false as const, retryAfterSeconds: Math.ceil(waitMs / 1000) }
+    }
+    tx.set(ref, { startedAt: [...kept, Timestamp.fromMillis(now)] })
+    return { ok: true as const }
+  })
+}
