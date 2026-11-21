@@ -650,9 +650,10 @@ describe('POST /api/bookmarks/:id/summary — concurrent dedup', () => {
       .post('/api/bookmarks/1/summary')
       .then((r) => r)
 
-    // Give both requests a chance to reach the summarize call before it resolves.
-    await new Promise((r) => setTimeout(r, 20))
-    expect(summarize).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => {
+      expect(db.getBookmark).toHaveBeenCalledTimes(2)
+      expect(summarize).toHaveBeenCalledTimes(1)
+    })
 
     gen.resolve('The shared summary.')
     const [res1, res2] = await Promise.all([req1, req2])
@@ -713,7 +714,10 @@ describe('POST /api/bookmarks/:id/summary — concurrent dedup', () => {
       .post('/api/bookmarks/1/summary')
       .then((r) => r)
 
-    await new Promise((r) => setTimeout(r, 20))
+    await vi.waitFor(() => {
+      expect(db.getBookmark).toHaveBeenCalledTimes(2)
+      expect(summarize).toHaveBeenCalledTimes(1)
+    })
     gen.reject(new SummarizerUnavailableError())
 
     const [res1, res2] = await Promise.all([req1, req2])
@@ -734,7 +738,10 @@ describe('POST /api/bookmarks/:id/summary — concurrent dedup', () => {
       .post('/api/bookmarks/1/summary')
       .then((r) => r)
 
-    await new Promise((r) => setTimeout(r, 20))
+    await vi.waitFor(() => {
+      expect(db.getBookmark).toHaveBeenCalledTimes(2)
+      expect(summarize).toHaveBeenCalledTimes(1)
+    })
     gen.reject(new Error('429 rate limited'))
 
     const [res1, res2] = await Promise.all([req1, req2])
