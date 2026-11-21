@@ -195,7 +195,7 @@ token without printing it:
 gcloud secrets versions access latest --secret hamster-mcp-token --project hamster-52b093 | pbcopy
 ```
 
-Check it (use the token on your clipboard in place of `<token>`): without a token the first request
+Check it: without a token the first request
 answers `401`, with it the second answers `200`.
 
 ```sh
