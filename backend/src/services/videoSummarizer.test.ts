@@ -218,6 +218,13 @@ describe('watchVideo', () => {
     expect(error.message).not.toContain('secret words')
   })
 
+  it('rejects unparseable JSON with the fixed invalid-JSON message', async () => {
+    replyText('{"status":"ok","transcript":"secret words')
+    await expect(watchVideo(VIDEO_ID, 'My Talk', DURATION)).rejects.toThrow(
+      'gemini video response was not valid JSON'
+    )
+  })
+
   it.each([
     ['status', { transcript: TRANSCRIPT, summary: SUMMARY }],
     ['transcript', { status: 'ok', summary: SUMMARY }],

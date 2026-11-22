@@ -100,6 +100,24 @@ describe('fetchMetadata', () => {
     })
   })
 
+  it('falls back to Medium RSS when the page fetch throws', async () => {
+    const url = 'https://copyconstruct.medium.com/article-bd3dcb2c5f7b'
+    mockFetch
+      .mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockResolvedValueOnce(
+        mockResponse(
+          [
+            `<rss xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel><item><title><![CDATA[Actual article & title]]></title><link>${url}</link><content:encoded><![CDATA[<p>Article content</p>]]></content:encoded></item></channel></rss>`,
+          ],
+          { contentType: 'application/rss+xml' }
+        )
+      )
+    await expect(fetchMetadata(url)).resolves.toEqual({
+      title: 'Actual article & title',
+      faviconUrl: null,
+    })
+  })
+
   it('does not save error-page titles for other sites either', async () => {
     const response = mockResponse(['<title>Forbidden</title>'], { status: 403 })
     mockFetch.mockResolvedValue(response)

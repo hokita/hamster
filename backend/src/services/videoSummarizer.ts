@@ -159,18 +159,22 @@ async function collect(stream: AsyncGenerator<GenerateContentResponse>): Promise
   return { text, finishReason, usageMetadata }
 }
 
+function parseJsonOrNull(text: string): unknown {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return null
+  }
+}
+
 // JSON mode normally returns bare JSON, but a single ```json fence is a harmless wrapping to undo.
 // Anything else around the object (prose, a second block) means the reply is off-script.
 function parseReply(text: string): Record<string, unknown> {
   const trimmed = text.trim()
   const fenced = trimmed.match(/^```(?:json)?\r?\n([\s\S]*?)\r?\n```$/)
-  try {
-    const parsed: unknown = JSON.parse(fenced ? fenced[1] : trimmed)
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>
-    }
-  } catch {
-    // fall through: the raw text may hold transcript words, so it never goes into the error
+  const parsed = parseJsonOrNull(fenced ? fenced[1] : trimmed)
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    return parsed as Record<string, unknown>
   }
   throw new Error('gemini video response was not valid JSON')
 }

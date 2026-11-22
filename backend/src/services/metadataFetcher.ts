@@ -523,12 +523,9 @@ async function fetchMetadataInner(url: string, signal: AbortSignal): Promise<Pag
 }
 
 export async function fetchMetadata(url: string): Promise<PageMetadata> {
-  let metadata = EMPTY_METADATA
-  try {
-    metadata = await fetchMetadataInner(url, AbortSignal.timeout(FETCH_TIMEOUT_MS))
-  } catch {
-    // Medium's RSS feed may still work when the original page fetch failed.
-  }
+  const metadata = await fetchMetadataInner(url, AbortSignal.timeout(FETCH_TIMEOUT_MS)).catch(
+    () => EMPTY_METADATA
+  )
   if (metadata.title) return metadata
   const article = await fetchMediumRssArticle(url)
   return article ? { ...metadata, title: article.title } : metadata
