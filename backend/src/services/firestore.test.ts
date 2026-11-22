@@ -8,7 +8,6 @@ const mockUpdate = vi.fn()
 const mockDelete = vi.fn()
 const mockDoc = vi.fn(() => ({ get: mockDocGet, update: mockUpdate, delete: mockDelete }))
 const mockSelect = vi.fn(() => ({ get: mockGet }))
-// Refs carry their path so a batch spy can tell transcripts/{id} from bookmarks/{id}.
 const mockCollection = vi.fn((name: string) => ({
   orderBy: mockOrderBy,
   add: mockAdd,
@@ -394,9 +393,9 @@ describe('listAllLabels', () => {
     const result = await listAllLabels()
 
     expect(result).toHaveLength(100)
-    expect(result).toContain('zpop') // count 2 → always kept
-    expect(result).toContain('a001') // alphabetical tie-break keeps the earliest
-    expect(result).not.toContain('a110') // lowest-priority tie dropped
+    expect(result).toContain('zpop')
+    expect(result).toContain('a001')
+    expect(result).not.toContain('a110')
   })
 })
 
@@ -465,7 +464,6 @@ describe('bookmark labels handling', () => {
 
 describe('read flag', () => {
   it('stores isRead: false on a new bookmark rather than leaving the field absent', async () => {
-    // Absence would read as unread too, but only a stored field can ever be queried on.
     const result = await createBookmark('https://example.com', 'Example')
 
     expect(mockAdd).toHaveBeenCalledWith(expect.objectContaining({ isRead: false }))
@@ -542,8 +540,6 @@ describe('setReadState', () => {
   })
 
   it('reports a missing bookmark instead of throwing, from the write itself', async () => {
-    // Firestore's NOT_FOUND. update() rejects rather than creating the document, which is what
-    // keeps a bookmark deleted moments ago from coming back as a document holding only a flag.
     mockUpdate.mockRejectedValue(Object.assign(new Error('no document to update'), { code: 5 }))
 
     await expect(setReadState('gone', true)).resolves.toBe(false)

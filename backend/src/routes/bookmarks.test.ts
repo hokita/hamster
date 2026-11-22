@@ -51,7 +51,6 @@ vi.mock('../services/summarizer', async () => {
     summarize: vi.fn(),
     isSummarizerConfigured: vi.fn(),
     SummarizerUnavailableError: actual.SummarizerUnavailableError,
-    // videoSummarizer's real module (imported below for its error classes) reads this at load.
     SUMMARY_FORMAT_RULES: actual.SUMMARY_FORMAT_RULES,
   }
 })
@@ -105,10 +104,6 @@ const app = express()
 app.use(express.json())
 app.use('/api/bookmarks', createBookmarksRouter())
 
-// The summary route logs the cause of every failure, and several tests below deliberately provoke
-// one. Silence it here so a passing run stays readable; the test that asserts on the log reads this
-// spy. Safe under the per-suite vi.clearAllMocks(), which clears recorded calls but keeps the
-// implementation.
 const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
 
 describe('GET /api/bookmarks', () => {
@@ -328,9 +323,6 @@ describe('DELETE /api/bookmarks/:id', () => {
   })
 
   it('answers 204 for an id that no longer exists rather than 404', async () => {
-    // Firestore's delete() resolves for a missing document, so a repeat delete — a stale list
-    // row, a retried request — reaches this route the same way a first one does. The endpoint is
-    // idempotent by design; asserting it here keeps that from being "fixed" into a 404 later.
     vi.mocked(db.deleteBookmark).mockResolvedValue(undefined)
 
     const res = await request(app).delete('/api/bookmarks/gone')
@@ -372,8 +364,6 @@ describe('PUT /api/bookmarks/:id/read', () => {
   })
 
   it('is idempotent: repeating the request stores the same state, never the opposite', async () => {
-    // The reason the body carries the desired state instead of meaning "toggle": a retried
-    // request after a dropped response must not land the bookmark on the wrong flag.
     vi.mocked(db.setReadState).mockResolvedValue(true)
 
     await request(app).put('/api/bookmarks/1/read').send({ isRead: true })
@@ -532,9 +522,6 @@ describe('POST /api/bookmarks/:id/summary', () => {
   })
 
   it('logs the underlying cause when generation fails, instead of swallowing it', async () => {
-    // The 502 body is deliberately vague, so without this the only trace a failed summary leaves
-    // is a bare status code in the Cloud Run request log — which is exactly what made the
-    // gemini-3.6-flash token-budget regression take a revision-by-revision bisect to diagnose.
     vi.mocked(db.getBookmark).mockResolvedValue(bookmark)
     vi.mocked(fetchArticleText).mockResolvedValue('Article body')
     vi.mocked(summarize).mockRejectedValue(new Error('gemini response was truncated'))
@@ -545,7 +532,7 @@ describe('POST /api/bookmarks/:id/summary', () => {
     expect(consoleError).toHaveBeenCalled()
     const logged = consoleError.mock.calls[0].map(String).join(' ')
     expect(logged).toContain('gemini response was truncated')
-    expect(logged).toContain('1') // the bookmark id, so a failure can be tied to its bookmark
+    expect(logged).toContain('1')
   })
 
   it('returns 503 when the API key is not configured', async () => {
@@ -566,9 +553,6 @@ describe('POST /api/bookmarks/:id/summary', () => {
   })
 
   it('keeps the underlying write failure as the cause, so the log names it', async () => {
-    // Codex caught that SummaryStorageError replaced the Firestore exception outright, so the
-    // failure log said only "Failed to save the summary" — it could not distinguish a permission
-    // problem from an outage from a bad document, which is the whole point of logging it.
     vi.mocked(db.getBookmark).mockResolvedValue(bookmark)
     vi.mocked(fetchArticleText).mockResolvedValue('Article body')
     vi.mocked(summarize).mockResolvedValue('A summary.')
@@ -581,11 +565,6 @@ describe('POST /api/bookmarks/:id/summary', () => {
     expect((logged.cause as Error | undefined)?.message).toBe('7 PERMISSION_DENIED')
   })
 
-  // Codex identified that checking configuration only inside summarize() meant an unconfigured
-  // deployment still paid for fetchArticleText (up to 8s) before failing, and — worse — that a
-  // fetch failure on top of being unconfigured produced a misleading 502 instead of the
-  // deterministic 503 callers should always get when there is no key. These two tests cover the
-  // fix: the configuration check happens before any network work.
   it('returns 503 without fetching the article when the summarizer is not configured', async () => {
     vi.mocked(db.getBookmark).mockResolvedValue(bookmark)
     vi.mocked(isSummarizerConfigured).mockReturnValue(false)
@@ -607,10 +586,6 @@ describe('POST /api/bookmarks/:id/summary', () => {
   })
 })
 
-// A generation calls the paid Gemini API. Adding a bookmark starts a generation in the background,
-// and the page for that bookmark opens with an enabled "Generate summary" button that knows nothing
-// about it — so two concurrent, separately billed requests for the same bookmark are easy to trigger
-// by accident. These tests cover the dedup that prevents that.
 describe('POST /api/bookmarks/:id/summary — concurrent dedup', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -641,8 +616,6 @@ describe('POST /api/bookmarks/:id/summary — concurrent dedup', () => {
     const gen = deferred<string>()
     vi.mocked(summarize).mockReturnValue(gen.promise)
 
-    // supertest/superagent requests don't dispatch until `.then`/`.end` is called, so kick both off
-    // immediately by chaining `.then` rather than merely assigning the (lazy) request objects.
     const req1 = request(app)
       .post('/api/bookmarks/1/summary')
       .then((r) => r)
@@ -887,7 +860,6 @@ describe('POST /api/bookmarks/:id/chat', () => {
   })
 
   it('returns 400 when the last message is not from the user', async () => {
-    // The endpoint answers a pending question; a history ending in a model turn has none.
     const res = await request(app)
       .post('/api/bookmarks/1/chat')
       .send({
@@ -900,8 +872,6 @@ describe('POST /api/bookmarks/:id/chat', () => {
   })
 
   it('returns 400 when the history does not alternate user/model turns', async () => {
-    // Gemini rejects consecutive same-role turns; catching the shape here answers with a
-    // validation error instead of fetching the article and surfacing a misleading 502.
     const res = await request(app)
       .post('/api/bookmarks/1/chat')
       .send({
@@ -952,8 +922,6 @@ describe('POST /api/bookmarks/:id/chat', () => {
   })
 
   it('accepts a model turn longer than the user cap, since answers can legitimately be', async () => {
-    // The answer budget is 8192 output tokens — far past 4000 chars. A stored long answer comes
-    // back as history with the next follow-up; rejecting it there would wedge the conversation.
     const res = await request(app)
       .post('/api/bookmarks/1/chat')
       .send({
@@ -1113,22 +1081,15 @@ describe('POST /api/bookmarks/:id/translation', () => {
       translation: '概要。\n\n## 要点\n- **ある点** — 中身がある。',
       source: englishBookmark.summary,
     })
-    // The stored summary, not one sent by the caller: a body would let a client push arbitrary
-    // text into a paid Gemini call.
     expect(translate).toHaveBeenCalledWith(englishBookmark.summary)
   })
 
   it('reports which summary it translated, so the client can tell if it has moved on', async () => {
-    // The caller cannot otherwise know: it asked for "the stored summary" and gets back Japanese
-    // for whatever that was at read time, which need not be the text on the page that asked.
     const res = await request(app).post('/api/bookmarks/1/translation')
     expect(res.body.source).toBe(englishBookmark.summary)
   })
 
   it('reports the labels that were on the bookmark it read, alongside that summary', async () => {
-    // The two were read together and belong together: a client adopting the reported summary has
-    // to be able to replace the chips beside it in the same step, or it pairs fresh text with
-    // topics generated for what came before.
     vi.mocked(db.getBookmark).mockResolvedValue({
       ...englishBookmark,
       labels: ['widgets', 'costs'],
@@ -1148,8 +1109,6 @@ describe('POST /api/bookmarks/:id/translation', () => {
   })
 
   it('does not refetch the article, which the translation does not need', async () => {
-    // The summary is already stored, so a page that has since gone down or started blocking must
-    // not be able to fail a translation of text the app already holds.
     await request(app).post('/api/bookmarks/1/translation')
     expect(fetchArticleText).not.toHaveBeenCalled()
   })
@@ -1162,8 +1121,6 @@ describe('POST /api/bookmarks/:id/translation', () => {
   })
 
   it('returns 409 when the bookmark has no summary to translate', async () => {
-    // Not a 404: the bookmark is there, it just is not in a state this endpoint can act on. The
-    // caller's fix is to generate a summary first, not to stop asking for this id.
     vi.mocked(db.getBookmark).mockResolvedValue({ ...englishBookmark, summary: undefined })
     const res = await request(app).post('/api/bookmarks/1/translation')
     expect(res.status).toBe(409)
@@ -1187,7 +1144,6 @@ describe('POST /api/bookmarks/:id/translation', () => {
     vi.mocked(translate).mockRejectedValue(new Error('429 rate limited'))
     const res = await request(app).post('/api/bookmarks/1/translation')
     expect(res.status).toBe(502)
-    // Vague body, logged cause — same contract as the summary and chat routes.
     expect(res.body.error).not.toContain('429')
     expect(consoleError).toHaveBeenCalled()
     const logged = consoleError.mock.calls[0].map(String).join(' ')
@@ -1203,8 +1159,6 @@ describe('POST /api/bookmarks/:id/translation', () => {
   })
 
   it('does not store the translation', async () => {
-    // The translation lives on the page for the visit, like the chat: nothing is written, so a
-    // regenerated summary can never be left with a stale Japanese version attached to it.
     await request(app).post('/api/bookmarks/1/translation')
     expect(db.updateSummary).not.toHaveBeenCalled()
   })
@@ -1589,7 +1543,6 @@ describe('POST /api/bookmarks/:id/summary — YouTube videos', () => {
       const localApp = express()
       localApp.use(express.json())
       localApp.use('/api/bookmarks', createBookmarksRouter())
-      // The second request reads the running state the first one wrote.
       vi.mocked(db.getBookmark).mockResolvedValueOnce(video).mockResolvedValue(runningSince(1000))
       const watch = deferred<typeof watched>()
       vi.mocked(watchVideo).mockReturnValue(watch.promise)

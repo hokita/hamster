@@ -106,10 +106,6 @@ describe('fetchArticleText', () => {
   })
 
   it('keeps the bytes already read when the stream dies mid-body', async () => {
-    // Raising MAX_BYTES means a slow large page can still be mid-read when the 8s fetch deadline
-    // aborts the stream. The bytes already delivered are a perfectly good truncated article — they
-    // must survive as a truncation (which the two-pass strip already handles), not be discarded
-    // wholesale by the outer catch.
     const bytes = new TextEncoder().encode(
       '<body><p>Delivered before the deadline</p><div class="rest'
     )
@@ -190,9 +186,6 @@ describe('fetchArticleText', () => {
   })
 
   it('does not let an apostrophe in later prose close a single-quoted attribute early', async () => {
-    // A quote only opens an attribute value when it is the first non-whitespace character after
-    // '='. The unescaped apostrophe in "it's a test" must not be treated as an attribute-value
-    // opener, or the next apostrophe in "don't" would wrongly close it and swallow the sentence.
     allow("<div title='it's a test'>IMPORTANT TEXT HERE, don't miss this</div><p>foo</p>")
     await expect(fetchArticleText('https://example.com')).resolves.toBe(
       "IMPORTANT TEXT HERE, don't miss this foo"
@@ -214,15 +207,10 @@ describe('fetchArticleText', () => {
       '<body><p>Normal</p><div title="oops>middle text<p>More article content here</p></div><p>Final para</p></body>'
     )
     const text = await fetchArticleText('https://example.com')
-    // Two-pass strip: quote-aware pass aborts on the unterminated attribute; the quote-blind
-    // fallback recovers everything from that tag onward, including the well-formed content after it.
     expect(text).toBe('Normal middle text More article content here Final para')
   })
 
   it('keeps the quote-aware prefix parse when a page is truncated mid-tag', async () => {
-    // Simulates the ordinary MAX_BYTES truncation case: a well-formed quoted '>' earlier in the
-    // document, followed by a tag cut off entirely by the byte cap. The quote-aware parse of the
-    // prefix must survive — only the truncated tail is reprocessed quote-blind.
     allow('<p title="5 > 3">Hello world</p><div class="trunc')
     const text = await fetchArticleText('https://example.com')
     expect(text).toBe('Hello world')
@@ -235,9 +223,6 @@ describe('fetchArticleText', () => {
   })
 
   it('keeps a literal < in prose that is followed by a space and a real comparison', async () => {
-    // A bare '<' in visible text (not the start of a tag) must survive as ordinary text, exactly
-    // as a browser renders it. Only a '<' immediately followed by a letter, '/', '!' or '?' opens
-    // a tag per the HTML tokenizer's tag-open state.
     allow('<p>x < y and z > q</p>')
     await expect(fetchArticleText('https://example.com')).resolves.toBe('x < y and z > q')
   })
@@ -260,8 +245,6 @@ describe('fetchArticleText', () => {
   })
 
   it('tag stripping is linear time, not quadratic', async () => {
-    // Build 300KB of pathological input: unterminated quotes cause O(n^2) in regex engines.
-    // A linear scanner should process this in well under 2 seconds even on slow hardware.
     const malicious = '<a b="'.repeat(50000)
     allow(`<body><p>Before</p>${malicious}<p>After</p></body>`)
     const start = performance.now()
@@ -272,9 +255,6 @@ describe('fetchArticleText', () => {
   })
 
   it('handles 300KB of bare < characters in linear time, not quadratic', async () => {
-    // Bare '<' characters that never open a tag are exactly what could make the new
-    // skip-past-false-starts loop quadratic if it rescanned from the same position instead of
-    // advancing monotonically. Each '<' is followed by a space, so none of them open a tag.
     const malicious = '< '.repeat(150000)
     allow(`<body><p>Before</p>${malicious}<p>After</p></body>`)
     const start = performance.now()

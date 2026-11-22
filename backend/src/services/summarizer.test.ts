@@ -8,8 +8,6 @@ vi.mock('@google/genai', async () => {
     GoogleGenAI: class {
       models = { generateContent: mockGenerateContent }
     },
-    // The real enum, not a stand-in: the thinking assertion below is only worth anything if it
-    // pins the value the SDK actually puts on the wire.
     ThinkingLevel: actual.ThinkingLevel,
   }
 })
@@ -48,11 +46,6 @@ describe('summarize', () => {
   })
 
   it('asks for the lowest supported thinking, so the output budget funds the summary and not the reasoning', async () => {
-    // Thinking tokens are drawn from maxOutputTokens, and flash models think at "medium" by
-    // default. Left at the default, reasoning about a 20k-char article exhausts the budget before
-    // any summary text is emitted, and every request dies on the MAX_TOKENS guard below.
-    // gemini-3.8-flash takes only low/medium/high, and 3.7 before it rejected MINIMAL outright
-    // (400 INVALID_ARGUMENT, verified live), so LOW is the floor for this model.
     mockGenerateContent.mockResolvedValue({ text: 'ok' })
     await summarize('Title', 'Article body')
     const config = mockGenerateContent.mock.calls[0][0].config
@@ -69,8 +62,6 @@ describe('summarize', () => {
   })
 
   it('asks for the summary in the article language, falling back to English', async () => {
-    // A Japanese article deserves a Japanese summary, and vice versa; anything else is summarized
-    // in English rather than in a language the reader most likely cannot read.
     mockGenerateContent.mockResolvedValue({ text: 'ok' })
     await summarize('My Title', 'The article body text')
     const systemInstruction = mockGenerateContent.mock.calls[0][0].config
@@ -79,14 +70,10 @@ describe('summarize', () => {
     expect(systemInstruction).toContain('English or')
     expect(systemInstruction).toContain('Japanese')
     expect(systemInstruction).toContain('any other language, write the summary in English')
-    // The old rule forced English on every article, whatever it was written in.
     expect(systemInstruction).not.toContain('Write in English, even when')
   })
 
   it('asks for a summary long enough to be worth reading', async () => {
-    // The summary must be readable INSTEAD of the article, not as a teaser for it. Eight to twelve
-    // substantive bullets carrying the article's actual content is the shape; the old four-to-six
-    // digest is the thing the user rejected as "too short and less information".
     mockGenerateContent.mockResolvedValue({ text: 'ok' })
     await summarize('My Title', 'The article body text')
     const systemInstruction = mockGenerateContent.mock.calls[0][0].config
@@ -105,14 +92,10 @@ describe('summarize', () => {
       .systemInstruction as string
     expect(systemInstruction).toContain('full substance without opening it')
     expect(systemInstruction).toContain('every major claim')
-    // The old goal framed the summary as a read-it-or-not teaser.
     expect(systemInstruction).not.toContain('deciding whether to read it')
   })
 
   it('asks for Markdown, restricted to the constructs the page renders', async () => {
-    // The page renders the summary as Markdown but drops anything outside this subset, so the
-    // prompt has to stay inside it — a summary whose substance lives in a table or a link arrives
-    // gutted. Headings are part of the deal: they are what makes a summary skimmable.
     mockGenerateContent.mockResolvedValue({ text: 'ok' })
     await summarize('My Title', 'The article body text')
     const systemInstruction = mockGenerateContent.mock.calls[0][0].config
@@ -120,17 +103,13 @@ describe('summarize', () => {
     expect(systemInstruction).toContain('Markdown')
     expect(systemInstruction).toContain('"## " section headings')
     expect(systemInstruction).toContain('**bold**')
-    // Tables joined the rendered subset: the page grew GFM table support, and a comparison
-    // article's substance genuinely lives in one.
     expect(systemInstruction).toContain('tables')
     expect(systemInstruction).toContain('compares')
     expect(systemInstruction).toContain('Never use links, images, code blocks')
     expect(systemInstruction).not.toContain('Never use links, images, tables')
     expect(systemInstruction).toContain('Key points')
     expect(systemInstruction).toContain('Takeaway')
-    // Headings in English above a Japanese summary would read as a translation glitch.
     expect(systemInstruction).toContain('write them in the summary language too')
-    // The old rule banned every heading, which was right when the output was plain text.
     expect(systemInstruction).not.toContain('no heading, no preamble')
   })
 
@@ -176,9 +155,6 @@ describe('summarize', () => {
   })
 
   it('throws when generation stopped early because it hit the token cap', async () => {
-    // A response cut off at MAX_OUTPUT_TOKENS ends mid-sentence with no indication. The prompt
-    // asks for ~150 tokens of output, so hitting the 1024 cap means the model went badly
-    // off-script — surfacing that as a retryable failure beats storing half a summary.
     mockGenerateContent.mockResolvedValue({
       text: 'A summary that stops abruptly halfway through',
       candidates: [{ finishReason: 'MAX_TOKENS' }],
@@ -195,7 +171,6 @@ describe('summarize', () => {
   })
 
   it('returns normally when the response has no candidates array at all', async () => {
-    // A shape the SDK legitimately produces; the finishReason check must not throw on its absence.
     mockGenerateContent.mockResolvedValue({ text: 'A complete summary.' })
     await expect(summarize('Title', 'Body')).resolves.toBe('A complete summary.')
   })

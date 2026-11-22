@@ -8,8 +8,6 @@ vi.mock('@google/genai', async () => {
     GoogleGenAI: class {
       models = { generateContent: mockGenerateContent }
     },
-    // The real enum, not a stand-in: the thinking assertion below is only worth anything if it
-    // pins the value the SDK actually puts on the wire.
     ThinkingLevel: actual.ThinkingLevel,
   }
 })
@@ -51,8 +49,6 @@ describe('answerQuestion', () => {
   })
 
   it('asks for the lowest supported thinking, so the output budget funds the answer', async () => {
-    // Thinking tokens are drawn from maxOutputTokens; gemini-3.8-flash offers only low/medium/high
-    // (MINIMAL was already rejected on 3.7 — see summarizer.ts), so LOW is the floor here.
     mockGenerateContent.mockResolvedValue({ text: 'ok' })
     await answerQuestion('Title', 'Article body', question)
     const config = mockGenerateContent.mock.calls[0][0].config
@@ -96,9 +92,6 @@ describe('answerQuestion', () => {
   })
 
   it('asks for the answer in the question language, falling back to English', async () => {
-    // Same policy as the summarizer: the app renders English and Japanese (its lang derivation
-    // knows only those two scripts), so the prompt must not promise other languages — an answer
-    // in one would be marked lang="en" and mispronounced by screen readers.
     mockGenerateContent.mockResolvedValue({ text: 'ok' })
     await answerQuestion('My Title', 'The article body text', question)
     const systemInstruction = mockGenerateContent.mock.calls[0][0].config
@@ -110,10 +103,6 @@ describe('answerQuestion', () => {
   })
 
   it('merges the fenced article and the first question into one user turn, so roles alternate', async () => {
-    // Gemini's multi-turn contract is alternating user/model roles; a separate leading article
-    // turn followed by the first question is two consecutive user contents, which the API can
-    // reject. The article rides as an extra part of the first user turn instead — same channel,
-    // same fencing, valid alternation.
     mockGenerateContent.mockResolvedValue({ text: 'ok' })
     const conversation: ChatMessage[] = [
       { role: 'user', text: 'First question?' },
@@ -172,8 +161,6 @@ describe('answerQuestion', () => {
   })
 
   it('throws when generation stopped early because it hit the token cap', async () => {
-    // An answer cut off at the cap ends mid-sentence with no indication; surfacing that as a
-    // retryable failure beats showing half an answer as if it were whole.
     mockGenerateContent.mockResolvedValue({
       text: 'An answer that stops abruptly',
       candidates: [{ finishReason: 'MAX_TOKENS' }],

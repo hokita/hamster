@@ -8,8 +8,6 @@ vi.mock('@google/genai', async () => {
     GoogleGenAI: class {
       models = { generateContent: mockGenerateContent }
     },
-    // The real enum, not a stand-in: the thinking assertion below is only worth anything if it
-    // pins the value the SDK actually puts on the wire.
     ThinkingLevel: actual.ThinkingLevel,
   }
 })
@@ -48,8 +46,6 @@ describe('translate', () => {
   })
 
   it('calls the same pinned Flash model as the summarizer, with a bounded output budget', async () => {
-    // Japanese costs more tokens per sentence than the English it is translating, so the budget
-    // has to clear the input comfortably rather than match it.
     mockGenerateContent.mockResolvedValue({ text: 'ok' })
     await translate('A summary.')
     expect(mockGenerateContent).toHaveBeenCalledWith(
@@ -61,8 +57,6 @@ describe('translate', () => {
   })
 
   it('asks for the lowest supported thinking, so the output budget funds the translation', async () => {
-    // Same trap as the summarizer: thinking tokens are drawn from maxOutputTokens, and at the
-    // default "medium" a long summary can exhaust the budget before the first output token.
     mockGenerateContent.mockResolvedValue({ text: 'ok' })
     await translate('A summary.')
     const config = mockGenerateContent.mock.calls[0][0].config
@@ -70,9 +64,6 @@ describe('translate', () => {
   })
 
   it('asks for Japanese, preserving the Markdown structure it was given', async () => {
-    // The translation is rendered by the same component as the summary, so it has to come back
-    // as the same subset of Markdown — a translation that flattens the headings and bullets
-    // arrives as one unreadable block.
     mockGenerateContent.mockResolvedValue({ text: 'ok' })
     await translate('A summary.')
     const systemInstruction = mockGenerateContent.mock.calls[0][0].config
@@ -80,14 +71,10 @@ describe('translate', () => {
     expect(systemInstruction).toContain('Japanese')
     expect(systemInstruction).toContain('"## " headings')
     expect(systemInstruction).toContain('**bold**')
-    // Summaries can carry tables now; a translation that flattens one into prose loses the
-    // comparison the table existed to show.
     expect(systemInstruction).toContain('tables as tables')
   })
 
   it('asks for a translation rather than a summary of the summary', async () => {
-    // The text handed over is already a summary. A model asked to "condense" it a second time
-    // returns something shorter than what the English reader sees, which is not a translation.
     mockGenerateContent.mockResolvedValue({ text: 'ok' })
     await translate('A summary.')
     const systemInstruction = mockGenerateContent.mock.calls[0][0].config
@@ -97,8 +84,6 @@ describe('translate', () => {
   })
 
   it('keeps the rules out of contents, which carries only the untrusted summary', async () => {
-    // The summary was written from an untrusted page, so it stays fenced and labelled as content
-    // in the user turn — same treatment the summarizer gives the page it came from.
     mockGenerateContent.mockResolvedValue({ text: 'ok' })
     await translate('The summary text')
     const call = mockGenerateContent.mock.calls[0][0]
@@ -132,8 +117,6 @@ describe('translate', () => {
   })
 
   it('throws when generation stopped early because it hit the token cap', async () => {
-    // A translation cut off at the cap ends mid-sentence with no indication, and the page would
-    // show it beside a button offering to switch back to the complete English. Failing is honest.
     mockGenerateContent.mockResolvedValue({
       text: '途中で切れた訳',
       candidates: [{ finishReason: 'MAX_TOKENS' }],
@@ -142,7 +125,6 @@ describe('translate', () => {
   })
 
   it('returns normally when the response has no candidates array at all', async () => {
-    // A shape the SDK legitimately produces; the finishReason check must not throw on its absence.
     mockGenerateContent.mockResolvedValue({ text: '完全な訳。' })
     await expect(translate('A summary.')).resolves.toBe('完全な訳。')
   })
