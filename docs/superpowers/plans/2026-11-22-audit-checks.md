@@ -8,7 +8,7 @@
 
 **Tech Stack:** npm audit, Trivy `aquasec/trivy:0.76.2` image by digest, GitHub Actions, Dependabot, gcloud (WIF, existing secrets).
 
-**Spec:** `/Users/hokita/ghq/github.com/hokita/orch/docs/superpowers/specs/2026-11-22-audit-checks-design.md` (hamster rows of §5, §6, §7, §8, §9)
+**Spec:** `hokita/orch: docs/superpowers/specs/2026-11-22-audit-checks-design.md` (hamster rows of §5, §6, §7, §8, §9)
 
 ## Global Constraints
 

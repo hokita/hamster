@@ -114,7 +114,7 @@ jobs:
         run: node --test '.github/scripts/*.test.mjs'
 
       - name: Check action pins
-        run: node .github/scripts/check-action-pins.mjs .github/workflows/*.yml
+        run: node .github/scripts/check-action-pins.mjs .github/workflows/*.y*ml
 
   deployed-image-backend:
     name: Deployed image (backend)

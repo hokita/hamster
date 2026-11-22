@@ -15,6 +15,10 @@ updates:
       - /backend
     schedule:
       interval: weekly
+    ignore:
+      - dependency-name: node
+        update-types:
+          - version-update:semver-major
     groups:
       docker:
         patterns:

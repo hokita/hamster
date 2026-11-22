@@ -37,6 +37,10 @@ test('newest of several security releases wins', () => {
   assert.equal(newerSecurityRelease('v24.1.0', index), 'v24.22.0')
 })
 
+test('pre-release entries are ignored', () => {
+  assert.equal(newerSecurityRelease('v24.22.3', [entry('v24.23.0-rc.1', true)]), null)
+})
+
 const runCli = (deployed, index) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'node-runtime-'))
   const file = path.join(dir, 'index.json')
@@ -55,7 +59,7 @@ test('cli failure message and exit 1', () => {
   assert.equal(result.status, 1)
   assert.equal(
     result.stderr + result.stdout,
-    'Production runs v24.22.1; Node v24.22.3 is a security release. Redeploy hamster-backend.\n',
+    'Production runs v24.22.1; Node v24.22.3 is a security release. Bump Node in backend/Dockerfile, the Volta pins and setup-node, then redeploy hamster-backend.\n',
   )
 })
 
@@ -63,4 +67,10 @@ test('cli trims a trailing newline on the deployed version', () => {
   const result = runCli('v24.22.3\n', [entry('v24.22.3', true)])
   assert.equal(result.status, 0)
   assert.equal(result.stdout, 'Production runs v24.22.3; no newer Node 24 security release.\n')
+})
+
+test('cli exits 2 with usage for a malformed deployed version', () => {
+  const result = runCli('garbage', [entry('v24.22.3', true)])
+  assert.equal(result.status, 2)
+  assert.match(result.stderr, /^usage: /)
 })
