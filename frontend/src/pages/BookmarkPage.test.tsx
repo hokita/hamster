@@ -29,7 +29,6 @@ function renderPage() {
     <MemoryRouter initialEntries={['/bookmarks/1']}>
       <Routes>
         <Route path="/bookmarks/:id" element={<BookmarkPage />} />
-        {/* Stands in for the list page, so a delete's navigation is observable here. */}
         <Route path="/" element={<p>Bookmarks list</p>} />
       </Routes>
     </MemoryRouter>
@@ -68,21 +67,16 @@ describe('BookmarkPage', () => {
     })
     renderPage()
 
-    // The heading sits under the page's own "Summary" <h2>, so it has to be an <h3>.
     const heading = await screen.findByRole('heading', { name: 'Key points', level: 3 })
     expect(heading).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Takeaway', level: 3 })).toBeInTheDocument()
     expect(screen.getByText('This article explains widgets.')).toBeInTheDocument()
     expect(screen.getAllByRole('listitem')).toHaveLength(2)
-    // The bold lead-in is an element, not literal asterisks around the text.
     expect(screen.getByText('Widgets ship early').tagName).toBe('STRONG')
     expect(screen.queryByText(/\*\*/)).not.toBeInTheDocument()
   })
 
   it('drops links and images from a summary, keeping their text', async () => {
-    // The summary is written from an untrusted page, and the prompt never asks for a link — so a
-    // URL in one came from the page, and rendering it would hand a hostile page a live link on a
-    // page the user trusts.
     vi.mocked(api.getBookmark).mockResolvedValue({
       ...bookmark,
       summary:
@@ -91,19 +85,14 @@ describe('BookmarkPage', () => {
     })
     renderPage()
 
-    // The page's own chrome has links, so this asks about the summary's would-be link by name.
     expect(await screen.findByText(/Read the vendor page for more\./)).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'the vendor page' })).not.toBeInTheDocument()
     expect(screen.queryByRole('img')).not.toBeInTheDocument()
     expect(screen.queryByText(/evil\.example/)).not.toBeInTheDocument()
-    // An image's text lives in its alt attribute rather than its children, so dropping the node
-    // would take the caption with it. The URL is what had to go, not the words.
     expect(screen.getByText('a banner')).toBeInTheDocument()
   })
 
   it('renders a markdown table in a summary as a real table', async () => {
-    // GFM tables are not CommonMark: without the GFM extension the pipe rows land as one literal
-    // paragraph of "| ... |" text, which is worse than no table at all.
     vi.mocked(api.getBookmark).mockResolvedValue({
       ...bookmark,
       summary:
@@ -136,8 +125,6 @@ describe('BookmarkPage', () => {
   })
 
   it('keeps "・" bullets in an older summary as a list', async () => {
-    // CommonMark does not know "・" as a list marker, so without a rewrite these lines collapse
-    // into one paragraph with the breaks rendered as spaces — the bullets would run together.
     vi.mocked(api.getBookmark).mockResolvedValue({
       ...bookmark,
       summary:
@@ -156,8 +143,6 @@ describe('BookmarkPage', () => {
   })
 
   it('leaves a "・" inside a sentence alone', async () => {
-    // Japanese uses "・" between the halves of a compound name, mid-line and mid-sentence. Only a
-    // line that opens with one is a bullet.
     vi.mocked(api.getBookmark).mockResolvedValue({
       ...bookmark,
       summary: 'テスト・ドリブン開発について論じている。',
@@ -219,8 +204,6 @@ describe('BookmarkPage', () => {
     expect(screen.getByText('First take.')).toBeInTheDocument()
   })
 
-  // index.html declares lang="en" for the document, so a Japanese summary needs its own lang or a
-  // screen reader announces it with English pronunciation rules.
   it('marks a Japanese summary as Japanese', async () => {
     vi.mocked(api.getBookmark).mockResolvedValue({
       ...bookmark,
@@ -243,8 +226,6 @@ describe('BookmarkPage', () => {
     expect(paragraph.closest('[lang]')).toHaveAttribute('lang', 'en')
   })
 
-  // The translation button exists for the reader who would rather not read the English summary,
-  // so it is offered exactly where that applies: an English summary, and nothing else.
   describe('translating an English summary', () => {
     const englishSummary = 'The article explains widgets.\n\n## Key points\n\n- **One** — a point.'
     const japaneseTranslation =
@@ -294,8 +275,6 @@ describe('BookmarkPage', () => {
 
       expect(api.translateSummary).toHaveBeenCalledWith('1')
       const paragraph = await screen.findByText('この記事はウィジェットを説明する。')
-      // index.html declares lang="en", so the Japanese needs its own lang or a screen reader
-      // announces it with English pronunciation rules.
       expect(paragraph.closest('[lang]')).toHaveAttribute('lang', 'ja')
       expect(screen.queryByText('The article explains widgets.')).not.toBeInTheDocument()
     })
@@ -329,7 +308,6 @@ describe('BookmarkPage', () => {
 
       fireEvent.click(screen.getByRole('button', { name: 'Show Japanese' }))
       expect(await screen.findByText('この記事はウィジェットを説明する。')).toBeInTheDocument()
-      // The translation is held in state, so toggling costs nothing after the first call.
       expect(api.translateSummary).toHaveBeenCalledTimes(1)
     })
 
@@ -359,8 +337,6 @@ describe('BookmarkPage', () => {
     })
 
     it('drops a translation of a summary that has since been regenerated', async () => {
-      // Otherwise the button would be one click away from showing the Japanese of text that is no
-      // longer on the page — a translation of something the reader can no longer see.
       withEnglishSummary()
       vi.mocked(api.translateSummary).mockResolvedValue({
         translation: japaneseTranslation,
@@ -376,16 +352,10 @@ describe('BookmarkPage', () => {
 
       expect(await screen.findByText('A second English take.')).toBeInTheDocument()
       expect(screen.queryByText('この記事はウィジェットを説明する。')).not.toBeInTheDocument()
-      // Back to the offer, not to "Show Japanese": there is no translation of this text yet.
       expect(screen.getByRole('button', { name: 'Translate to Japanese' })).toBeInTheDocument()
     })
 
     it('pairs the translation with the English the server actually translated', async () => {
-      // A regeneration in another tab between this page's load and the click leaves the backend
-      // translating newer English than the page is showing. Tagging the result with the stale
-      // text on screen would pair the new Japanese with the old English behind "Show English",
-      // and nothing would ever correct it: a bookmark that already has its summary and labels
-      // does not poll, so this page never hears that the summary moved.
       withEnglishSummary()
       vi.mocked(api.translateSummary).mockResolvedValue({
         translation: japaneseTranslation,
@@ -398,7 +368,6 @@ describe('BookmarkPage', () => {
 
       fireEvent.click(screen.getByRole('button', { name: 'Show English' }))
 
-      // The English behind the toggle is the text the Japanese is a translation of.
       expect(
         await screen.findByText('A newer English take, regenerated elsewhere.')
       ).toBeInTheDocument()
@@ -406,9 +375,6 @@ describe('BookmarkPage', () => {
     })
 
     it('replaces the topic chips along with the summary it adopts', async () => {
-      // The chips describe the summary they sit under. Adopting fresher English while keeping the
-      // old ones would leave them mismatched for the whole visit — a bookmark with a summary and
-      // labels is exactly the case the poll skips, so nothing would reconcile them.
       vi.mocked(api.getBookmark).mockResolvedValue({
         ...bookmark,
         summary: englishSummary,
@@ -657,7 +623,6 @@ describe('BookmarkPage delete', () => {
 
     expect(await screen.findByText("Couldn't delete this bookmark.")).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Example Article' })).toBeInTheDocument()
-    // Ready for another attempt rather than stuck showing a spinner.
     expect(
       screen.getByRole('button', { name: 'Delete Example Article on example.com/article' })
     ).toBeInTheDocument()
@@ -717,8 +682,6 @@ describe('BookmarkPage summary polling', () => {
     expect(screen.queryByText(/Couldn't regenerate the summary/)).not.toBeInTheDocument()
   })
 
-  // The backend keeps generating after the client goes away, so a regeneration whose request died
-  // can still land — the one immediate re-read in the failure path is only the first sample.
   it('keeps watching for a regeneration that lands after its request failed', async () => {
     vi.mocked(api.getBookmark)
       .mockResolvedValueOnce({ ...bookmark, summary: 'First take.' })
@@ -752,7 +715,7 @@ describe('BookmarkPage summary polling', () => {
       await vi.advanceTimersByTimeAsync(90000)
     })
 
-    expect(vi.mocked(api.getBookmark).mock.calls.length).toBe(countAfterFailure + 45) // poll budget
+    expect(vi.mocked(api.getBookmark).mock.calls.length).toBe(countAfterFailure + 45)
     expect(screen.getByText('First take.')).toBeInTheDocument()
     expect(screen.getByText(/Couldn't regenerate the summary/)).toBeInTheDocument()
   })
@@ -776,11 +739,6 @@ describe('BookmarkPage summary polling', () => {
   })
 
   it('does not put back an older summary when one arrives while a translation is in flight', async () => {
-    // A legacy bookmark — summary, no labels — keeps polling. A regeneration elsewhere lands
-    // mid-translation, so the `source` coming back is older than what the poll has just
-    // installed. Adopting it would undo the poll's work and leave the newer labels sitting over
-    // text that is no longer what the server holds, for the rest of the visit: once summary and
-    // labels are both present the poll stops, so nothing would correct it a second time.
     vi.mocked(api.getBookmark)
       .mockResolvedValueOnce({ ...bookmark, summary: 'Older English.' })
       .mockResolvedValue({
@@ -811,17 +769,11 @@ describe('BookmarkPage summary polling', () => {
 
     expect(screen.getByText('Newer English, regenerated elsewhere.')).toBeInTheDocument()
     expect(screen.queryByText('Older English.')).not.toBeInTheDocument()
-    // The Japanese is of text the page no longer shows, so it is not offered as a translation
-    // of what is there now.
     expect(screen.queryByText('古い方の訳。')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Translate to Japanese' })).toBeInTheDocument()
   })
 
   it('does not report a translation failure against a summary it never attempted', async () => {
-    // Same interleaving as above, on the failure path: the poll installs a newer summary while
-    // the translation of the older one is in flight, and that request then fails. The error
-    // belongs to text no longer on screen — and if the newer summary arrived with labels the
-    // poll stops, so the complaint would sit under an untried summary for the rest of the visit.
     vi.mocked(api.getBookmark)
       .mockResolvedValueOnce({ ...bookmark, summary: 'Older English.' })
       .mockResolvedValue({
@@ -884,7 +836,7 @@ describe('BookmarkPage summary polling', () => {
       await vi.advanceTimersByTimeAsync(90000)
     })
     const countAtBudget = vi.mocked(api.getBookmark).mock.calls.length
-    expect(countAtBudget).toBe(46) // 1 initial load + 45 polls
+    expect(countAtBudget).toBe(46)
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10000)
@@ -1002,9 +954,6 @@ describe('labels', () => {
     expect(screen.queryByTestId('bookmark-labels')).not.toBeInTheDocument()
   })
 
-  // The always-present Regenerate button doubles as the labels backfill path for bookmarks
-  // whose summary predates labels: the response carries the labels, and merging them into
-  // state is what makes the chips appear without a refetch.
   it('surfaces labels from a regeneration', async () => {
     vi.mocked(api.getBookmark).mockResolvedValue({
       ...bookmark,
@@ -1020,10 +969,6 @@ describe('labels', () => {
     expect(await screen.findByText('typescript')).toBeInTheDocument()
   })
 
-  // If the labels step of a regeneration fails server-side, the response carries a new summary
-  // but no labels — the server has already cleared the old ones (see updateSummary), and the
-  // page must not paper over that by keeping the previous topics attached to text they no
-  // longer describe.
   it('drops stale label chips when a regeneration response carries no labels', async () => {
     vi.mocked(api.getBookmark).mockResolvedValue({
       ...bookmark,
@@ -1122,10 +1067,6 @@ describe('BookmarkPage read flag', () => {
   it('keeps the flag when a poll issued before the write resolves after it', async () => {
     vi.useFakeTimers()
     try {
-      // The real race: the poll's GET goes out while the write is still in flight, so it reads
-      // the document before the flag is committed, and only comes back once the write has
-      // settled. Retiring the override at settle time would let that answer flip the button back
-      // while storage says the opposite.
       let resolveWrite!: () => void
       vi.mocked(api.setReadState).mockReturnValue(
         new Promise<void>((resolve) => {
@@ -1146,7 +1087,6 @@ describe('BookmarkPage read flag', () => {
       fireEvent.click(screen.getByRole('button', { name: /as read/ }))
       await act(async () => {})
 
-      // The poll's request goes out here, still pre-write, and is held open...
       let resolvePoll!: (value: Bookmark) => void
       vi.mocked(api.getBookmark).mockReturnValue(
         new Promise<Bookmark>((resolve) => {
@@ -1157,13 +1097,10 @@ describe('BookmarkPage read flag', () => {
         vi.advanceTimersByTime(2000)
       })
 
-      // ...the write settles...
       await act(async () => {
         resolveWrite()
       })
 
-      // ...and only then does that pre-write snapshot come back, carrying a summary so it is
-      // adopted rather than discarded as unchanged.
       await act(async () => {
         resolvePoll({ ...bookmark, summary: 'A summary.' })
       })
@@ -1177,9 +1114,6 @@ describe('BookmarkPage read flag', () => {
   it('applies a poll that changes only the read flag', async () => {
     vi.useFakeTimers()
     try {
-      // Marked somewhere else while this page is open: the poll's response advances neither the
-      // summary nor the labels, and discarding it would leave the button describing a state the
-      // server has already moved off.
       vi.mocked(api.getBookmark).mockResolvedValue(bookmark)
 
       render(
@@ -1206,8 +1140,6 @@ describe('BookmarkPage read flag', () => {
   it('keeps a flag a poll already confirmed when the write then reports failure', async () => {
     vi.useFakeTimers()
     try {
-      // The write committed and only its response was lost. A poll has already reported the
-      // stored flag back, so rolling back here would contradict the server.
       vi.mocked(api.getBookmark).mockResolvedValue(bookmark)
       let failWrite!: (error: Error) => void
       vi.mocked(api.setReadState).mockReturnValue(
@@ -1228,7 +1160,6 @@ describe('BookmarkPage read flag', () => {
       fireEvent.click(screen.getByRole('button', { name: /as read/ }))
       await act(async () => {})
 
-      // The poll sees the flag the write stored, which retires the override.
       vi.mocked(api.getBookmark).mockResolvedValue({ ...bookmark, isRead: true })
       await act(async () => {
         vi.advanceTimersByTime(2000)
@@ -1246,8 +1177,6 @@ describe('BookmarkPage read flag', () => {
   })
 
   it('shows the stored flag when the write settles after a trip away and back', async () => {
-    // This bookmark has its summary and labels, so nothing polls: if the write's own settling
-    // does not put the flag on screen, nothing else will for the rest of the visit.
     const complete = { ...bookmark, summary: 'A summary.', labels: ['react'] }
     const second = { ...complete, id: '2', title: 'Second Article' }
     vi.mocked(api.getBookmark).mockImplementation((requested: string) =>
@@ -1271,7 +1200,6 @@ describe('BookmarkPage read flag', () => {
     )
     fireEvent.click(await screen.findByRole('button', { name: /Example Article.* as read/ }))
 
-    // Away and back, which clears the override and re-reads the still-unread document.
     fireEvent.click(screen.getByRole('link', { name: 'Bookmark 2' }))
     await screen.findByRole('heading', { name: 'Second Article' })
     fireEvent.click(screen.getByRole('link', { name: 'Bookmark 1' }))
@@ -1286,9 +1214,6 @@ describe('BookmarkPage read flag', () => {
   })
 
   it('ignores a stale toggle failure once a newer toggle owns the button', async () => {
-    // A's first write is still in flight when the reader leaves and comes back, then toggles
-    // again. The old request failing says nothing about the new one: rolling back here would
-    // undo the newer optimistic state and report a failure for a write that is still running.
     const second = { ...bookmark, id: '2', title: 'Second Article' }
     vi.mocked(api.getBookmark).mockImplementation((requested: string) =>
       Promise.resolve(requested === '1' ? bookmark : second)
@@ -1326,17 +1251,12 @@ describe('BookmarkPage read flag', () => {
 
     expect(screen.getByRole('button', { name: /Example Article.* as unread/ })).toBeInTheDocument()
     expect(screen.queryByText("Couldn't save the read state.")).not.toBeInTheDocument()
-    // The newer write is still running, so its button is still the one waiting on it.
     expect(button).toBeDisabled()
   })
 
   it("does not let another bookmark's write settle this one's override", async () => {
     vi.useFakeTimers()
     try {
-      // This page is reused across /bookmarks/:id navigations, so a write left behind on the
-      // previous bookmark can settle while the one now on screen has its own write in flight.
-      // Both went the same way here, which is what makes a flag-only guard unable to tell them
-      // apart — and stamping the wrong override lets a pre-write poll retire it.
       const second = { ...bookmark, id: '2', title: 'Second Article' }
       vi.mocked(api.getBookmark).mockImplementation((requested: string) =>
         Promise.resolve(requested === '1' ? bookmark : second)
@@ -1347,8 +1267,6 @@ describe('BookmarkPage read flag', () => {
           settleFirstWrite = resolve
         })
       )
-      // The second bookmark's write never settles, so anything that retires its override came
-      // from somewhere it should not have.
       vi.mocked(api.setReadState).mockReturnValueOnce(new Promise(() => {}))
 
       render(
@@ -1369,12 +1287,10 @@ describe('BookmarkPage read flag', () => {
       fireEvent.click(screen.getByRole('button', { name: /Second Article.* as read/ }))
       await act(async () => {})
 
-      // Bookmark 1's write lands now, with bookmark 2's still in flight.
       await act(async () => {
         settleFirstWrite()
       })
 
-      // A poll for bookmark 2, whose snapshot predates its own write, must not be believed.
       vi.mocked(api.getBookmark).mockResolvedValue({ ...second, summary: 'A summary.' })
       await act(async () => {
         vi.advanceTimersByTime(2000)
@@ -1389,9 +1305,6 @@ describe('BookmarkPage read flag', () => {
   it('retires the override on a poll that agrees but advances nothing', async () => {
     vi.useFakeTimers()
     try {
-      // Most polls for a bookmark still being summarized report no content change at all. If
-      // those never retire the override, it outlives the server's own answer — and then masks a
-      // flag changed somewhere else on whichever response finally does advance something.
       vi.mocked(api.getBookmark).mockResolvedValue(bookmark)
       vi.mocked(api.setReadState).mockResolvedValue(undefined)
 
@@ -1407,15 +1320,12 @@ describe('BookmarkPage read flag', () => {
       fireEvent.click(screen.getByRole('button', { name: /as read/ }))
       await act(async () => {})
 
-      // A poll reports the stored flag back with no summary and no labels: nothing advanced.
       vi.mocked(api.getBookmark).mockResolvedValue({ ...bookmark, isRead: true })
       await act(async () => {
         vi.advanceTimersByTime(2000)
       })
       expect(screen.getByRole('button', { name: /as unread/ })).toBeInTheDocument()
 
-      // Another tab now marks it unread, and the summary lands in the same response. With the
-      // override retired above, this is believed.
       vi.mocked(api.getBookmark).mockResolvedValue({
         ...bookmark,
         isRead: false,
@@ -1434,8 +1344,6 @@ describe('BookmarkPage read flag', () => {
   it('lets the server win again once a response reports the stored flag back', async () => {
     vi.useFakeTimers()
     try {
-      // The override is retired by agreement, so it cannot mask a change made anywhere else —
-      // the list in another tab — for the rest of the visit.
       vi.mocked(api.getBookmark).mockResolvedValue(bookmark)
       vi.mocked(api.setReadState).mockResolvedValue(undefined)
 
@@ -1451,7 +1359,6 @@ describe('BookmarkPage read flag', () => {
       fireEvent.click(screen.getByRole('button', { name: /as read/ }))
       await act(async () => {})
 
-      // A poll agrees with the toggle, which retires the override...
       vi.mocked(api.getBookmark).mockResolvedValue({
         ...bookmark,
         isRead: true,
@@ -1462,7 +1369,6 @@ describe('BookmarkPage read flag', () => {
       })
       expect(screen.getByRole('button', { name: /as unread/ })).toBeInTheDocument()
 
-      // ...so this later response, reporting it unread again, is believed.
       vi.mocked(api.getBookmark).mockResolvedValue({
         ...bookmark,
         isRead: false,
@@ -1482,8 +1388,6 @@ describe('BookmarkPage read flag', () => {
   it('keeps the flag when a poll snapshot taken before the write lands afterwards', async () => {
     vi.useFakeTimers()
     try {
-      // No summary yet, so the page polls. The first snapshot predates the toggle and still
-      // reports the bookmark unread; adopting that wholesale would flip the button back.
       let resolveWrite!: () => void
       vi.mocked(api.setReadState).mockReturnValue(
         new Promise<void>((resolve) => {
@@ -1504,7 +1408,6 @@ describe('BookmarkPage read flag', () => {
       fireEvent.click(screen.getByRole('button', { name: /as read/ }))
       await act(async () => {})
 
-      // A poll now returns the pre-toggle document, carrying a summary so the result is adopted.
       vi.mocked(api.getBookmark).mockResolvedValue({ ...bookmark, summary: 'A summary.' })
       await act(async () => {
         vi.advanceTimersByTime(2000)
@@ -1535,8 +1438,6 @@ describe('BookmarkPage video summaries', () => {
     "Couldn't watch this video. Only public YouTube videos can be summarized — it may be " +
     'private, unlisted, members-only, age-restricted or removed.'
 
-  // Shaped like what api.ts throws. Built by hand because this file mocks '../api' wholesale, and
-  // the page reads the code off the error rather than relying on the class.
   function apiError(status: number, code?: string) {
     return Object.assign(new Error(`API error: ${status}`), { status, code })
   }
@@ -1606,7 +1507,7 @@ describe('BookmarkPage video summaries', () => {
     expect(screen.getByRole('button', { name: 'Generate summary' })).toBeDisabled()
 
     await advance(200000)
-    expect(api.getBookmark).toHaveBeenCalledTimes(101) // 1 initial load + 100 polls
+    expect(api.getBookmark).toHaveBeenCalledTimes(101)
     expect(screen.getByText(RUNNING_COPY)).toBeInTheDocument()
   })
 
@@ -1627,8 +1528,6 @@ describe('BookmarkPage video summaries', () => {
   })
 
   it('turns a running state into a generic failure once it goes stale while on screen', async () => {
-    // The instance running it died or was redeployed; nothing will ever clear the state, so the
-    // page has to stop promising a summary on its own clock.
     vi.mocked(api.getBookmark).mockResolvedValue({
       ...video,
       videoSummaryState: stateAgo(600000, 'running'),
@@ -1660,8 +1559,6 @@ describe('BookmarkPage video summaries', () => {
     await advance(6000)
     expect(screen.getByText(RUNNING_COPY)).toBeInTheDocument()
 
-    // Adopting the state restarts the poll, so even the article budget would run on to
-    // 1 + 3 + 45 calls; only the video budget gets past that.
     await advance(194000)
     expect(api.getBookmark).toHaveBeenCalledTimes(1 + 3 + 97)
   })
@@ -1691,8 +1588,6 @@ describe('BookmarkPage video summaries', () => {
   })
 
   it('lets a running state outrank a click failure that carried no code', async () => {
-    // A request that died without an answer (a dropped connection, a gateway timeout during a
-    // long watch) says nothing about the run, which may well still be going server-side.
     vi.mocked(api.generateSummary).mockRejectedValue(new Error('API error: 504'))
     renderPage()
     await advance(0)
@@ -1712,8 +1607,6 @@ describe('BookmarkPage video summaries', () => {
   })
 
   it('keeps the usual in-flight text while a click is still waiting for its answer', async () => {
-    // videoId is derived from the URL whether or not the server takes the video path, so a
-    // request in flight is no evidence that a video is being watched.
     vi.mocked(api.generateSummary).mockReturnValue(new Promise(() => {}))
     renderPage()
     await advance(0)
@@ -1761,9 +1654,6 @@ describe('BookmarkPage video summaries', () => {
   })
 
   describe('regenerating a video that already has a summary', () => {
-    // Every YouTube bookmark saved before video summaries has a thin page-derived summary, and
-    // Regenerate is how it gets a real one, so a refusal here needs its reason as much as an
-    // empty state does.
     const summarized = { ...video, summary: 'A thin page summary.', labels: ['video'] }
     const TOO_LONG_COPY = "This video is longer than 60 minutes, so it wasn't summarized."
     const UNCHANGED = 'The summary above is unchanged.'

@@ -82,9 +82,6 @@ describe('BookmarkList', () => {
   })
 
   it('names each delete control by hostname as well as title, so same-titled rows stay distinct', () => {
-    // Two bookmarks can carry the same title, and a name built from the title alone would leave a
-    // screen-reader user unable to tell which row's irreversible action they are on. The hostname
-    // is the discriminator here, exactly as it is for the row's "Open … in a new tab" link.
     const sameTitle = [
       { ...bookmarks[0], id: '1', url: 'https://example.com' },
       { ...bookmarks[0], id: '2', url: 'https://other.example' },
@@ -92,11 +89,8 @@ describe('BookmarkList', () => {
     const onDelete = vi.fn()
     renderList({ bookmarks: sameTitle, onDelete })
 
-    // Naming the second row's button on its own is the whole point — no indexing into a list of
-    // identically named controls.
     fireEvent.click(screen.getByRole('button', { name: 'Delete Example Site on other.example' }))
 
-    // Only the row that was asked about is confirming; the other is untouched.
     expect(
       screen.getByRole('button', { name: 'Confirm deleting Example Site on other.example' })
     ).toBeInTheDocument()
@@ -340,8 +334,6 @@ describe('BookmarkList read flag', () => {
   })
 
   it("says a row is read in words, not only in the title's colour", () => {
-    // The dimmed title says nothing to a screen reader, and this line is part of the row link's
-    // accessible name — so the state travels with the row wherever the name is read out.
     renderList({ bookmarks: read })
     expect(screen.getByRole('link', { name: /Example Site/ })).toHaveTextContent('Read')
   })

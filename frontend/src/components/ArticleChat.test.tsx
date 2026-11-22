@@ -112,8 +112,6 @@ describe('ArticleChat', () => {
   })
 
   it('blocks new questions while a failed turn is pending', async () => {
-    // Submitting another question would append a second consecutive user turn: the single answer
-    // then reads as a reply to both, with the failed question left as misleading context.
     vi.mocked(api.askQuestion).mockRejectedValue(new Error('API error: 502'))
     render(<ArticleChat bookmarkId="1" />)
 
@@ -142,8 +140,6 @@ describe('ArticleChat', () => {
   })
 
   it('caps the question length at the backend limit, so a long paste cannot wedge the chat', () => {
-    // The backend 400s a message over 4000 chars, and a failed turn stays in the history for
-    // Retry — so an over-long question would leave the chat failing forever. Never let one in.
     render(<ArticleChat bookmarkId="1" />)
     expect(
       screen.getByRole('textbox', { name: 'Ask a question' })
@@ -151,10 +147,6 @@ describe('ArticleChat', () => {
   })
 
   it('closes the form before the conversation outgrows the backend body limit', async () => {
-    // express.json() rejects bodies over 100kb before the route's own validation runs, and by
-    // then the oversized history is retained — not even Discard can shrink it. A few long
-    // answers get there while every individual turn is valid, so the form has to close while
-    // one more full-size question still fits.
     vi.mocked(api.askQuestion).mockResolvedValue({ answer: 'y'.repeat(80_000) })
     render(<ArticleChat bookmarkId="1" />)
 
@@ -167,8 +159,6 @@ describe('ArticleChat', () => {
   })
 
   it('stops accepting questions once the conversation reaches the backend cap', async () => {
-    // The backend 400s a conversation over 40 messages; the 21st question would push it to 41
-    // and every ask from there would fail. Close the input at the cap instead.
     for (let i = 1; i <= 20; i++) {
       vi.mocked(api.askQuestion).mockResolvedValueOnce({ answer: `Answer ${i}.` })
     }
@@ -187,8 +177,6 @@ describe('ArticleChat', () => {
   })
 
   it('announces a failed request, not just the waiting status vanishing', async () => {
-    // The role="status" spinner disappears when the request settles; without an alert a
-    // screen-reader user hears silence where a sighted one sees the error and Retry.
     vi.mocked(api.askQuestion).mockRejectedValue(new Error('API error: 502'))
     render(<ArticleChat bookmarkId="1" />)
 
@@ -199,9 +187,6 @@ describe('ArticleChat', () => {
   })
 
   it('marks each message with its own language, so screen readers pronounce it right', async () => {
-    // index.html declares lang="en" for the document; without an override a Japanese answer is
-    // read with English pronunciation rules. Same derivation the summary uses, but per message —
-    // a conversation can mix languages turn by turn.
     vi.mocked(api.askQuestion).mockResolvedValue({
       answer: 'この記事は要約について説明しています。',
     })
@@ -217,9 +202,6 @@ describe('ArticleChat', () => {
   })
 
   it('constrains bubbles to the content width and breaks unbroken tokens', async () => {
-    // A 4000-char unbroken question or a long URL in an answer would otherwise set the flex
-    // item's intrinsic width and drag the whole page into horizontal overflow. jsdom computes no
-    // layout, so this pins the classes that prevent it.
     vi.mocked(api.askQuestion).mockResolvedValue({ answer: 'x'.repeat(500) })
     render(<ArticleChat bookmarkId="1" />)
 
@@ -234,9 +216,6 @@ describe('ArticleChat', () => {
   })
 
   it('exposes the conversation as a log, so arriving answers are announced', async () => {
-    // Without a live region a screen-reader user hears the waiting status appear and vanish, and
-    // then nothing: the answer lands in an ordinary list, unannounced. role="log" is the chat
-    // semantic — implicitly aria-live, announcing additions but not re-reading the history.
     vi.mocked(api.askQuestion).mockResolvedValue({ answer: 'An answer.' })
     render(<ArticleChat bookmarkId="1" />)
 

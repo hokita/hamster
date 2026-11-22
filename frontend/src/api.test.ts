@@ -108,9 +108,6 @@ describe('api.deleteBookmark', () => {
   })
 
   it('resolves on a 204 without trying to parse a body', async () => {
-    // The backend answers 204 with nothing at all; calling json() on that response rejects, which
-    // would surface a successful delete as a failure. The mock has no json() on purpose — the
-    // request helper must not reach for one.
     mockFetch.mockResolvedValue({ ok: true, status: 204 })
 
     await expect(api.deleteBookmark('1')).resolves.toBeUndefined()
@@ -162,7 +159,6 @@ describe('api.generateSummary', () => {
   })
 
   it('carries the status and machine-readable code from the error body', async () => {
-    // The bookmark page picks its message from the code; the `error` text stays vague on purpose.
     mockFetch.mockResolvedValue({
       ok: false,
       status: 422,
@@ -175,8 +171,6 @@ describe('api.generateSummary', () => {
   })
 
   it('throws an ApiError with no code when the error body is not JSON', async () => {
-    // A proxy or Cloud Run itself can answer with an HTML page; that must still surface as the
-    // status, not as a JSON parse error.
     mockFetch.mockResolvedValue({
       ok: false,
       status: 502,
@@ -216,8 +210,6 @@ describe('api.translateSummary', () => {
 
 describe('api.setReadState', () => {
   it('puts the desired state and resolves on a 204 with no body', async () => {
-    // A 204 carries nothing to parse; res.json() on an empty body would reject and turn a
-    // successful write into a thrown error at the call site.
     mockFetch.mockResolvedValue({ ok: true, status: 204 })
 
     await expect(api.setReadState('1', true)).resolves.toBeUndefined()

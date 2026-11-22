@@ -40,8 +40,6 @@ describe('DeleteBookmarkButton', () => {
   })
 
   it('leaves the confirmation behind once it has been answered', () => {
-    // A failed delete leaves the button mounted. It should be back to a plain "Delete", not still
-    // asking a question the user already answered.
     const onDelete = vi.fn()
     render(<DeleteBookmarkButton label="Example Site" onDelete={onDelete} />)
 
