@@ -3,7 +3,6 @@ import { parseIsoDuration, MAX_VIDEO_SECONDS } from './youtube'
 
 const VIDEOS_ENDPOINT = 'https://www.googleapis.com/youtube/v3/videos'
 const FETCH_TIMEOUT_MS = 5000
-// A single-video reply is a few KB; anything near this cap is not one.
 const MAX_BYTES = 256 * 1024
 
 export type VideoCheck =
@@ -19,8 +18,6 @@ interface VideoItem {
   snippet?: { title?: unknown; liveBroadcastContent?: unknown }
 }
 
-// Reads at most MAX_BYTES. Returns null when the body is larger: a truncated JSON document would
-// not parse anyway, so there is nothing useful to salvage.
 async function readBoundedText(response: Response): Promise<string | null> {
   const reader = response.body?.getReader()
   if (!reader) return null
@@ -41,18 +38,14 @@ async function readBoundedText(response: Response): Promise<string | null> {
 }
 
 function classify(item: VideoItem): VideoCheck {
-  // Private and unlisted videos can't be watched by Gemini's public-URL access.
   const privacy = item.status?.privacyStatus
   if (privacy === 'private' || privacy === 'unlisted') return { kind: 'unavailable' }
 
-  // Live and upcoming streams report a zero/absent duration, so this must come before the
-  // duration check or they would be misreported as an unknown length.
   const live = item.snippet?.liveBroadcastContent
   if (live === 'live' || live === 'upcoming') return { kind: 'live' }
 
   const duration = item.contentDetails?.duration
   const durationSeconds = typeof duration === 'string' ? parseIsoDuration(duration) : null
-  // A zero duration on a non-live video means the length is not actually known.
   if (!durationSeconds) return { kind: 'unknown' }
   if (durationSeconds > MAX_VIDEO_SECONDS) return { kind: 'too_long', durationSeconds }
 
@@ -61,9 +54,6 @@ function classify(item: VideoItem): VideoCheck {
   return { kind: 'ok', durationSeconds, title: title || null }
 }
 
-// Checks length and availability before we spend a Gemini call. Any failure is `unknown` so the
-// caller can refuse rather than guess. The key goes in a header (never the URL, which ends up in
-// logs) and nothing here logs error messages, since they can carry URLs or headers.
 export async function checkVideo(videoId: string): Promise<VideoCheck> {
   const key = process.env.YOUTUBE_API_KEY
   if (!key) return { kind: 'unknown' }

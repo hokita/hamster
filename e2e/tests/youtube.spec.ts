@@ -2,8 +2,6 @@ import { test, expect } from '@playwright/test'
 import { signIn } from '../fixtures/auth'
 import { clearFirestore, seedBookmark } from '../fixtures/firestore'
 
-// The e2e backend has no YOUTUBE_SUMMARIES flag and no API keys, so these tests only read
-// seeded video summary state — nothing here reaches YouTube or Gemini.
 test.describe('YouTube bookmark summary states', () => {
   test.beforeEach(async ({ page }) => {
     await clearFirestore()

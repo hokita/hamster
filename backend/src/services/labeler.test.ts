@@ -8,8 +8,6 @@ vi.mock('@google/genai', async () => {
     GoogleGenAI: class {
       models = { generateContent: mockGenerateContent }
     },
-    // Real enums, not stand-ins: assertions on these are only worth anything if they pin the
-    // values the SDK actually puts on the wire.
     ThinkingLevel: actual.ThinkingLevel,
     Type: actual.Type,
   }
@@ -48,9 +46,6 @@ describe('generateLabels', () => {
   })
 
   it('bounds the page text it sends, independent of the article fetcher cap', async () => {
-    // The fetcher now returns whole articles (up to 200k chars) so the summarizer can replace
-    // reading them. Labels only need the gist: passing the whole article multiplies paid input
-    // tokens and crowds the 10s timeout for no better labels, so the labeler keeps its own bound.
     mockGenerateContent.mockResolvedValue({ text: '["a"]' })
     await generateLabels('Title', 'x'.repeat(30_000), [])
     const contents = mockGenerateContent.mock.calls[0][0].contents as string

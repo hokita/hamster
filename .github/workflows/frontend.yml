@@ -48,8 +48,6 @@ jobs:
       - name: Build
         working-directory: frontend
         env:
-          # Firebase client config is public-facing — security enforced by Firestore
-          # Security Rules and the backend's authMiddleware, not by keeping keys secret.
           VITE_FIREBASE_API_KEY: AIzaSyD-6W4XYa-70FuYgnqD4Ou5RONVwcQPx-k
           VITE_FIREBASE_AUTH_DOMAIN: hamster-52b093.firebaseapp.com
           VITE_FIREBASE_PROJECT_ID: hamster-52b093

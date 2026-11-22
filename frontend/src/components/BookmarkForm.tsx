@@ -4,7 +4,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faPlus, faSpinner } from '@fortawesome/free-solid-svg-icons'
 
 interface BookmarkFormProps {
-  onAdd: (bookmark: { url: string }) => void | Promise<void>
+  onAdd: (bookmark: { url: string }) => Promise<void>
 }
 
 export default function BookmarkForm({ onAdd }: BookmarkFormProps) {
@@ -15,14 +15,12 @@ export default function BookmarkForm({ onAdd }: BookmarkFormProps) {
     e.preventDefault()
     if (submitting || !url.trim()) return
     setSubmitting(true)
-    try {
-      await onAdd({ url: url.trim() })
-      setUrl('')
-    } catch {
-      // onAdd failed; leave the field populated so the user doesn't lose their input
-    } finally {
-      setSubmitting(false)
-    }
+    const added = await onAdd({ url: url.trim() }).then(
+      () => true,
+      () => false
+    )
+    if (added) setUrl('')
+    setSubmitting(false)
   }
 
   return (

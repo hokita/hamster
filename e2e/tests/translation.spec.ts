@@ -35,7 +35,6 @@ test.describe('translating a summary into Japanese', () => {
 
     await expect(page.getByText(JAPANESE_SUMMARY)).toBeVisible()
     await expect(page.getByRole('button', { name: 'Translate to Japanese' })).toHaveCount(0)
-    // The summary itself is unaffected — only the button it would have carried is gone.
     await expect(page.getByRole('button', { name: 'Regenerate' })).toBeVisible()
   })
 
@@ -49,9 +48,6 @@ test.describe('translating a summary into Japanese', () => {
     await page.goto(`/bookmarks/${id}`)
     await page.getByRole('button', { name: 'Translate to Japanese' }).click()
 
-    // No GEMINI_API_KEY in the e2e environment, so POST /:id/translation deterministically
-    // returns 503. Nothing was replaced: the English is still there and still readable, and the
-    // button is ready for another try.
     await expect(page.getByText("Couldn't translate the summary.")).toBeVisible()
     await expect(page.getByText(ENGLISH_SUMMARY)).toBeVisible()
     await expect(page.getByRole('button', { name: 'Translate to Japanese' })).toBeEnabled()

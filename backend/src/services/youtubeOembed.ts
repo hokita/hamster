@@ -5,12 +5,9 @@ export const YOUTUBE_FAVICON_URL = 'https://www.youtube.com/favicon.ico'
 
 const OEMBED_ENDPOINT = 'https://www.youtube.com/oembed'
 const FETCH_TIMEOUT_MS = 5000
-// An oEmbed reply is a few hundred bytes; anything near this cap is not one.
 const MAX_BYTES = 64 * 1024
 const MAX_TITLE_CHARS = 300
 
-// Reads at most MAX_BYTES. Returns null when the body is larger: a truncated JSON document would
-// not parse anyway, so there is nothing useful to salvage.
 async function readBoundedText(response: Response): Promise<string | null> {
   const reader = response.body?.getReader()
   if (!reader) return null
@@ -30,8 +27,6 @@ async function readBoundedText(response: Response): Promise<string | null> {
   return Buffer.concat(chunks).toString('utf8')
 }
 
-// oEmbed is the supported way to get a video's title without scraping the watch page. Any failure
-// returns null and the caller falls back to the ordinary metadata fetch.
 export async function fetchYouTubeTitle(videoId: string): Promise<string | null> {
   try {
     const url = `${OEMBED_ENDPOINT}?url=${encodeURIComponent(canonicalVideoUrl(videoId))}&format=json`

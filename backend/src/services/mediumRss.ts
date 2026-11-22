@@ -9,7 +9,6 @@ export interface MediumArticle {
   html: string
 }
 
-// Only Medium-owned URLs qualify. Never derive a feed from an arbitrary site's URL.
 function mediumSource(url: string): { feedUrl: string; articleId: string } | null {
   try {
     const parsed = new URL(url)
@@ -31,8 +30,6 @@ function mediumSource(url: string): { feedUrl: string; articleId: string } | nul
   }
 }
 
-// These URLs identify entries in an already fetched Medium feed; they are never fetched.
-// Canonical article links can belong to publications or their custom domains.
 function entryArticleId(value: unknown): string | null {
   if (typeof value !== 'string') return null
   try {
@@ -52,7 +49,6 @@ export async function fetchMediumRssArticle(url: string): Promise<MediumArticle 
   const source = mediumSource(url)
   if (!source) return null
   try {
-    // Feeds and every redirect pass through the same SSRF guard as ordinary page fetches.
     const allowed = await fetchAllowedUrl(source.feedUrl, AbortSignal.timeout(FETCH_TIMEOUT_MS))
     if (!allowed) return null
     if (allowed.response.status < 200 || allowed.response.status >= 300) {
@@ -75,7 +71,6 @@ export async function fetchMediumRssArticle(url: string): Promise<MediumArticle 
       await reader.cancel().catch(() => {})
     }
     const xml = Buffer.concat(chunks).toString('utf8')
-    // No DTDs or custom entities; malformed/truncated feeds cannot supply article content.
     if (/<!DOCTYPE/i.test(xml) || XMLValidator.validate(xml) !== true) return null
     const parser = new XMLParser({
       parseTagValue: false,
@@ -89,13 +84,11 @@ export async function fetchMediumRssArticle(url: string): Promise<MediumArticle 
       if (articleId !== source.articleId) continue
       const title = item.title
       const html = item['content:encoded']
-      // Do not substitute the feed's description: it may be only a teaser.
       if (typeof title !== 'string' || !title.trim() || typeof html !== 'string' || !html.trim()) {
         return null
       }
       return { title: title.trim(), html }
     }
-    // Medium only includes recent posts; absence is a normal fallback failure.
     return null
   } catch {
     return null

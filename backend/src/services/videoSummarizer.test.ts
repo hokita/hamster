@@ -8,8 +8,6 @@ vi.mock('@google/genai', async () => {
     GoogleGenAI: class {
       models = { generateContentStream: mockGenerateContentStream }
     },
-    // The real enums, not stand-ins: the request assertions below are only worth anything if they
-    // pin the values the SDK actually puts on the wire.
     ThinkingLevel: actual.ThinkingLevel,
     MediaResolution: actual.MediaResolution,
     MediaModality: actual.MediaModality,
@@ -29,19 +27,15 @@ import {
 import { SummarizerUnavailableError } from './summarizer'
 
 const VIDEO_ID = 'O_zcc6Xl12g'
-// 17.5 minutes: the guard threshold is 0.5 × 1050 × 66 = 34_650 VIDEO tokens.
 const DURATION = 1050
 const TRANSCRIPT = '[00:00] Hello and welcome to the talk. '.repeat(10).trim()
 const SUMMARY = 'An overview.\n\n## Key points\n\n- **One** — detail.'
 
 interface ChunkOptions {
   videoTokens?: number | null
-  // null leaves the finish reason off entirely, as some streams do.
   finishReason?: string | null
 }
 
-// Splits the reply across several chunks, as a real stream does; only the last carries the
-// finish reason and usage, which is where Gemini reports them.
 function chunksFor(text: string, options: ChunkOptions = {}) {
   const { videoTokens = 70_000, finishReason = 'STOP' } = options
   const third = Math.ceil(text.length / 3)
@@ -136,7 +130,6 @@ describe('watchVideo', () => {
     expect(schema.properties.transcript).toBeDefined()
     expect(schema.properties.summary).toBeDefined()
     expect(schema.required).toEqual(expect.arrayContaining(['status', 'transcript', 'summary']))
-    // Transcript before summary, so the summary is grounded in what the model just wrote down.
     expect(schema.propertyOrdering).toEqual(['status', 'transcript', 'summary'])
   })
 
@@ -190,8 +183,6 @@ describe('watchVideo', () => {
   it.each(['RECITATION', 'SAFETY', 'OTHER'])(
     'throws a generic error naming the reason when the reply stopped early (%s)',
     async (finishReason) => {
-      // A verbatim transcript can plausibly stop on RECITATION; a cleanly cut transcript still
-      // parses, and storing it would pass off a partial video as the whole one.
       reply(ok, { finishReason })
       const error = await watchVideo(VIDEO_ID, 'My Talk', DURATION).catch((e) => e)
       expect(error).toBeInstanceOf(Error)
@@ -216,6 +207,13 @@ describe('watchVideo', () => {
     expect(error).toBeInstanceOf(Error)
     expect(error).not.toBeInstanceOf(VideoUnwatchableError)
     expect(error.message).not.toContain('secret words')
+  })
+
+  it('rejects unparseable JSON with the fixed invalid-JSON message', async () => {
+    replyText('{"status":"ok","transcript":"secret words')
+    await expect(watchVideo(VIDEO_ID, 'My Talk', DURATION)).rejects.toThrow(
+      'gemini video response was not valid JSON'
+    )
   })
 
   it.each([
@@ -263,7 +261,6 @@ describe('watchVideo', () => {
   })
 
   it('caps the expected VIDEO tokens at the 3600 s that is actually sent', async () => {
-    // endOffset stops the model at 60 minutes, so a longer reported length must not raise the bar.
     reply(ok, { videoTokens: 0.5 * 3600 * 66 + 1 })
     await expect(watchVideo(VIDEO_ID, 'My Talk', 7200)).resolves.toBeDefined()
   })
@@ -324,8 +321,6 @@ describe('watchVideo', () => {
   })
 
   it('aborts a stream that stalls mid-way once the timeout fires', async () => {
-    // The bound must cover reading the chunks, not just opening the stream: a stream that starts
-    // promptly and then hangs would otherwise hold the request open forever.
     const controller = new AbortController()
     const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(controller.signal)
     mockGenerateContentStream.mockResolvedValue(

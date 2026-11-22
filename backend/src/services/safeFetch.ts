@@ -14,8 +14,6 @@ export function withSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise
 }
 
 export async function isDisallowedHost(hostname: string, signal: AbortSignal): Promise<boolean> {
-  // URL.hostname brackets IPv6 literals (e.g. "[::1]"); dns.lookup() rejects that form,
-  // so literal IPs are checked directly instead of going through DNS at all.
   const literal =
     hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname
   const literalFamily = isIP(literal)
@@ -34,12 +32,6 @@ export interface AllowedResponse {
   finalUrl: string
 }
 
-// Follows redirects manually so every hop's host goes through the SSRF guard — `redirect: 'follow'`
-// would let the runtime chase a redirect into a private address behind our back. Returns null for
-// any outcome that means "there is nothing safe to read here": a non-http(s) protocol, a disallowed
-// host, an exhausted redirect budget, or a redirect with no destination.
-// `headers` (e.g. an API key) are sent only while a hop stays on the original URL's origin, so a
-// redirect to another site can never receive them.
 export async function fetchAllowedUrl(
   url: string,
   signal: AbortSignal,

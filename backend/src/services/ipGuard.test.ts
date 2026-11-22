@@ -19,21 +19,21 @@ describe('isDisallowedIp', () => {
   })
 
   it('rejects the remaining IANA special-purpose IPv4 ranges beyond the original six', () => {
-    expect(isDisallowedIp('100.64.0.1', 4)).toBe(true) // shared address space (CGNAT)
-    expect(isDisallowedIp('100.127.255.255', 4)).toBe(true) // top of 100.64.0.0/10
-    expect(isDisallowedIp('192.0.0.1', 4)).toBe(true) // IETF protocol assignments
-    expect(isDisallowedIp('192.0.2.1', 4)).toBe(true) // documentation (TEST-NET-1)
-    expect(isDisallowedIp('192.88.99.1', 4)).toBe(true) // 6to4 relay anycast
-    expect(isDisallowedIp('198.18.0.1', 4)).toBe(true) // benchmarking
-    expect(isDisallowedIp('198.51.100.1', 4)).toBe(true) // documentation (TEST-NET-2)
-    expect(isDisallowedIp('203.0.113.1', 4)).toBe(true) // documentation (TEST-NET-3)
-    expect(isDisallowedIp('240.0.0.1', 4)).toBe(true) // reserved for future use
-    expect(isDisallowedIp('255.255.255.255', 4)).toBe(true) // limited broadcast
+    expect(isDisallowedIp('100.64.0.1', 4)).toBe(true)
+    expect(isDisallowedIp('100.127.255.255', 4)).toBe(true)
+    expect(isDisallowedIp('192.0.0.1', 4)).toBe(true)
+    expect(isDisallowedIp('192.0.2.1', 4)).toBe(true)
+    expect(isDisallowedIp('192.88.99.1', 4)).toBe(true)
+    expect(isDisallowedIp('198.18.0.1', 4)).toBe(true)
+    expect(isDisallowedIp('198.51.100.1', 4)).toBe(true)
+    expect(isDisallowedIp('203.0.113.1', 4)).toBe(true)
+    expect(isDisallowedIp('240.0.0.1', 4)).toBe(true)
+    expect(isDisallowedIp('255.255.255.255', 4)).toBe(true)
   })
 
   it('still allows public IPv4 addresses just outside the newly added ranges', () => {
-    expect(isDisallowedIp('100.63.255.255', 4)).toBe(false) // just below 100.64.0.0/10
-    expect(isDisallowedIp('100.128.0.0', 4)).toBe(false) // just above 100.64.0.0/10
+    expect(isDisallowedIp('100.63.255.255', 4)).toBe(false)
+    expect(isDisallowedIp('100.128.0.0', 4)).toBe(false)
     expect(isDisallowedIp('8.8.8.8', 4)).toBe(false)
   })
 
@@ -46,20 +46,20 @@ describe('isDisallowedIp', () => {
   })
 
   it('rejects the canonical hexadecimal form of IPv4-mapped private addresses (as WHATWG URL serializes bracketed IPv6 literals)', () => {
-    expect(isDisallowedIp('::ffff:7f00:1', 6)).toBe(true) // 127.0.0.1
-    expect(isDisallowedIp('::ffff:a00:1', 6)).toBe(true) // 10.0.0.1
+    expect(isDisallowedIp('::ffff:7f00:1', 6)).toBe(true)
+    expect(isDisallowedIp('::ffff:a00:1', 6)).toBe(true)
   })
 
   it('allows public IPv6 addresses, including the hex-mapped form of a public IPv4 address', () => {
     expect(isDisallowedIp('2606:2800:220:1:248:1893:25c8:1946', 6)).toBe(false)
-    expect(isDisallowedIp('::ffff:5db8:d822', 6)).toBe(false) // 93.184.216.34
+    expect(isDisallowedIp('::ffff:5db8:d822', 6)).toBe(false)
   })
 
   it('rejects NAT64, discard-only, documentation, and 6to4 IPv6 special-purpose ranges', () => {
-    expect(isDisallowedIp('64:ff9b::1', 6)).toBe(true) // NAT64
-    expect(isDisallowedIp('64:ff9b:1::1', 6)).toBe(true) // NAT64 (local use)
-    expect(isDisallowedIp('100::1', 6)).toBe(true) // discard-only
-    expect(isDisallowedIp('2001:db8::1', 6)).toBe(true) // documentation
-    expect(isDisallowedIp('2002:c000:0201::1', 6)).toBe(true) // 6to4
+    expect(isDisallowedIp('64:ff9b::1', 6)).toBe(true)
+    expect(isDisallowedIp('64:ff9b:1::1', 6)).toBe(true)
+    expect(isDisallowedIp('100::1', 6)).toBe(true)
+    expect(isDisallowedIp('2001:db8::1', 6)).toBe(true)
+    expect(isDisallowedIp('2002:c000:0201::1', 6)).toBe(true)
   })
 })

@@ -8,15 +8,7 @@ import {
   decodeWithCharset,
 } from './metadataFetcher'
 
-// The whole page body is read here, not just the head, so the bound is larger than
-// metadataFetcher's — but still bounded: a runaway response must not be able to exhaust memory.
-// 300KB of fetched HTML (markup overhead, 3-bytes-per-char Japanese) often yields far less text
-// than MAX_CHARS below; the byte cap must stay comfortably ahead of it or it silently becomes the
-// real limit. Still bounded: this is the network/memory guard, not the text-length guard.
 const MAX_BYTES = 1_500_000
-// The summary is meant to replace reading the article, so the model has to see the whole thing.
-// 200k chars ≈ 50k tokens — well inside gemini-3.8-flash's 1M context; covers all but
-// book-length pages.
 const MAX_CHARS = 200_000
 const FETCH_TIMEOUT_MS = 8000
 
@@ -30,10 +22,6 @@ async function readBoundedBytes(response: Response): Promise<Uint8Array> {
     try {
       result = await reader.read()
     } catch {
-      // A mid-body failure — most often FETCH_TIMEOUT_MS aborting a slow stream now that the byte
-      // cap is large enough to outlast it. The bytes already delivered are a valid truncated page
-      // (the two-pass strip handles a cut-off tag); losing them because the tail never arrived
-      // would fail pages the smaller cap used to fetch fine.
       break
     }
     if (result.done || !result.value) break
@@ -47,10 +35,6 @@ async function readBoundedBytes(response: Response): Promise<Uint8Array> {
   return Buffer.concat(chunks)
 }
 
-// Per the HTML tokenizer, a '<' only opens a tag when followed by an ASCII letter (<p>), a slash
-// (</p>), a bang (<!-- -->, <!DOCTYPE>), or a question mark. Anything else — most importantly a
-// space or a digit — is ordinary text, which is how a page can contain "x < y" and still render
-// it. Treating every '<' as a tag start deleted everything up to the next '>'.
 function opensTag(html: string, index: number): boolean {
   const next = html[index + 1]
   return (
@@ -58,15 +42,6 @@ function opensTag(html: string, index: number): boolean {
   )
 }
 
-// quoteAware=false ends every tag at its first '>', ignoring quotes entirely. Both modes visit each
-// character at most once, so both are O(n) — see extractText for why the second mode exists.
-// abortedAt is the index of the '<' that began an unterminated tag, or null on a clean finish.
-//
-// Per the HTML spec, a quote character only opens an attribute value when it is the first
-// non-whitespace character after '='. Treating every quote in a tag as an opener — no matter where
-// it appears — is wrong: an unescaped apostrophe inside a single-quoted value (e.g. title='it's a
-// test') would then get "closed" by the next unrelated apostrophe in the page's real prose, and
-// everything in between is swallowed as tag content.
 function stripTags(html: string, quoteAware: boolean): { text: string; abortedAt: number | null } {
   let out = ''
   let index = 0
@@ -114,16 +89,9 @@ function stripTags(html: string, quoteAware: boolean): { text: string; abortedAt
   return { text: out, abortedAt: null }
 }
 
-// Deliberately not a readability engine: leftover nav and footer text costs a few tokens and the
-// model ignores it, which is a far better trade than taking on a content-extraction dependency.
 function extractText(html: string): string {
   const masked = maskNonMarkup(html)
   const first = stripTags(masked, true)
-  // A tag whose quoted attribute value never closes swallows everything after it — what the HTML
-  // spec's tokenizer does, but not what we want: an article with one unescaped quote would summarize
-  // down to its first paragraph. Recover the tail with a quote-blind pass, which ends each tag at its
-  // first '>'. Only the tail is reprocessed: the quote-aware parse before the abort point is correct
-  // and must not be thrown away, or a page merely truncated at MAX_BYTES would lose it.
   const text =
     first.abortedAt === null
       ? first.text
@@ -136,9 +104,6 @@ async function fetchOriginalArticleText(url: string): Promise<string | null> {
     const allowed = await fetchAllowedUrl(url, AbortSignal.timeout(FETCH_TIMEOUT_MS))
     if (!allowed) return null
 
-    // fetchAllowedUrl already chased 3xx redirects, so anything left outside 2xx is a served error
-    // page (404, 500, 403, ...) rendered as ordinary HTML. That page's text is not article content —
-    // extracting and summarizing it would silently present the site's error page as the bookmark.
     if (allowed.response.status < 200 || allowed.response.status >= 300) {
       await allowed.response.body?.cancel().catch(() => {})
       return null

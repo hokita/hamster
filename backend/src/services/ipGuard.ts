@@ -1,19 +1,19 @@
 const IPV4_RANGES: [string, number][] = [
-  ['0.0.0.0', 8], // "This host on this network"
-  ['10.0.0.0', 8], // Private-use
-  ['100.64.0.0', 10], // Shared Address Space (carrier-grade NAT)
-  ['127.0.0.0', 8], // Loopback
-  ['169.254.0.0', 16], // Link-local
-  ['172.16.0.0', 12], // Private-use
-  ['192.0.0.0', 24], // IETF Protocol Assignments
-  ['192.0.2.0', 24], // Documentation (TEST-NET-1)
-  ['192.88.99.0', 24], // 6to4 Relay Anycast
-  ['192.168.0.0', 16], // Private-use
-  ['198.18.0.0', 15], // Benchmarking
-  ['198.51.100.0', 24], // Documentation (TEST-NET-2)
-  ['203.0.113.0', 24], // Documentation (TEST-NET-3)
-  ['240.0.0.0', 4], // Reserved for future use
-  ['255.255.255.255', 32], // Limited broadcast
+  ['0.0.0.0', 8],
+  ['10.0.0.0', 8],
+  ['100.64.0.0', 10],
+  ['127.0.0.0', 8],
+  ['169.254.0.0', 16],
+  ['172.16.0.0', 12],
+  ['192.0.0.0', 24],
+  ['192.0.2.0', 24],
+  ['192.88.99.0', 24],
+  ['192.168.0.0', 16],
+  ['198.18.0.0', 15],
+  ['198.51.100.0', 24],
+  ['203.0.113.0', 24],
+  ['240.0.0.0', 4],
+  ['255.255.255.255', 32],
 ]
 
 function ipv4ToInt(ip: string): number {
@@ -44,24 +44,22 @@ function ipv6ToBigInt(ip: string): bigint {
 }
 
 const IPV6_RANGES: [string, number][] = [
-  ['::1', 128], // Loopback
-  ['::', 128], // Unspecified
-  ['64:ff9b::', 96], // NAT64
-  ['64:ff9b:1::', 48], // NAT64 (local use)
-  ['100::', 64], // Discard-only
-  ['2001::', 23], // IETF Protocol Assignments (includes Teredo)
-  ['2001:db8::', 32], // Documentation
-  ['2002::', 16], // 6to4
-  ['fc00::', 7], // Unique local
-  ['fe80::', 10], // Link-local
+  ['::1', 128],
+  ['::', 128],
+  ['64:ff9b::', 96],
+  ['64:ff9b:1::', 48],
+  ['100::', 64],
+  ['2001::', 23],
+  ['2001:db8::', 32],
+  ['2002::', 16],
+  ['fc00::', 7],
+  ['fe80::', 10],
 ]
 
 function isDisallowedIpv6(ip: string): boolean {
   const normalized = ip.toLowerCase()
   const mappedDotted = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)
   if (mappedDotted) return isDisallowedIpv4(mappedDotted[1])
-  // WHATWG URL serializes bracketed IPv4-mapped IPv6 literals in this canonical hex
-  // form (e.g. "::ffff:7f00:1" for 127.0.0.1), not the dotted-decimal form above.
   const mappedHex = normalized.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/)
   if (mappedHex) return isDisallowedIpv4(hexGroupsToIpv4(mappedHex[1], mappedHex[2]))
 

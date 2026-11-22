@@ -100,6 +100,24 @@ describe('fetchMetadata', () => {
     })
   })
 
+  it('falls back to Medium RSS when the page fetch throws', async () => {
+    const url = 'https://copyconstruct.medium.com/article-bd3dcb2c5f7b'
+    mockFetch
+      .mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockResolvedValueOnce(
+        mockResponse(
+          [
+            `<rss xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel><item><title><![CDATA[Actual article & title]]></title><link>${url}</link><content:encoded><![CDATA[<p>Article content</p>]]></content:encoded></item></channel></rss>`,
+          ],
+          { contentType: 'application/rss+xml' }
+        )
+      )
+    await expect(fetchMetadata(url)).resolves.toEqual({
+      title: 'Actual article & title',
+      faviconUrl: null,
+    })
+  })
+
   it('does not save error-page titles for other sites either', async () => {
     const response = mockResponse(['<title>Forbidden</title>'], { status: 403 })
     mockFetch.mockResolvedValue(response)
@@ -179,9 +197,6 @@ describe('fetchMetadata', () => {
   })
 
   it('prefers the HTTP header charset over an in-document meta charset when both are present', async () => {
-    // meta claims iso-8859-1, but the header (the real source of truth here) says utf-8;
-    // encoding the title as genuine UTF-8 bytes proves the header's declaration wins,
-    // since decoding UTF-8 bytes as iso-8859-1 would produce mojibake instead of 'Café'.
     const html = '<html><head><meta charset="iso-8859-1"><title>Café</title></head></html>'
     const utf8Bytes = new TextEncoder().encode(html)
     mockFetch.mockResolvedValue(
@@ -412,8 +427,6 @@ describe('fetchMetadata', () => {
   })
 
   it('decodes a decimal numeric character reference in the icon href', async () => {
-    // Regression (Codex round 4, Finding B): "&#47;" must decode to "/" like a browser would,
-    // otherwise new URL() misparses the literal "&" and "#" as query/fragment syntax.
     mockFetch.mockResolvedValue(
       mockResponse(['<head><link rel="icon" href="&#47;favicon-num.ico"></head>'])
     )
@@ -471,8 +484,8 @@ describe('fetchMetadata', () => {
 
   it('falls back to the origin favicon when the declared icon href resolves to a disallowed host', async () => {
     vi.mocked(lookup)
-      .mockResolvedValueOnce({ address: '93.184.216.34', family: 4 } as never) // page host
-      .mockResolvedValueOnce({ address: '169.254.169.254', family: 4 } as never) // icon host
+      .mockResolvedValueOnce({ address: '93.184.216.34', family: 4 } as never)
+      .mockResolvedValueOnce({ address: '169.254.169.254', family: 4 } as never)
     mockFetch.mockResolvedValue(
       mockResponse(['<head><link rel="icon" href="http://internal.example/meta"></head>'])
     )
@@ -482,8 +495,8 @@ describe('fetchMetadata', () => {
 
   it('still uses a declared icon on a different but public host after the SSRF guard check', async () => {
     vi.mocked(lookup)
-      .mockResolvedValueOnce({ address: '93.184.216.34', family: 4 } as never) // page host
-      .mockResolvedValueOnce({ address: '151.101.1.140', family: 4 } as never) // public CDN host
+      .mockResolvedValueOnce({ address: '93.184.216.34', family: 4 } as never)
+      .mockResolvedValueOnce({ address: '151.101.1.140', family: 4 } as never)
     mockFetch.mockResolvedValue(
       mockResponse(['<head><link rel="icon" href="https://cdn.example.net/f.ico"></head>'])
     )
@@ -542,11 +555,6 @@ describe('fetchMetadata', () => {
   })
 
   it('does not treat "</script-x>" as closing the script element, still finding a later title and icon', async () => {
-    // Regression (Codex round 4, Finding A): only whitespace, '/', or '>' may delimit a raw-text
-    // end tag per the HTML spec. A '-' (or any other non-word character) must NOT be accepted as a
-    // delimiter, so this literal "</script-x><body>" text inside the script element's content must
-    // not be mistaken for the element's real close tag. The real </title>/<link> arrive in the next
-    // chunk, after the genuine </script>; if the scanner wrongly exits early, they're never read.
     mockFetch.mockResolvedValue(
       mockResponse([
         '<head><script>var x = "</script-x><body>";',
@@ -581,10 +589,6 @@ describe('fetchMetadata', () => {
   })
 
   it('does not treat </head> or <body written inside a double-quoted attribute value as the end of head', async () => {
-    // Regression: a legitimate quoted attribute (e.g. a page documenting HTML) containing the
-    // literal text "<body" must not be mistaken for a real end-of-head marker. The split across
-    // chunks matters: chunk 1 ends mid-head, right after the offending quoted text, so the old
-    // buggy check (which ran on every chunk) would fire before the title/icon ever arrived.
     mockFetch.mockResolvedValue(
       mockResponse([
         '<head><meta name="description" content="All about the <body tag">',
@@ -609,8 +613,6 @@ describe('fetchMetadata', () => {
   })
 
   it('does not hang or read past the byte cap when a quoted attribute value is never terminated', async () => {
-    // An attribute value that opens a quote and never closes it must not let the head-end scanner
-    // get stuck, and MAX_BYTES must still be the thing that stops the read.
     const padding = 'x'.repeat(100_000)
     mockFetch.mockResolvedValue(
       mockResponse([`<head><meta content="${padding}`, '<title>Should Not Be Found</title>'])
@@ -674,8 +676,6 @@ describe('fetchMetadata', () => {
   })
 
   it('skips a <base> element without an href and uses the next one that has one', async () => {
-    // Regression (Codex round 4, Finding C): per spec the effective base is the first <base>
-    // element that HAS an href, not simply the first <base> element.
     mockFetch.mockResolvedValue(
       mockResponse([
         '<head><base target="_blank"><base href="https://cdn.example/assets/">' +
@@ -710,9 +710,6 @@ describe('fetchMetadata', () => {
 
 describe('decodeEntities', () => {
   it('does not re-decode its own output (Codex round-4 regression)', () => {
-    // Source text "&amp;lt;script&amp;gt;" is what a browser displays as the literal text
-    // "&lt;script&gt;" — a naive multi-pass decode turns the already-escaped "&amp;" into "&"
-    // first, then decodes the resulting "&lt;"/"&gt;" a second time into "<"/">" .
     expect(decodeEntities('&amp;lt;script&amp;gt;')).toBe('&lt;script&gt;')
   })
 
