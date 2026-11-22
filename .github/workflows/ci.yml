@@ -110,3 +110,51 @@ jobs:
           name: playwright-report
           path: e2e/playwright-report/
           retention-days: 7
+
+  audit-prod-backend:
+    name: Audit prod (backend)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.22.3'
+
+      - name: Audit production dependencies
+        working-directory: backend
+        run: npm audit --omit=dev --audit-level=high
+
+  audit-prod-frontend:
+    name: Audit prod (frontend)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.22.3'
+
+      - name: Audit production dependencies
+        working-directory: frontend
+        run: npm audit --omit=dev --audit-level=high
+
+  image-scan-backend:
+    name: Image scan (backend)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Build image
+        run: docker build -t hamster-backend:ci backend
+
+      - name: Smoke test image
+        run: |
+          docker run -d --name hamster-smoke -p 8080:8080 -e PORT=8080 -e FIREBASE_PROJECT_ID=demo-hamster hamster-backend:ci
+          curl -fsS --retry 10 --retry-connrefused --retry-delay 2 http://localhost:8080/health
+
+      - name: Scan image with Trivy
+        run: docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 hamster-backend:ci
