@@ -814,6 +814,41 @@ describe('BookmarksPage', () => {
     await waitFor(() => expect(api.generateSummary).toHaveBeenCalled())
     expect(screen.queryByText('Failed to add bookmark.')).not.toBeInTheDocument()
   })
+
+  it('clears the summarizing state when summary generation fails', async () => {
+    let rejectGenerateSummary!: (reason: Error) => void
+    vi.mocked(api.generateSummary).mockReturnValueOnce(
+      new Promise<{ summary: string }>((_resolve, reject) => {
+        rejectGenerateSummary = reject
+      })
+    )
+    vi.mocked(api.createBookmark).mockResolvedValue({
+      id: '42',
+      url: 'https://example.com',
+      title: 'New Site',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    })
+    renderPage()
+    await waitFor(() => expect(api.listBookmarks).toHaveBeenCalledTimes(1))
+
+    vi.mocked(api.listBookmarks).mockResolvedValue([
+      {
+        id: '42',
+        url: 'https://example.com',
+        title: 'New Site',
+        createdAt: '2024-01-01T00:00:00.000Z',
+      },
+    ])
+
+    fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
+
+    expect(await screen.findByText('Summarizing…')).toBeInTheDocument()
+
+    rejectGenerateSummary(new Error('API error: 502'))
+    await waitFor(() => expect(screen.queryByText('Summarizing…')).not.toBeInTheDocument())
+    expect(screen.queryByText('Failed to add bookmark.')).not.toBeInTheDocument()
+  })
 })
 
 describe('BookmarksPage read flag', () => {

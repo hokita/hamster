@@ -9,6 +9,10 @@ import { api, ApiError } from './api'
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
 
+const emptyBody = async () => {
+  throw new SyntaxError('Unexpected end of JSON input')
+}
+
 beforeEach(() => {
   mockFetch.mockReset()
 })
@@ -32,7 +36,7 @@ describe('api.listBookmarks', () => {
   })
 
   it('throws when the response is not ok', async () => {
-    mockFetch.mockResolvedValue({ ok: false, status: 500 })
+    mockFetch.mockResolvedValue({ ok: false, status: 500, json: emptyBody })
     await expect(api.listBookmarks()).rejects.toThrow('API error: 500')
   })
 })
@@ -83,7 +87,7 @@ describe('api.getBookmark', () => {
   })
 
   it('throws when the bookmark is not found', async () => {
-    mockFetch.mockResolvedValue({ ok: false, status: 404 })
+    mockFetch.mockResolvedValue({ ok: false, status: 404, json: emptyBody })
     await expect(api.getBookmark('nope')).rejects.toThrow('API error: 404')
   })
 })
@@ -113,7 +117,7 @@ describe('api.deleteBookmark', () => {
   })
 
   it('throws when the delete fails', async () => {
-    mockFetch.mockResolvedValue({ ok: false, status: 500 })
+    mockFetch.mockResolvedValue({ ok: false, status: 500, json: emptyBody })
     await expect(api.deleteBookmark('1')).rejects.toThrow('API error: 500')
   })
 })
@@ -134,7 +138,7 @@ describe('api.askQuestion', () => {
   })
 
   it('throws when answering fails', async () => {
-    mockFetch.mockResolvedValue({ ok: false, status: 502 })
+    mockFetch.mockResolvedValue({ ok: false, status: 502, json: emptyBody })
     await expect(
       api.askQuestion('1', [{ role: 'user', text: 'Question?' }])
     ).rejects.toThrow('API error: 502')
@@ -153,7 +157,7 @@ describe('api.generateSummary', () => {
   })
 
   it('throws when generation fails', async () => {
-    mockFetch.mockResolvedValue({ ok: false, status: 502 })
+    mockFetch.mockResolvedValue({ ok: false, status: 502, json: emptyBody })
     await expect(api.generateSummary('1')).rejects.toThrow('API error: 502')
   })
 
@@ -205,7 +209,7 @@ describe('api.translateSummary', () => {
   })
 
   it('throws when the translation fails', async () => {
-    mockFetch.mockResolvedValue({ ok: false, status: 502 })
+    mockFetch.mockResolvedValue({ ok: false, status: 502, json: emptyBody })
     await expect(api.translateSummary('1')).rejects.toThrow('API error: 502')
   })
 })
@@ -236,7 +240,7 @@ describe('api.setReadState', () => {
   })
 
   it('throws when the response is not ok', async () => {
-    mockFetch.mockResolvedValue({ ok: false, status: 404 })
+    mockFetch.mockResolvedValue({ ok: false, status: 404, json: emptyBody })
 
     await expect(api.setReadState('gone', true)).rejects.toThrow('API error: 404')
   })

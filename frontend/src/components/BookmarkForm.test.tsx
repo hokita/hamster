@@ -29,6 +29,18 @@ describe('BookmarkForm', () => {
     expect(screen.getByLabelText('URL')).toHaveValue('https://example.com')
   })
 
+  it('re-enables the form after onAdd fails', async () => {
+    const onAdd = vi.fn().mockRejectedValue(new Error('failed'))
+    render(<BookmarkForm onAdd={onAdd} />)
+
+    fireEvent.change(screen.getByLabelText('URL'), { target: { value: 'https://example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add bookmark' }))
+
+    await waitFor(() => expect(onAdd).toHaveBeenCalled())
+    await waitFor(() => expect(screen.getByLabelText('URL')).not.toBeDisabled())
+    expect(screen.getByRole('button', { name: 'Add bookmark' })).not.toBeDisabled()
+  })
+
   it('does not call onAdd when the URL is empty', () => {
     const onAdd = vi.fn()
     render(<BookmarkForm onAdd={onAdd} />)

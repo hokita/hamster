@@ -283,18 +283,15 @@ export default function BookmarksPage() {
 
   async function generateSummaryFor(id: string) {
     setSummarizingIds((previous) => new Set(previous).add(id))
-    try {
-      await api.generateSummary(id)
-      await refresh({ background: true })
-    } catch {
-      // Intentionally ignored — see handleAdd.
-    } finally {
-      setSummarizingIds((previous) => {
-        const next = new Set(previous)
-        next.delete(id)
-        return next
-      })
-    }
+    await api
+      .generateSummary(id)
+      .then(() => refresh({ background: true }))
+      .catch(() => undefined)
+    setSummarizingIds((previous) => {
+      const next = new Set(previous)
+      next.delete(id)
+      return next
+    })
   }
 
   // A successful response carrying something that is not a list reaches state as-is (the

@@ -61,13 +61,8 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   if (!res.ok) {
     // The body is best effort: a proxy or the platform can answer with an HTML page, or nothing,
     // and that must still surface as the status rather than as a parse error.
-    let code: string | undefined
-    try {
-      const body = await res.json()
-      if (typeof body?.code === 'string') code = body.code
-    } catch {
-      // No usable body; the status alone is the error.
-    }
+    const body = await res.json().catch(() => null)
+    const code: string | undefined = typeof body?.code === 'string' ? body.code : undefined
     throw new ApiError(res.status, code)
   }
   // DELETE answers 204 with no body at all, and res.json() rejects on an empty one — which would

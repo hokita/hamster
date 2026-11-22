@@ -493,9 +493,9 @@ export default function BookmarkPage() {
       // otherwise the page shows the old text under a message claiming it is unchanged, and the
       // polling effect cannot repair it because that only runs while there is no summary at all.
       // Retrying blind would also pay for a second generation to reproduce what already exists.
-      try {
-        const fid = ++bookmarkFetchId.current
-        const refreshed = await api.getBookmark(requestedId)
+      const fid = ++bookmarkFetchId.current
+      const refreshed = await api.getBookmark(requestedId).catch(() => null)
+      if (refreshed) {
         if (requestedId !== latestId.current) return
         if (refreshed.summary && refreshed.summary !== summaryBefore) {
           setBookmark(adopt(refreshed, fid))
@@ -508,9 +508,6 @@ export default function BookmarkPage() {
           setBookmark(adopt(refreshed, fid))
           return
         }
-      } catch {
-        // The re-read failed too, so nothing was learned: fall through to the failure state,
-        // which still describes what the user can see.
       }
       if (requestedId !== latestId.current) return
       // The 409 itself says a run is going, so the page need not wait for a re-read to say so.
