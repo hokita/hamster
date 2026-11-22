@@ -131,6 +131,10 @@ Each task follows the same steps. Only the file list and the commit message chan
 | 7 | `frontend/src/**/*.test.ts(x)` | `chore(frontend): remove comments from tests` |
 | 8 | `e2e/**/*.ts` | `chore(e2e): remove comments` |
 
+**Task 3b (user change, 2026-11-22), separate commit right after T3:** keep the env var names in `backend/.env.example` as real, uncommented lines with empty values. Append `GEMINI_API_KEY=`, `YOUTUBE_API_KEY=` and `YOUTUBE_SUMMARIES=` after `FIREBASE_AUTH_EMULATOR_HOST=localhost:9099`, with no comments and no blank-line group. Commit `chore: list optional env vars in .env.example with empty values`. This commit is not comments-only, so skip `codecmp` for it and run the full check. Already verified before planning:
+- Nothing loads `.env.example` at runtime or in tests. Only `cp .env.example .env` (README) does. `dev` reads `.env`, e2e reads `.env.e2e`, vitest loads no env file, and the Dockerfile doesn't copy it.
+- An empty value behaves like unset. Every read is a truthiness check (`!apiKey`, `Boolean(...)`, `!key`, `!process.env[name]`), and `YOUTUBE_SUMMARIES === 'on'`.
+
 - [ ] **Step 1: Strip.** `B=$(git rev-parse HEAD)`, write the task's files to `list.txt`, then run `node .superpowers/sdd/tools/strip.cjs . --list list.txt`.
 - [ ] **Step 2: Tidy.** Run `prettier --write` on touched files that were prettier-clean at base. Fix stray blank lines in the 5 dirty files by hand. No other edits.
 - [ ] **Step 3: Check the area is clean.** `scan.cjs` reports no comments for the area (T6 keeps only `vite-env.d.ts:1`). `git grep -nE 'eslint-disable|@ts-(ignore|expect-error|nocheck)'` prints nothing.
@@ -147,7 +151,7 @@ Each task follows the same steps. Only the file list and the commit message chan
 ### Trap candidates (seed for the PR list; executors confirm and extend)
 
 - `.github/workflows/frontend.yml:51`: the Firebase web API key in the workflow is public by design and is not a leaked secret.
-- `backend/.env.example:8-20`: `GEMINI_API_KEY` must stay unset rather than hold a placeholder (a placeholder makes every save fail against Gemini). `YOUTUBE_API_KEY` and `YOUTUBE_SUMMARIES=on` are documented nowhere else (README never mentions them).
+- `backend/.env.example:8-20`: `GEMINI_API_KEY` must stay empty rather than hold a placeholder (a placeholder makes every save fail against Gemini). `YOUTUBE_SUMMARIES` must be `on` to enable videos (the names survive as empty lines, per T3b).
 - `firestore.rules:3`: the app only reaches Firestore through the Admin SDK, which bypasses the rules, so deny-all is intended.
 - `e2e/playwright.config.ts:21`: `gracefulShutdown: SIGTERM` exists because a force-kill orphans the Java emulators.
 - `frontend/src/components/BookmarkList.tsx:34`: the IP ranges mirror `backend/src/services/ipGuard.ts` and must stay in sync.
