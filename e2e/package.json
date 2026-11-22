@@ -9,7 +9,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.48.0",
-    "firebase-tools": "^15.22.0"
+    "firebase-tools": "^15.37.0"
   },
   "volta": {
     "node": "24.22.3"
