@@ -154,7 +154,11 @@ jobs:
       - name: Smoke test image
         run: |
           docker run -d --name hamster-smoke -p 8080:8080 -e PORT=8080 -e FIREBASE_PROJECT_ID=demo-hamster hamster-backend:ci
-          curl -fsS --retry 10 --retry-connrefused --retry-delay 2 http://localhost:8080/health
+          curl -fsS --retry 10 --retry-all-errors --retry-delay 2 http://localhost:8080/health
+
+      - name: Show smoke container logs
+        if: failure()
+        run: docker logs hamster-smoke
 
       - name: Scan image with Trivy
         run: docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 hamster-backend:ci
