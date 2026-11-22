@@ -46,7 +46,7 @@
 1. A gate job that shows green because its step never ran (wrong `working-directory`, missing lockfile): each audit step must fail when the dir has no lockfile. `npm audit` already exits non-zero there; the red demo in Task 6 proves the prod jobs actually read the lockfile.
 2. The nightly image job scanning `:latest` instead of the serving revision: Task 5 reads `status.latestReadyRevisionName` → `status.imageDigest` and scans `<image>@<digest>`.
 3. `check-node-runtime.mjs` given `v24.22.3` while index.json lists `v25.x` or `v26.x` security releases: only the same major counts (test in Task 4).
-4. `check-action-pins.mjs` on `uses: ./local-action` or `docker://image@sha256:…`: local paths pass, `docker://` must carry a digest (tests in Task 4).
+4. The pin checker on `uses: ./local-action` or `docker://image@sha256:…`: local paths pass, `docker://` must carry a digest (tests in Task 4).
 5. A Dependabot docker PR bumping `FROM node:…` while Volta and `setup-node` stay on 24.22.3: out of scope to automate; the worker aligns the pins in that PR (spec §7).
 
 ---
@@ -113,21 +113,19 @@
 
 ## Task 4 (PR 3): pin-check and runtime-check scripts
 
-**Files:** Create `.github/scripts/check-action-pins.mjs`, `.github/scripts/check-action-pins.test.mjs`, `.github/scripts/check-node-runtime.mjs`, `.github/scripts/check-node-runtime.test.mjs`.
+**Files:** Copy from hokita/eagle@837d219: `.github/scripts/check_action_pins.py`, `.github/scripts/test_check_action_pins.py`, `.github/scripts/requirements-pins.txt`, `.github/scripts/fixtures/pins/**`. Create `.github/scripts/check-node-runtime.mjs`, `.github/scripts/check-node-runtime.test.mjs`.
 
 **Interfaces (Produces):**
 - The pin check is `.github/scripts/check_action_pins.py <workflows-dir>`, copied from hokita/eagle@837d219 (exit 0 clean / 1 offenders / 2 usage or unparsable), with its unittest suite and fixtures.
-- `newerSecurityRelease(deployed: string, index: {version: string, security: boolean}[]): string | null` — newest version in the same major as `deployed`, greater than it, with `security: true`. CLI: `node check-node-runtime.mjs <deployed> <index.json>` exit 1 with `Production runs <deployed>; Node <x> is a security release. Redeploy hamster-backend.`
+- `newerSecurityRelease(deployed: string, index: {version: string, security: boolean}[]): string | null` — newest version in the same major as `deployed`, greater than it, with `security: true`. CLI: `node check-node-runtime.mjs <deployed> <index.json>` exit 1 with `Production runs <deployed>; Node <x> is a security release. Bump Node in backend/Dockerfile, the Volta pins and setup-node, then redeploy hamster-backend.`
 
 - [ ] Write tests (`node:test` + `node:assert/strict`):
-  - `findUnpinned('uses: actions/checkout@v4')` → `['actions/checkout@v4']`
-  - 40-hex SHA → `[]`; 39-hex → offender; `uses: ./x` → `[]`; `docker://alpine:3` → offender; `docker://alpine@sha256:<64 hex>` → `[]`; quoted value and `- uses:` list form both parsed.
   - `newerSecurityRelease('v24.22.3', [{version:'v24.22.3',security:true}])` → `null`
   - `('v24.22.1', [{v24.22.3,true},{v24.22.2,false}])` → `'v24.22.3'`
   - `('v24.22.2', [{v24.22.3,false}])` → `null`; `('v24.22.3', [{v26.1.0,true}])` → `null`; version compare is numeric (`v24.9.0` < `v24.10.0`).
-- [ ] `node --test .github/scripts/` → FAIL (modules missing).
-- [ ] Implement both; `node --test .github/scripts/` → PASS.
-- [ ] Commit `feat: add action pin and node runtime checks`.
+- [ ] `node --test '.github/scripts/*.test.mjs'` → FAIL (module missing).
+- [ ] Implement; `node --test '.github/scripts/*.test.mjs'` → PASS. Pin checker: `python -m unittest discover -s .github/scripts -p "test_*.py"` and `python .github/scripts/check_action_pins.py .github/workflows` → exit 0.
+- [ ] Commit.
 
 ## Task 5 (PR 3): workflows, pins, dependabot
 
@@ -136,11 +134,11 @@
 - [ ] `ci.yml` new jobs (no path filters):
   - `Audit prod (backend)` / `Audit prod (frontend)`: checkout, setup-node `24.22.3`, `npm audit --omit=dev --audit-level=high` in the dir (no install needed).
   - `Image scan (backend)`: `docker build -t hamster-backend:ci backend`; smoke `docker run -d -p 8080:8080 hamster-backend:ci` then `curl -fsS --retry 10 --retry-connrefused localhost:8080/health`; then `docker run --rm -v /var/run/docker.sock:/var/run/docker.sock <trivy pin> image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 hamster-backend:ci`.
-  - `Actions pinned`: `node .github/scripts/check-action-pins.mjs .github/workflows/*.yml` and `node --test .github/scripts/`.
+  - `Actions pinned`: `node --test '.github/scripts/*.test.mjs'`, then PyYAML from `requirements-pins.txt` (`--require-hashes`) in a venv, the pin-checker unittests and `check_action_pins.py .github/workflows`.
 - [ ] `audit-nightly.yml`: `on: schedule: cron '0 18 * * *'` + `workflow_dispatch`; `permissions: contents: read, id-token: write`. Jobs: the two prod audits; `Audit dev (<dir>)` ×4 (`npm audit --audit-level=high`); `Actions pinned`; `Deployed image (backend)`: auth v3 with the two secrets, `gcloud auth configure-docker asia-northeast1-docker.pkg.dev --quiet`, `gcloud run services describe hamster-backend --region asia-northeast1 --format 'value(status.latestReadyRevisionName)'` → `gcloud run revisions describe <rev> --region asia-northeast1 --format 'value(status.imageDigest)'` (a full `repo@sha256:` reference), `docker pull` it, Trivy as above, then `curl -fsSo index.json https://nodejs.org/dist/index.json` and `node .github/scripts/check-node-runtime.mjs "$(docker run --rm --entrypoint node <image> --version)" index.json`.
 - [ ] Pin every `uses:` in all five workflows to a SHA (`gh api repos/<o>/<r>/commits/<tag> --jq .sha` for the current latest tag of each major); `backend.yml` auth v2 → v3 with `create_credentials_file`/`export_environment_variables` as in `frontend.yml`. `backend/Dockerfile`: both `FROM node:24.22.3-alpine@sha256:<digest>` (digest read from Docker Hub at implementation time).
 - [ ] `dependabot.yml` (version 2): `npm` with `directories: ["/backend", "/frontend", "/e2e", "/"]`, weekly, `open-pull-requests-limit: 0`; `docker` `directories: ["/backend"]`, weekly, one group `docker` pattern `*`; `github-actions` `directories: ["/"]`, weekly, one group `actions` pattern `*`.
-- [ ] Verify locally: `node .github/scripts/check-action-pins.mjs .github/workflows/*.yml` exit 0. Push; every CI job green (`Frontend`, `Backend`, `E2E` and the four new ones).
+- [ ] Verify locally: `check_action_pins.py .github/workflows` exit 0. Push; every CI job green (`Frontend`, `Backend`, `E2E` and the four new ones).
 - [ ] Commit `ci: add audit gates and nightly`.
 
 ## Task 6 (PR 3): red once, green, nightly proof
