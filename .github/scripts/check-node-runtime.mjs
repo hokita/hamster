@@ -23,7 +23,8 @@ export function newerSecurityRelease(deployed, index) {
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const [deployed, indexPath] = process.argv.slice(2)
+  const [rawDeployed, indexPath] = process.argv.slice(2)
+  const deployed = rawDeployed?.trim()
   if (!deployed || !indexPath) {
     console.error('usage: check-node-runtime.mjs <deployed version> <index.json>')
     process.exit(2)

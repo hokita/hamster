@@ -1,13 +1,15 @@
 import fs from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
-const USES_LINE = /^[ \t]*(?:-[ \t]+)?uses:[ \t]*(?:"([^"]*)"|'([^']*)'|([^\s#]+))/gm
+const USES_LINE = /^[ \t]*(?:-[ \t]+)?uses:[ \t]*(.*?)[ \t]*$/gm
+const QUOTED = /^(?:"([^"]*)"|'([^']*)')$/
 const PINNED = /^(?:[^/@\s]+\/[^@\s]+@[0-9a-f]{40}|\.\/\S*|docker:\/\/\S+@sha256:[0-9a-f]{64})$/
 
 export function findUnpinned(workflowText) {
   const offenders = []
   for (const match of workflowText.matchAll(USES_LINE)) {
-    const value = match[1] ?? match[2] ?? match[3]
+    const quoted = match[1].match(QUOTED)
+    const value = quoted ? (quoted[1] ?? quoted[2]) : match[1]
     if (!PINNED.test(value)) offenders.push(value)
   }
   return offenders
