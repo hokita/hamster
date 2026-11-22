@@ -28,57 +28,33 @@ import DeleteBookmarkButton from '../components/DeleteBookmarkButton'
 import ReadToggleButton from '../components/ReadToggleButton'
 import ArticleChat from '../components/ArticleChat'
 
-// Allow the bounded article fetch (8s), detailed summary (45s), short summary (10s),
-// and labels (10s) to finish, with margin for storage. The short call follows the detailed
-// one so both use the same language. Polling is still bounded and stops once content arrives.
 const POLL_INTERVAL_MS = 2000
 const MAX_POLL_ATTEMPTS = 45
-// A video summary is one Gemini call that can run for up to 8 minutes, so a video the server says
-// is still running gets 10 minutes of polling rather than 90 s. Only while it says so: a failed or
-// stale run has nothing to wait for, and a video with no state at all keeps the ordinary budget.
 const MAX_VIDEO_POLL_ATTEMPTS = 300
-// Matches the backend's cut-off: the Gemini timeout plus margin. A `running` state older than this
-// was left behind by an instance that died or was redeployed, and will never be cleared.
 const VIDEO_RUNNING_STALE_MS = 660_000
 
-// Takes the clock as an argument rather than reading it, so render stays pure — see `now` below.
 function isFreshRunning(state: VideoSummaryState | undefined, now: number): boolean {
   return state?.status === 'running' && now - Date.parse(state.updatedAt) < VIDEO_RUNNING_STALE_MS
 }
 
-// Same treatment as sameLabels: compared by value, so a poll answering with the state the page
-// already shows is discarded rather than restarting the poll's budget.
 function sameVideoState(a?: VideoSummaryState, b?: VideoSummaryState): boolean {
   if (!a || !b) return !a && !b
   return a.status === b.status && a.code === b.code && a.updatedAt === b.updatedAt
 }
 
-// Read off the error's shape rather than with instanceof: only the code matters here, and anything
-// without one — a network failure, a 503 — is the generic failure it always was.
 function errorCode(error: unknown): string | undefined {
   const code = (error as Partial<ApiError> | null)?.code
   return typeof code === 'string' ? code : undefined
 }
 
-// Label equality, treating absent and present-but-different alike: the poll below adopts any
-// content change, including labels disappearing (the atomic clear that starts a regeneration).
 function sameLabels(a?: string[], b?: string[]): boolean {
   if (!a || !b) return !a && !b
   return a.length === b.length && a.every((label, index) => label === b[index])
 }
 
-// A read state this page has asked the backend to store, with the ordering that says when the
-// server's own answer can be believed again. Mirrors the list page's PendingRead: the two pages
-// solve the same race, so they solve it the same way.
 interface PendingRead {
-  // Identifies the toggle that created this override. React Router reuses this page across
-  // /bookmarks/:id navigations, so a write for the bookmark the reader has since left can settle
-  // while the one now on screen has a write of its own in flight — and if both went the same way,
-  // comparing the flag alone cannot tell them apart. The older write would then stamp (or clear)
-  // an override belonging to a write that has not committed yet.
   token: number
   isRead: boolean
-  // bookmarkFetchId at the moment the write settled, or null while it is still in flight.
   settledAtFetchId: number | null
 }
 
@@ -90,44 +66,18 @@ function hostnameOf(url: string): string | null {
   }
 }
 
-// The summary arrives as Markdown (see the prompt in backend/src/services/summarizer.ts), so it is
-// parsed rather than read line by line: the model is asked for a small subset — paragraphs, "## "
-// headings, bullets, bold — but it is a model, and a hand-rolled reader would render whatever it
-// improvises outside that subset as literal "[text](url)" noise. Summaries written before this
-// feature are plain text, which is also valid Markdown, so they keep rendering as paragraphs and
-// bullets exactly as before.
-//
-// Markdown that came out of an untrusted page is still untrusted. react-markdown does not render
-// raw HTML unless rehype-raw is added (it is not), which leaves link and image URLs as the only
-// live surface — so both are dropped rather than sanitized. Nothing in the prompt asks for them,
-// the page has nothing to gain from a URL the model copied out of an article, and a convincing
-// link to somewhere else is exactly what a hostile page would want out of this.
-//
-// A link's text is its children, so unwrapDisallowed keeps it. An image's is its alt attribute,
-// which unwrapping would throw away with the node — hence the component below rather than a second
-// entry here.
 const DISALLOWED_ELEMENTS = ['a']
 
-// The image itself is dropped: no request is made and no URL reaches the page, but a caption that
-// carried meaning survives as the text it already was.
 function SummaryImageText({ alt }: { alt?: string }) {
   return <>{alt}</>
 }
 
-// Bullets in summaries stored before this feature are whatever the model happened to emit, and the
-// line reader this replaced accepted "・" alongside "-" and "*". CommonMark does not: a run of
-// "・" lines is one paragraph, and its line breaks collapse to spaces, so those bullets would run
-// together into a single block of text. Rewriting the marker costs one pass and keeps the promise
-// that an old summary renders as it always did. Anchored to the start of the line so a "・" used
-// mid-sentence, as Japanese does for a compound name, is left alone.
 const LEGACY_BULLET = /^([ \t]*)・[ \t]*(?=\S)/gm
 
 function normalizeLegacyBullets(summary: string): string {
   return summary.replace(LEGACY_BULLET, '$1- ')
 }
 
-// The model writes its own headings, so they land under the page's "Summary" <h2> — h3 keeps the
-// document outline intact whichever level (# or ##) the model reached for.
 function SummaryHeading({ children }: { children?: ReactNode }) {
   return <h3 className="m-0 mt-2 text-base font-semibold text-gray-900">{children}</h3>
 }
@@ -148,9 +98,6 @@ const SUMMARY_COMPONENTS: Components = {
   code: ({ children }) => (
     <code className="rounded bg-gray-100 px-1 py-0.5 text-[0.9em] text-gray-800">{children}</code>
   ),
-  // The prompt rules out code blocks and blockquotes, but a model is not a parser: styling them
-  // costs two lines and keeps a summary that ignores the rules readable instead of ragged. The
-  // scroll container matters most — an unwrapped code line would otherwise widen the whole page.
   pre: ({ children }) => (
     <pre className="m-0 overflow-x-auto rounded bg-gray-100 p-3 text-sm text-gray-800">
       {children}
@@ -163,8 +110,6 @@ const SUMMARY_COMPONENTS: Components = {
   ),
   hr: () => <hr className="m-0 border-gray-200" />,
   img: SummaryImageText,
-  // Tables come from GFM (the prompt asks for one when the article compares things). The wrapper
-  // scrolls a wide table inside its own box instead of widening the whole page on a phone.
   table: ({ children }) => (
     <div className="overflow-x-auto">
       <table className="m-0 w-full border-collapse text-sm">{children}</table>
@@ -182,8 +127,6 @@ const SUMMARY_COMPONENTS: Components = {
 
 function SummaryBody({ summary }: { summary: string }) {
   return (
-    // gap-3 spaces the blocks, so every child above resets its own margin to zero rather than
-    // stacking browser defaults on top of it.
     <div lang={textLanguage(summary)} className="flex flex-col gap-3 text-gray-700 leading-relaxed">
       <Markdown
         components={SUMMARY_COMPONENTS}
@@ -205,58 +148,20 @@ export default function BookmarkPage() {
   const [loadError, setLoadError] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
   const [generateFailed, setGenerateFailed] = useState(false)
-  // The code a failed generation answered with, if any. Meaningful only while generateFailed is
-  // set; it is what lets a video failure say why, where an article's only ever says that it failed.
   const [generateFailureCode, setGenerateFailureCode] = useState<string | undefined>(undefined)
-  // The clock a running video state's freshness is judged against. Held in state because render
-  // has to be pure; it is reset when a bookmark loads and moved on by the effect below at the
-  // moment a running state goes stale, which are the only times the answer can change.
   const [now, setNow] = useState(() => Date.now())
   const [isDeleting, setIsDeleting] = useState(false)
   const [deleteFailed, setDeleteFailed] = useState(false)
   const [isTogglingRead, setIsTogglingRead] = useState(false)
   const [readToggleFailed, setReadToggleFailed] = useState(false)
-  // A Japanese rendering of the summary, tagged with the English text it was made from. The tag is
-  // what retires it: a regeneration — or a poll that picks one up from somewhere else — leaves a
-  // translation of text that is no longer on the page, and offering to show it would be offering
-  // the Japanese of something the reader can no longer read in English. Comparing against the
-  // current summary at render time covers every route by which it can change, without an effect
-  // watching for each of them. Never persisted, so nothing has to invalidate it server-side.
   const [translation, setTranslation] = useState<{ source: string; text: string } | null>(null)
   const [showTranslation, setShowTranslation] = useState(false)
   const [isTranslating, setIsTranslating] = useState(false)
-  // The summary a translation request failed for, rather than a bare flag. Retired the same way
-  // the translation above is: a poll can install a newer summary while a translation of the older
-  // one is in flight, and a complaint about text the reader can no longer see — under a summary
-  // nothing was ever attempted for — is worse than no complaint at all. With both a summary and
-  // labels present the poll stops, so nothing else would clear it either.
   const [failedTranslationOf, setFailedTranslationOf] = useState<string | null>(null)
-  // The summary on screen when a generation request failed without proving the write never
-  // happened. Express does not abort a handler when the client goes away, so the backend keeps
-  // generating and may persist a summary seconds after the request died. Holding the old text here
-  // tells the polling effect below to keep watching for it to change; without that the page would
-  // sit on a superseded summary until a manual reload, because polling otherwise stops the moment
-  // any summary is present. Cleared as soon as something replaces it.
   const [supersededSummary, setSupersededSummary] = useState<string | null>(null)
-  // The read state this page has asked the backend to store. The poll below re-reads the whole
-  // bookmark, and a snapshot taken before the write landed still carries the old flag — adopting
-  // it wholesale would flip the button back under the user. Everything else in a polled result is
-  // fresher than what is on screen; this one field is not.
   const pendingRead = useRef<PendingRead | null>(null)
-  // Hands each toggle its own identity for the guards above. A counter rather than the bookmark
-  // id: it also separates two toggles of the same bookmark, without having to argue that the
-  // disabled button makes those impossible.
   const readToggleToken = useRef(0)
-  // Orders bookmark re-reads by when they were ISSUED, the way the list page's fetchId orders its
-  // own — every getBookmark call on this page takes the next value. A read override can only be
-  // retired by a response whose request went out after the write was committed; an older one may
-  // still be carrying a pre-write snapshot.
   const bookmarkFetchId = useRef(0)
-  // React Router reuses this component instance across `/bookmarks/:id` navigations, so state
-  // from the previous bookmark would otherwise leak into the next one. Resetting it here (during
-  // render, gated on the id actually changing) is React's documented pattern for this — it avoids
-  // ever painting bookmark 1's stale title/summary for a frame while bookmark 2 loads, which a
-  // reset inside the effect body cannot fully avoid.
   const [loadedId, setLoadedId] = useState(id)
   if (loadedId !== id) {
     setLoadedId(id)
@@ -277,29 +182,12 @@ export default function BookmarkPage() {
     setFailedTranslationOf(null)
   }
 
-  // Tracks the id the route is currently on, so a generation request kicked off for a bookmark
-  // that's since been navigated away from can detect it's stale and avoid writing its result
-  // (summary, failure state, or clearing isGenerating) onto whatever bookmark is now displayed.
   const latestId = useRef(id)
   useEffect(() => {
     latestId.current = id
-    // A toggle still in flight for the bookmark just navigated away from has nothing to say
-    // about this one. Cleared here rather than in the reset block above, which runs during
-    // render — where writing a ref is not allowed.
     pendingRead.current = null
   }, [id])
 
-  // Every re-read of the bookmark goes through this, so the one field the server may not know
-  // about yet survives — see pendingRead. Not a hook: it reads a ref at call time and is used
-  // inside effects and handlers alike, so wrapping it in useCallback would only add a dependency.
-  //
-  // The override is not retired when the write settles: a re-read issued before the write
-  // committed can still be in flight, and dropping the override at settle time would let exactly
-  // that response flip the button back while storage says the opposite. It is retired here, by a
-  // response that agrees with it, or by one from a request issued after the write committed —
-  // which supersedes it even when the two disagree, because that is what a change made somewhere
-  // else looks like from here. Same rule, and the same reasons, as the list page's
-  // withPendingReadStates.
   function adopt(result: Bookmark, issuedFetchId: number): Bookmark {
     const pending = pendingRead.current
     if (pending === null) return result
@@ -321,8 +209,6 @@ export default function BookmarkPage() {
       .then((result) => {
         if (cancelled) return
         setBookmark(adopt(result, fid))
-        // React Router reuses this page, so the clock may date from a bookmark opened long ago —
-        // and an old clock makes a long-dead run look fresh.
         setNow(Date.now())
       })
       .catch(() => {
@@ -336,14 +222,9 @@ export default function BookmarkPage() {
     }
   }, [id])
 
-  // Only video bookmarks carry a run state; an article never has one, so everything below that
-  // keys off it leaves articles exactly as they were.
   const videoState = bookmark?.videoId ? bookmark.videoSummaryState : undefined
   const videoRunning = isFreshRunning(videoState, now)
 
-  // Nothing else re-renders the page when a running state crosses the stale line — the server
-  // never touches it again, so a poll keeps returning the same thing. Moving the clock at that
-  // moment is what turns "still working" into a failure the reader can retry, and stops the poll.
   const runningSince = videoState?.status === 'running' ? videoState.updatedAt : undefined
   useEffect(() => {
     if (runningSince === undefined) return
@@ -352,24 +233,9 @@ export default function BookmarkPage() {
     return () => clearTimeout(timeoutId)
   }, [runningSince])
 
-  // Adding a bookmark kicks off summary generation in the background from the list page; if the
-  // user clicks into it immediately, this page's own fetch above usually wins the race and loads
-  // before the summary (and labels, written a few seconds later) are written. Poll while something
-  // is still worth waiting for, bounded by the budget above. Skipped while a manual generation is
-  // in flight (that request delivers both itself, and a concurrent poll would race it). Reruns
-  // whenever `bookmark` changes, which naturally restarts once the initial load completes — see
-  // the constants above for why a fresh budget on resume is fine.
-  //
-  // Accepted cost: a legacy bookmark with a summary but no labels polls out its bounded budget
-  // (30 cheap reads) once per visit and stops; the Regenerate button is its backfill path.
   useEffect(() => {
     if (!id) return
     if (!bookmark) return
-    // Four things are worth waiting for: a first summary, a replacement for one whose
-    // regeneration request died mid-flight, the labels the backend writes just after a summary,
-    // and a video run in flight — a Regenerate another instance answered with 409 is a
-    // replacement on its way even with a summary and labels on screen. Anything else is already
-    // up to date.
     if (
       bookmark.summary &&
       bookmark.summary !== supersededSummary &&
@@ -378,11 +244,7 @@ export default function BookmarkPage() {
     )
       return
     if (isGenerating) return
-    // A video whose last run failed, or went stale, has nothing in flight to wait for. Without
-    // this, every visit to a refused video would poll out a budget for a summary that never comes.
     if (videoState && !videoRunning) return
-    // A fresh running state restarts this effect (it changes `bookmark`), so a run that shows up
-    // mid-poll trades the remaining article budget for the video one rather than stopping at 90 s.
     const maxAttempts = videoRunning ? MAX_VIDEO_POLL_ATTEMPTS : MAX_POLL_ATTEMPTS
 
     let cancelled = false
@@ -395,32 +257,14 @@ export default function BookmarkPage() {
         .getBookmark(id)
         .then((result) => {
           if (cancelled || id !== latestId.current) return
-          // Reconciled before the advance check below, so every response gets the chance to
-          // retire a read override — including one that advances nothing, which is what most
-          // polls for a bookmark still being summarized return. Leaving those unprocessed kept
-          // an override alive long after the server had answered for it, and it would then go on
-          // correcting responses that were describing reality better than it was.
           const reconciled = adopt(result, fid)
-          // Only adopt a result that advances something: a new or replacement summary, or a
-          // change in label content (including labels disappearing, which is the atomic clear a
-          // regeneration starts with). Setting identical state would create a new object, re-run
-          // this effect, and hand the poll a fresh budget — polling forever.
           const summaryAdvanced = Boolean(
             reconciled.summary &&
             reconciled.summary !== supersededSummary &&
             reconciled.summary !== bookmark.summary
           )
           const labelsAdvanced = !sameLabels(reconciled.labels, bookmark.labels)
-          // The read flag counts as an advance in its own right. It is the one field a poll can
-          // report a change in while the summary and labels stand still — the bookmark was marked
-          // somewhere else — and discarding those responses would leave the button describing a
-          // state the server has already moved off, for the rest of the visit. It cannot cause
-          // the endless re-polling the check above guards against either: this compares values,
-          // so once applied, the next identical response is discarded as unchanged.
           const readAdvanced = reconciled.isRead !== bookmark.isRead
-          // A video's run state is the other thing that moves while the summary stands still:
-          // a run starting (which is what switches this poll onto the video budget) or failing
-          // (which ends it). Compared by value, for the same reason as the read flag.
           const stateAdvanced = !sameVideoState(
             reconciled.videoSummaryState,
             bookmark.videoSummaryState
@@ -428,18 +272,11 @@ export default function BookmarkPage() {
           if (!summaryAdvanced && !labelsAdvanced && !readAdvanced && !stateAdvanced) return
           setBookmark(reconciled)
           if (summaryAdvanced || (labelsAdvanced && reconciled.labels)) {
-            // A fresh labels write proves a generation run completed server-side even when the
-            // summary text came out identical — the failure banner and the superseded watch no
-            // longer describe reality. Labels merely disappearing proves only that a run started;
-            // keep watching.
             setGenerateFailed(false)
             setSupersededSummary(null)
           }
         })
-        .catch(() => {
-          // Opportunistic background polling: swallow failures and keep the remaining budget.
-          // The Generate button stays available as the fallback if nothing ever arrives.
-        })
+        .catch(() => {})
     }, POLL_INTERVAL_MS)
 
     return () => {
@@ -448,11 +285,6 @@ export default function BookmarkPage() {
     }
   }, [id, bookmark, isGenerating, supersededSummary, videoState, videoRunning])
 
-  // Drives both the empty state's "Generate summary" button and the "Regenerate" button shown
-  // under an existing summary: POST /:id/summary always runs a fresh generation and overwrites
-  // whatever is stored, so one handler covers both. A regeneration that fails before the write
-  // leaves the stored summary untouched, which is why the current one stays on screen when
-  // `generateFailed` flips — see the catch block for the case where the write did land.
   async function handleGenerate() {
     if (!id) return
     const requestedId = id
@@ -461,24 +293,11 @@ export default function BookmarkPage() {
     setGenerateFailed(false)
     setGenerateFailureCode(undefined)
     setSupersededSummary(null)
-    // The server replaces the run state the moment this request starts, so the one on screen is
-    // already history. Dropping it also matters after a failure: a leftover `failed` would keep
-    // the poll from resuming, and a request that died mid-run would never see its summary land.
-    // The first poll brings back whatever the server holds now.
     setBookmark((previous) =>
       previous?.videoSummaryState ? { ...previous, videoSummaryState: undefined } : previous
     )
-    // Covers the one case the tag below cannot: a regeneration that returns byte-identical text,
-    // where the failure would otherwise still match the summary on screen. Anything else is
-    // retired by the comparison at render time.
     setFailedTranslationOf(null)
     try {
-      // Labels ride along on the response when their generation succeeded; adopting them
-      // unconditionally (rather than only when present) is what makes this button double as the
-      // labels backfill path for older bookmarks. The server clears labels in the same write as
-      // the new summary (see updateSummary), so a response with no labels means the labels step
-      // failed after that write landed — keeping the previous topics on screen here would show
-      // outdated chips for text they no longer describe, so they must be dropped too.
       const { summary, shortSummary, labels } = await api.generateSummary(requestedId)
       if (requestedId !== latestId.current) return
       setBookmark((previous) =>
@@ -487,12 +306,6 @@ export default function BookmarkPage() {
     } catch (error) {
       if (requestedId !== latestId.current) return
       const code = errorCode(error)
-      // A failed request does not prove nothing was written: the summary is persisted before the
-      // response is sent, so a connection dropped in between leaves a fresh summary in Firestore
-      // that this page knows nothing about. Re-read the bookmark before reporting failure —
-      // otherwise the page shows the old text under a message claiming it is unchanged, and the
-      // polling effect cannot repair it because that only runs while there is no summary at all.
-      // Retrying blind would also pay for a second generation to reproduce what already exists.
       const fid = ++bookmarkFetchId.current
       const refreshed = await api.getBookmark(requestedId).catch(() => null)
       if (refreshed) {
@@ -501,17 +314,12 @@ export default function BookmarkPage() {
           setBookmark(adopt(refreshed, fid))
           return
         }
-        // Another instance is already watching this video, and refused to pay for a second
-        // watch. Not a failure: the re-read carries its running state, which shows the running
-        // copy and puts the poll on the video budget.
         if (code === 'video_summary_running') {
           setBookmark(adopt(refreshed, fid))
           return
         }
       }
       if (requestedId !== latestId.current) return
-      // The 409 itself says a run is going, so the page need not wait for a re-read to say so.
-      // Stamped with this moment: the poll replaces it with the server's own as soon as one lands.
       if (code === 'video_summary_running') {
         setBookmark((previous) =>
           previous
@@ -525,82 +333,39 @@ export default function BookmarkPage() {
       }
       setGenerateFailed(true)
       setGenerateFailureCode(code)
-      // The re-read above is a single snapshot, and the losing request may simply have died before
-      // the backend finished — it keeps generating regardless, so the write can still be seconds
-      // out. Hand the text to the poll above to watch, rather than settling for "unchanged" on one
-      // sample. Only meaningful when a summary was already displayed; from the empty state the
-      // poll resumes on its own.
       if (summaryBefore) setSupersededSummary(summaryBefore)
     } finally {
       if (requestedId === latestId.current) setIsGenerating(false)
     }
   }
 
-  // Fetches the Japanese rendering once and keeps it, so switching back and forth afterwards costs
-  // nothing. Only ever reached from the button below, which is offered for an English summary and
-  // disabled while this runs.
-  //
-  // The tag comes from the response, not from the summary on screen when the button was clicked.
-  // The backend translates the summary IT has stored, and the two can disagree: regenerate the
-  // bookmark in another tab and this page keeps showing the older English, because a bookmark that
-  // already has its summary and labels does not poll. Tagging with what was on screen would then
-  // pair new Japanese with old English behind "Show English", and nothing would ever correct it.
-  // The response says which text was translated, so both sides of the toggle can be that text.
   async function handleTranslate() {
     if (!id || !bookmark?.summary) return
     const requestedId = id
-    // What the page was showing when the request went out, so the adopt below can tell "the
-    // server read a fresher summary than this page holds" from "something fresher than either
-    // arrived while we waited". See there.
     const summaryAtRequest = bookmark.summary
     setIsTranslating(true)
     setFailedTranslationOf(null)
     try {
       const { translation: text, source, labels } = await api.translateSummary(requestedId)
-      // Same staleness guard the other handlers use: a translation that arrives after the reader
-      // has opened another bookmark has nothing to say about the one now on screen.
       if (requestedId !== latestId.current) return
-      // The response carries a read of the stored summary taken when the request was handled, so
-      // adopt it — that is what makes the English behind the toggle the original of the Japanese
-      // beside it. Unchanged in the ordinary case, where the two already agree; the equality check
-      // keeps that case from minting a new object and re-running the poll effect for nothing.
-      //
-      // Only while the page still shows what it did when the request went out. A poll can install
-      // a newer summary while Gemini is working — a legacy bookmark with no labels keeps polling —
-      // and that one is fresher than the endpoint's read, not staler. Putting `source` back over it
-      // would undo the poll's work and leave the labels that came with it describing text no longer
-      // on screen, for the rest of the visit: with a summary and labels both present the poll
-      // stops, so nothing would correct it a second time. The translation is then of superseded
-      // text, and the source tag retires it — see currentTranslation.
       setBookmark((previous) =>
         previous &&
         previous.id === requestedId &&
         previous.summary === summaryAtRequest &&
         previous.summary !== source
-          ? // The labels come from the same read as the summary, so they go on together: chips
-            // describing the text that came before would otherwise sit under the new summary for
-            // the rest of the visit — with both present, the poll skips this bookmark entirely.
-            // Adopting an absent `labels` is right too; the poll then resumes to wait for them,
-            // which is what it already does for any bookmark whose labels have not landed yet.
-            { ...previous, summary: source, labels }
+          ? { ...previous, summary: source, labels }
           : previous
       )
       setTranslation({ source, text })
       setShowTranslation(true)
     } catch {
       if (requestedId !== latestId.current) return
-      // Nothing was replaced — the English summary is still on screen and still correct, so the
-      // failure is a line under it rather than a state the page has to recover from. Tagged with
-      // the summary it was about, so it only ever appears under that one.
       setFailedTranslationOf(summaryAtRequest)
     } finally {
       if (requestedId === latestId.current) setIsTranslating(false)
     }
   }
 
-  // Optimistic for the same reason the list's toggle is: this is a one-click gesture, and a
-  // button that only changes a round trip later reads as a click that missed. pendingRead keeps
-  // the poll from overwriting it in the meantime; the catch puts it back if nothing was stored.
   async function handleToggleRead(isRead: boolean) {
     if (!id) return
     const requestedId = id
@@ -611,16 +376,6 @@ export default function BookmarkPage() {
     setBookmark((previous) => (previous ? { ...previous, isRead } : previous))
     try {
       await api.setReadState(requestedId, isRead)
-      // The override deliberately survives a successful write — a re-read issued before the
-      // write committed can still be in flight — but from here on every re-read reads committed
-      // data, so stamp the point after which a response can retire it. See adopt().
-      //
-      // Re-established rather than only stamped, because it may be gone: leaving this bookmark
-      // and coming back clears the override and re-reads the document, and that read can still
-      // predate the commit. Then nothing on screen would say what was stored, and a bookmark
-      // that already has its summary and labels does not poll, so it would stay wrong for the
-      // rest of the visit. Writing the flag through as well is what corrects that; both are
-      // skipped when a newer toggle has taken over, or the reader is on another bookmark.
       if (readToggleToken.current === token && requestedId === latestId.current) {
         pendingRead.current = { token, isRead, settledAtFetchId: bookmarkFetchId.current }
         setBookmark((previous) =>
@@ -630,21 +385,12 @@ export default function BookmarkPage() {
         )
       }
     } catch {
-      // Only this toggle's own, still-standing override may be rolled back. It is gone in every
-      // case where rolling back would be wrong: a newer toggle replaced it and owns the button
-      // now, the reader navigated away, or — the case a failure alone cannot tell apart — a
-      // re-read already reported this very flag back from the server. That last one means the
-      // write committed and only its response was lost, so reverting would contradict storage
-      // and report a failure for something that did happen.
       if (pendingRead.current?.token !== token) return
-      // Nothing was stored, so there is no longer anything to protect a response from.
       pendingRead.current = null
       if (requestedId !== latestId.current) return
       setBookmark((previous) => (previous ? { ...previous, isRead: !isRead } : previous))
       setReadToggleFailed(true)
     } finally {
-      // Same two owners: the newest toggle for the bookmark on screen is the one whose settling
-      // may put the button back in its resting state.
       if (readToggleToken.current === token && requestedId === latestId.current) {
         setIsTogglingRead(false)
       }
@@ -658,12 +404,7 @@ export default function BookmarkPage() {
     setDeleteFailed(false)
     try {
       await api.deleteBookmark(requestedId)
-      // Same staleness guard the generation handler uses: if the user has since opened another
-      // bookmark, the delete they asked for is done, but yanking them back to the list would be
-      // a navigation they never requested. The reset on id change already cleared isDeleting.
       if (requestedId !== latestId.current) return
-      // This page is about a bookmark that no longer exists, so there is nothing left to show.
-      // Replace rather than push: going Back should not land on a page that can only 404 now.
       navigate('/', { replace: true })
     } catch {
       if (requestedId !== latestId.current) return
@@ -701,20 +442,11 @@ export default function BookmarkPage() {
 
   const hostname = hostnameOf(bookmark.url)
 
-  // Retires a translation of a summary that has since been replaced — see the state declaration.
   const currentTranslation =
     translation && translation.source === bookmark.summary ? translation.text : null
-  // Offered only where it applies: an English summary. A Japanese one is already in the language
-  // the button would translate it into, and a bookmark with no summary has nothing to translate.
   const canTranslate = Boolean(bookmark.summary && textLanguage(bookmark.summary) === 'en')
   const showingTranslation = showTranslation && currentTranslation !== null
 
-  // What the page says when there is no summary, most immediate first. A click that failed with a
-  // code beats the stored state for the rest of the visit: it is newer, and it is what the reader
-  // just did. A click that failed without one — a dropped connection, a gateway timeout during a
-  // long watch — says nothing about the run, which may still be going, so the stored state decides
-  // and the generic failure is only the fallback. An article never has a code or a stored state,
-  // so it only ever reaches the in-flight, generic failure and "No summary yet." lines, as before.
   function describeEmptyState(): {
     message: string
     failed: boolean
@@ -725,16 +457,12 @@ export default function BookmarkPage() {
       message: videoSummaryMessage(code),
       failed: true,
       running: false,
-      // Retrying cannot change a video's length, and each try is a request for nothing.
       offersButton: code !== 'video_too_long',
     })
-    // Today's in-flight line, video or not: videoId is derived from the URL even when the server
-    // takes the article path, so a pending request is no evidence that a video is being watched.
     if (isGenerating) {
       return { message: 'No summary yet.', failed: false, running: false, offersButton: true }
     }
     if (generateFailed && generateFailureCode !== undefined) return failed(generateFailureCode)
-    // A stale `running` has no code, so it reads as the generic failure — which it is.
     if (videoState && !videoRunning) return failed(videoState.code)
     if (videoRunning) {
       return {
@@ -749,10 +477,6 @@ export default function BookmarkPage() {
   }
   const emptyState = describeEmptyState()
 
-  // The same reasons under an existing summary, which is where Regenerate on a YouTube bookmark
-  // saved before video summaries lands. Same order as above: a click's code, then a run in
-  // flight or the stored outcome of one (a watch another instance ran, or a failure from an
-  // earlier visit), then the generic line for a click that failed without one.
   function describeRegenerateState(): {
     message: string
     failed: boolean
@@ -765,7 +489,6 @@ export default function BookmarkPage() {
             message: `${videoSummaryMessage(code)} The summary above is unchanged.`,
             failed: true,
             running: false,
-            // As in the empty state: retrying cannot change a video's length.
             offersButton: code !== 'video_too_long',
           }
         : {
@@ -790,7 +513,6 @@ export default function BookmarkPage() {
         offersButton: true,
       }
     }
-    // A stale `running` has no code, so it reads as the generic line — which it is.
     if (videoState) return failed(videoState.code)
     if (generateFailed) return failed(undefined)
     return null
@@ -841,14 +563,10 @@ export default function BookmarkPage() {
 
       {bookmark.summary ? (
         <div className="flex flex-col items-start gap-4">
-          {/* Dimmed while a regeneration is in flight: the text on screen is about to be replaced,
-              and the button's spinner alone is easy to miss below a long summary. */}
           <div
             aria-busy={isGenerating || isTranslating}
             className={`transition-opacity ${isGenerating || isTranslating ? 'opacity-50' : ''}`}
           >
-            {/* One summary on screen at a time. SummaryBody derives its own lang from the text it
-                is given, so the Japanese arrives marked as Japanese without anything extra here. */}
             <SummaryBody summary={showingTranslation ? currentTranslation : bookmark.summary} />
           </div>
           {regenerateState?.failed && (
@@ -869,8 +587,6 @@ export default function BookmarkPage() {
           <div className="flex flex-wrap items-center gap-2">
             {canTranslate && (
               <button
-                // Three jobs, one button: fetch the translation, then switch between the two
-                // languages. Once fetched, switching is free — the text is held on the page.
                 onClick={
                   currentTranslation === null
                     ? handleTranslate
@@ -929,13 +645,8 @@ export default function BookmarkPage() {
         </div>
       )}
 
-      {/* Under the summary, where the reader ends up once they have read it — marking something
-          read is the last thing done on this page, not the first. It sits above the chat and well
-          clear of the delete rule below, so the two are never reached for by mistake. */}
       <div className="mt-6 flex flex-col items-start gap-2">
         <ReadToggleButton
-          // Same descriptor the list and the delete control build, so one convention names a
-          // bookmark everywhere a control acts on it.
           label={describeBookmark(bookmark)}
           isRead={bookmark.isRead}
           isPending={isTogglingRead}
@@ -950,12 +661,8 @@ export default function BookmarkPage() {
         )}
       </div>
 
-      {/* Keyed by id: React Router reuses this page component across /bookmarks/:id navigations,
-          and the key remounts the chat so one article's conversation never carries onto another. */}
       <ArticleChat key={bookmark.id} bookmarkId={bookmark.id} />
 
-      {/* Kept below the summary and behind a rule: it is the one irreversible action on the page,
-          so it sits away from the buttons a reader reaches for repeatedly. */}
       <div className="mt-10 flex flex-col items-start gap-3 border-t border-gray-200 pt-4">
         {deleteFailed && (
           <p className="m-0 flex items-center gap-2 text-sm text-red-700">
@@ -964,8 +671,6 @@ export default function BookmarkPage() {
           </p>
         )}
         <DeleteBookmarkButton
-          // Same descriptor the list builds, so one convention covers both places a bookmark can
-          // be deleted from.
           label={describeBookmark(bookmark)}
           isDeleting={isDeleting}
           onDelete={handleDelete}

@@ -1,11 +1,5 @@
-// What the bookmark page says for each video summary outcome. The codes come from the backend
-// (an error response's `code`, or a stored videoSummaryState), so the copy lives in one place
-// whichever of the two delivered it.
-
 export const VIDEO_SUMMARY_RUNNING_MESSAGE = 'Summarizing the video — this can take a few minutes.'
 
-// Also what an article failure says, so a video that failed for no reason worth naming reads the
-// same as everything else that failed.
 export const GENERIC_SUMMARY_FAILURE_MESSAGE = "Couldn't generate a summary."
 
 const MESSAGES: Record<string, string> = {
@@ -19,9 +13,6 @@ const MESSAGES: Record<string, string> = {
   video_summary_running: VIDEO_SUMMARY_RUNNING_MESSAGE,
 }
 
-// Anything unrecognised — 'generic', no code at all, or a code added to the backend before the
-// page learned it — falls back to the generic line rather than showing nothing. The own-property
-// check keeps a code like "toString" from reaching the object's prototype.
 export function videoSummaryMessage(code: string | undefined): string {
   return code !== undefined && Object.prototype.hasOwnProperty.call(MESSAGES, code)
     ? MESSAGES[code]

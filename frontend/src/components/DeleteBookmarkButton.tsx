@@ -3,21 +3,12 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faTrashCan, faSpinner } from '@fortawesome/free-solid-svg-icons'
 
 interface DeleteBookmarkButtonProps {
-  // Identifies the bookmark in this control's accessible names, and nothing else. A list of rows
-  // would otherwise offer several buttons called "Delete", indistinguishable to a screen reader
-  // and to a test querying by role. Callers pass a descriptor that is unique on the page — a title
-  // alone is not, since two bookmarks can share one — so both build it from title and hostname.
   label: string
   onDelete: () => void
   isDeleting?: boolean
-  // 'icon' is the compact trash glyph used in a list row; 'labeled' adds the visible word for the
-  // bookmark's own page, where there is room and nothing nearby to infer the meaning from.
   variant?: 'icon' | 'labeled'
 }
 
-// Deleting is the one irreversible thing this app does — there is no undo and no trash — so it
-// asks first. The confirmation is inline rather than window.confirm(): a native dialog blocks the
-// page, cannot be styled to match, and (in the list) loses track of which row it belongs to.
 export default function DeleteBookmarkButton({
   label,
   onDelete,
@@ -63,9 +54,6 @@ export default function DeleteBookmarkButton({
       </span>
       <button
         type="button"
-        // Reset before handing off: the row (or page) usually disappears on success, but when the
-        // request fails the control belongs back in its resting state, under the error the caller
-        // renders — not still asking a question the user has already answered.
         onClick={() => {
           setIsConfirming(false)
           onDelete()
