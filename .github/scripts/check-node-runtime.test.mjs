@@ -58,3 +58,9 @@ test('cli failure message and exit 1', () => {
     'Production runs v24.22.1; Node v24.22.3 is a security release. Redeploy hamster-backend.\n',
   )
 })
+
+test('cli trims a trailing newline on the deployed version', () => {
+  const result = runCli('v24.22.3\n', [entry('v24.22.3', true)])
+  assert.equal(result.status, 0)
+  assert.equal(result.stdout, 'Production runs v24.22.3; no newer Node 24 security release.\n')
+})

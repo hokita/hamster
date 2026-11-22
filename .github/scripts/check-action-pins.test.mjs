@@ -58,6 +58,26 @@ test('quoted values and list form are parsed', () => {
   assert.deepEqual(findUnpinned(text), ['actions/checkout@v4', 'actions/setup-node@v4'])
 })
 
+test('trailing comment after a pin is an offender', () => {
+  assert.deepEqual(findUnpinned(`uses: actions/checkout@${sha} # v4`), [`actions/checkout@${sha} # v4`])
+})
+
+test('hash directly after a pin is an offender', () => {
+  assert.deepEqual(findUnpinned(`uses: a/b@${sha}#v4`), [`a/b@${sha}#v4`])
+})
+
+test('quoted pin with trailing comment is an offender', () => {
+  assert.equal(findUnpinned(`uses: 'x/y@${sha}' # c`).length, 1)
+})
+
+test('tag with sha comment is still an offender', () => {
+  assert.deepEqual(findUnpinned(`uses: a/b@v4 # ${sha}`), [`a/b@v4 # ${sha}`])
+})
+
+test('trailing spaces after a pin are allowed', () => {
+  assert.deepEqual(findUnpinned(`uses: a/b@${sha}   `), [])
+})
+
 test('cli exits 2 with usage when no files are given', () => {
   const result = spawnSync(process.execPath, [script], { encoding: 'utf8' })
   assert.equal(result.status, 2)
