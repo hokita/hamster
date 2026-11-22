@@ -1,7 +1,3 @@
-// One-off live check for the YouTube video summarizer. Not run by CI or tests; run by hand, once,
-// with real keys in the environment:
-//   GEMINI_API_KEY=... YOUTUBE_API_KEY=... npx tsx scripts/youtube-live-check.ts
-// It prints only the variable NAMES of missing keys, never a value, and never process.env.
 import { checkVideo } from '../src/services/youtubeDataApi'
 import {
   watchVideo,
@@ -12,7 +8,6 @@ import {
 import { summarizeShort } from '../src/services/shortSummarizer'
 
 const VIDEO_ID = 'O_zcc6Xl12g'
-// These two are set inside watchVideo and not exported, so these literals mirror it.
 const MEDIA_RESOLUTION = 'MEDIA_RESOLUTION_LOW'
 const END_OFFSET = '3600s'
 

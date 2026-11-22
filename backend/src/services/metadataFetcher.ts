@@ -6,16 +6,6 @@ const TITLE_REGEX = /<title[^>]*>([^<]*)<\/title>/i
 const MAX_BYTES = 100_000
 const FETCH_TIMEOUT_MS = 5000
 
-// Regions whose text content must not be scanned as real markup: a hostile or merely careless
-// page can write "<body", "</head>", or even a fake "<link rel=icon>" as plain text inside a
-// <script>/<style> block (e.g. document.write("<body>"), or a JS string literal containing an
-// HTML template) or an HTML comment. Used both to keep the end-of-head check below from firing on
-// non-markup text, and to keep extractIconHref from picking up a fake <link> that isn't real
-// markup. Complete blocks are masked first; a trailing "unterminated" variant handles a block
-// whose closing tag hasn't arrived yet in the accumulated buffer (masking to end-of-buffer is
-// intentionally conservative — it can only delay the head-end early exit or hide a not-yet-
-// complete icon candidate, never fabricate a match, since MAX_BYTES still bounds the read
-// independently).
 const NON_MARKUP_MASKS: RegExp[] = [
   /<!--[\s\S]*?-->/g,
   /<!--[\s\S]*$/,
@@ -32,10 +22,6 @@ export function maskNonMarkup(text: string): string {
   )
 }
 
-// Decodes a numeric character reference's digits (already stripped of "&#"/"&#x" and any
-// trailing ';') into the character it names. Returns '' for anything out of the valid Unicode
-// range rather than throwing, so a malformed reference is just dropped instead of blowing up
-// the whole decode.
 function decodeNumericEntity(digits: string): string {
   const isHex = digits[0] === 'x' || digits[0] === 'X'
   const codePoint = parseInt(isHex ? digits.slice(1) : digits, isHex ? 16 : 10)
@@ -47,24 +33,6 @@ function decodeNumericEntity(digits: string): string {
   }
 }
 
-// Only the five most common named character references plus full numeric references (decimal
-// &#NN; and hex &#xNN;, with or without the trailing ';', matching what browsers accept) are
-// decoded here. Full HTML named-character-reference support is a table of ~2,200 entries and
-// would require either hand-rolling that table or pulling in an HTML-parsing dependency, which
-// this project's design explicitly avoids — so an uncommon named reference such as "&sol;" is
-// intentionally left undecoded. Numeric references cover the general escaping trick (e.g. an
-// attacker or CMS encoding "/" as "&#47;" to smuggle it past naive parsing) even though the named
-// table isn't exhaustive.
-//
-// This must decode in a single regex pass rather than a chain of sequential .replace() calls.
-// A chained decode re-scans its own output: "&amp;" -> "&" runs first, so source text
-// "&amp;lt;" (what a browser displays as the literal "&lt;") would have its freshly-produced "&"
-// picked up by the later &lt; pass and collapse all the way to "<" — silently changing text a
-// reader would see as escaped markup into live markup. Matching every supported reference in one
-// pass means a decoded "&" is never re-examined by a later alternative.
-// No top-level 'i' flag: the five named references must stay case-sensitive exactly as the old
-// sequential .replace() calls were (none of them had an 'i' flag). Only the hex numeric prefix
-// ("x" or "X") needs case-insensitivity, so that's spelled out explicitly as [xX] instead.
 const ENTITY_REGEX = /&amp;|&lt;|&gt;|&quot;|&#39;|&#([xX][0-9a-fA-F]+|[0-9]+);?/g
 
 const NAMED_ENTITIES: Record<string, string> = {
@@ -82,8 +50,6 @@ export function decodeEntities(text: string): string {
   })
 }
 
-// A charset extracted from the HTTP Content-Type header always wins over an in-document
-// <meta charset> declaration, matching how browsers resolve the two when both are present.
 export function resolveCharset(contentType: string, asciiSafeText: string): string | undefined {
   return (
     contentType.match(/charset=["']?([^"';\s]+)/i)?.[1] ??
@@ -99,60 +65,31 @@ export function decodeWithCharset(bytes: Uint8Array, charset: string | undefined
   }
 }
 
-// --- Head-end scanner -------------------------------------------------------------------------
-//
-// readBoundedBytes (below) needs to know, as bytes stream in, whether the document's <head> has
-// genuinely ended — either a real closing `</head>` tag, or the start of a real `<body` tag (the
-// same two markers HEAD_END_REGEX used to match directly with a plain regex). "Genuine" excludes
-// three regions where a page can legitimately contain that literal text without it meaning the
-// head actually ended:
-//   - inside an HTML comment (<!-- ... -->)
-//   - inside <script>/<style> element content (e.g. document.write("<body>"), a JS template string)
-//   - inside a quoted attribute value (e.g. <meta content="... the <body> tag">) — this was the
-//     regression: the old masking covered the first two but not this one.
-//
-// A regex can't express "not inside a quote" without re-deriving tag structure itself, so this is
-// a small character-by-character state machine instead. It doubles as a fully general tokenizer of
-// "are we currently inside real markup, or inside one of the three regions above" — the exact same
-// question NON_MARKUP_MASKS answers for extractIconHref/extractBaseUrl, just answered per-character
-// instead of via a final regex pass. It intentionally does NOT replace NON_MARKUP_MASKS: that masks
-// script/style/comment content to blank spaces but leaves quoted attribute values completely intact
-// (parseAttributes needs the quotes to extract a real href), whereas this scanner also treats quoted
-// attribute values as "not real markup" for the narrower purpose of the </head>/<body> check. Making
-// NON_MARKUP_MASKS quote-aware in the same way would blank out every href="..." along with it, which
-// would break icon extraction — so the two intentionally stay separate.
-//
-// The scanner is resumable: `HeadScanState` carries `pos` (how far into the accumulated text it has
-// already scanned) plus enough in-progress state (current mode, any partially-read tag/attribute
-// name) to pick up exactly where it left off when called again with more text appended. Each
-// character is visited at most once across the whole read, so scanning the growing buffer stays
-// O(total bytes) instead of being re-scanned from the start on every chunk.
-
 type HeadScanMode =
-  | 'data' // outside any tag — real markup; '<' here may start a tag
-  | 'tagOpen' // just consumed '<', deciding what kind of construct follows
-  | 'closeTagOpen' // just consumed '</', expecting a tag name
-  | 'bang' // just consumed '<!', deciding whether this is a comment
-  | 'bangDash' // just consumed '<!-', need one more '-' to confirm a comment
-  | 'comment' // inside <!-- ... -->, watching for '-->'
-  | 'commentDash' // inside a comment, just saw one trailing '-'
-  | 'commentDashDash' // inside a comment, just saw '--', watching for the closing '>'
-  | 'tagName' // accumulating an opening tag's name (to detect <body, <script, <style)
-  | 'closeTagName' // accumulating a closing tag's name (to detect </head)
-  | 'afterHeadClose' // saw a closing "head" tag name; only whitespace may precede the closing '>'
-  | 'tag' // inside a tag, outside any quoted attribute value
-  | 'squote' // inside a tag, inside a '...'-quoted attribute value
-  | 'dquote' // inside a tag, inside a "..."-quoted attribute value
-  | 'rawtext' // inside <script>/<style> element content
-  | 'rawtextLt' // inside rawtext content, just saw '<'
-  | 'rawtextEndSlash' // inside rawtext content, just saw '</', accumulating the end tag's name
+  | 'data'
+  | 'tagOpen'
+  | 'closeTagOpen'
+  | 'bang'
+  | 'bangDash'
+  | 'comment'
+  | 'commentDash'
+  | 'commentDashDash'
+  | 'tagName'
+  | 'closeTagName'
+  | 'afterHeadClose'
+  | 'tag'
+  | 'squote'
+  | 'dquote'
+  | 'rawtext'
+  | 'rawtextLt'
+  | 'rawtextEndSlash'
 
 interface HeadScanState {
   mode: HeadScanMode
   pos: number
-  name: string // accumulator shared by tagName / closeTagName / rawtextEndSlash
-  pendingRawtext: 'script' | 'style' | null // set while inside an opening <script>/<style> tag
-  rawtextTag: 'script' | 'style' | null // which element's content we're currently inside
+  name: string
+  pendingRawtext: 'script' | 'style' | null
+  rawtextTag: 'script' | 'style' | null
 }
 
 function createHeadScanState(): HeadScanState {
@@ -171,10 +108,6 @@ function isAsciiWhitespace(ch: string): boolean {
   return ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r' || ch === '\f' || ch === '\v'
 }
 
-// Advances `state` across `text` starting at `state.pos`, mutating it in place. Returns true as
-// soon as a genuine end-of-head marker is found (matching state.pos is left where it was — the
-// caller is about to stop reading anyway). Returns false once it has consumed all of `text` without
-// finding one; `state` is left ready to resume from the same point once more text is appended.
 function scanForHeadEnd(text: string, state: HeadScanState): boolean {
   const len = text.length
   while (state.pos < len) {
@@ -197,8 +130,6 @@ function scanForHeadEnd(text: string, state: HeadScanState): boolean {
           state.name = ch.toLowerCase()
           state.pos++
         } else {
-          // '<' wasn't followed by a valid tag/comment start, so it wasn't a real tag after all —
-          // reprocess this same character as plain data (do not consume it here).
           state.mode = 'data'
         }
         break
@@ -209,7 +140,7 @@ function scanForHeadEnd(text: string, state: HeadScanState): boolean {
           state.name = ch.toLowerCase()
           state.pos++
         } else {
-          state.mode = 'data' // "</" not followed by a letter — not a real closing tag
+          state.mode = 'data'
         }
         break
 
@@ -218,7 +149,7 @@ function scanForHeadEnd(text: string, state: HeadScanState): boolean {
           state.mode = 'bangDash'
           state.pos++
         } else {
-          state.mode = 'tag' // e.g. <!DOCTYPE ...> — treat as an ordinary tag
+          state.mode = 'tag'
           state.pendingRawtext = null
         }
         break
@@ -248,7 +179,7 @@ function scanForHeadEnd(text: string, state: HeadScanState): boolean {
           state.mode = 'data'
           state.pos++
         } else if (ch === '-') {
-          state.pos++ // absorb runs of dashes, still watching for the closing '>'
+          state.pos++
         } else {
           state.mode = 'comment'
           state.pos++
@@ -260,7 +191,7 @@ function scanForHeadEnd(text: string, state: HeadScanState): boolean {
           state.name += ch.toLowerCase()
           state.pos++
         } else if (state.name === 'body') {
-          return true // genuine <body\b
+          return true
         } else if (state.name === 'script' || state.name === 'style') {
           state.pendingRawtext = state.name
           state.mode = 'tag'
@@ -287,9 +218,9 @@ function scanForHeadEnd(text: string, state: HeadScanState): boolean {
           state.pos++
         } else if (ch === '>') {
           state.pos++
-          return true // genuine </head\s*>
+          return true
         } else {
-          state.mode = 'tag' // e.g. "</headfoo>" — not a real closing head tag after all
+          state.mode = 'tag'
           state.pendingRawtext = null
         }
         break
@@ -349,14 +280,10 @@ function scanForHeadEnd(text: string, state: HeadScanState): boolean {
           state.name === state.rawtextTag &&
           (isAsciiWhitespace(ch) || ch === '/' || ch === '>')
         ) {
-          // Per the HTML spec, an "appropriate end tag token" requires the tag name to be
-          // immediately followed by whitespace, '/', or '>' — anything else (e.g. the '-' in
-          // "</script-x>") means this wasn't a real end tag after all, just more raw text that
-          // happens to start with the element's name.
           state.rawtextTag = null
-          state.mode = 'tag' // let 'tag' consume the rest of the closing tag up to '>'
+          state.mode = 'tag'
         } else {
-          state.mode = 'rawtext' // not a valid end tag (wrong name or bad delimiter) — just more content
+          state.mode = 'rawtext'
         }
         break
     }
@@ -369,12 +296,6 @@ async function readBoundedBytes(response: Response): Promise<Uint8Array> {
   if (!reader) return new Uint8Array(0)
   const chunks: Uint8Array[] = []
   let bytesRead = 0
-  // Built up incrementally (one chunk's worth of latin1 text appended at a time) rather than
-  // re-decoding Buffer.concat(chunks) on every iteration, so decoding stays O(total bytes) instead
-  // of O(bytes^2) over the read. These markers are ASCII-range markup and decode identically under
-  // latin1 regardless of the page's real charset, so this is a safe early-exit check without yet
-  // knowing — or mis-decoding non-ASCII bytes with the wrong guess for — the actual encoding, which
-  // isn't resolved until the whole (bounded) body has been read.
   let bufferedText = ''
   const headScanState = createHeadScanState()
   while (bytesRead < MAX_BYTES) {
@@ -385,8 +306,6 @@ async function readBoundedBytes(response: Response): Promise<Uint8Array> {
     chunks.push(chunk)
     bytesRead += chunk.byteLength
     bufferedText += Buffer.from(chunk).toString('latin1')
-    // Stop at the end of <head> rather than at </title>: <link rel="icon"> commonly follows
-    // the title, so exiting at the title would truncate the icon away on most real pages.
     if (scanForHeadEnd(bufferedText, headScanState)) break
   }
   await reader.cancel().catch(() => {})
@@ -417,8 +336,6 @@ function parseAttributes(tag: string): Record<string, string> {
   return attributes
 }
 
-// The browser — not this server — loads whatever ends up here, so ipGuard never sees it.
-// Restricting to http(s) is what keeps a hostile page from steering an <img src> elsewhere.
 function resolveHttpUrl(href: string, baseUrl: string): string | null {
   try {
     const resolved = new URL(decodeEntities(href), baseUrl)
@@ -431,13 +348,6 @@ function resolveHttpUrl(href: string, baseUrl: string): string | null {
 
 const BASE_TAG_REGEX = /<base\b[^>]*>/gi
 
-// Per the HTML spec, the effective base is the first <base> element that actually carries an
-// href — a <base> without one (e.g. one used only for its `target` attribute) is skipped rather
-// than stopping the search. Extracted from the masked text (the same masking that strips
-// <script>/<style>/comments before icon scanning) so a <base> tag written inside a script string
-// can't hijack resolution. The href itself may be relative (e.g. "/assets/"), so it's resolved
-// against the fetched page URL first; if there's no <base> tag with an href, or it's
-// unparseable, this just falls back to the page URL, matching prior behavior.
 function extractBaseUrl(text: string, pageUrl: string): string {
   const maskedText = maskNonMarkup(text)
   for (const match of maskedText.matchAll(BASE_TAG_REGEX)) {
@@ -450,9 +360,6 @@ function extractBaseUrl(text: string, pageUrl: string): string {
 }
 
 function extractIconHref(text: string, baseUrl: string): string | null {
-  // Mask <script>/<style> contents and HTML comments before scanning: inline script text
-  // (e.g. a JS string literal holding an HTML template) or a commented-out <link> is not real
-  // markup and must not be treated as a candidate icon — see NON_MARKUP_MASKS above.
   const maskedText = maskNonMarkup(text)
   let appleTouchIcon: string | null = null
 
@@ -477,11 +384,8 @@ async function fetchMetadataInner(url: string, signal: AbortSignal): Promise<Pag
   if (!allowed) return EMPTY_METADATA
   const { response, finalUrl } = allowed
 
-  // Past this point the final URL is known and its host passed the SSRF guard, so an
-  // origin favicon is always a usable answer even when the body is unparseable.
   const originFavicon = new URL('/favicon.ico', finalUrl).toString()
 
-  // A blocked page's title (e.g. Cloudflare's) is not the article's metadata.
   if (response.status < 200 || response.status >= 300) {
     await response.body?.cancel().catch(() => {})
     return { title: null, faviconUrl: originFavicon }
@@ -495,17 +399,6 @@ async function fetchMetadataInner(url: string, signal: AbortSignal): Promise<Pag
   const charset = resolveCharset(contentType, asciiSafeText)
   const text = decodeWithCharset(bytes, charset)
 
-  // extractIconHref already picks the single best candidate (icon over apple-touch-icon,
-  // first-icon-wins); only that final candidate's host is guard-checked here — if it's
-  // disallowed we fall back to the origin default rather than walking to another <link>.
-  // The origin default itself is never re-checked: its host already passed the guard inside
-  // fetchAllowedUrl, and a redundant DNS lookup would just be wasted work.
-  // Note: this only guards what this server does with the href server-side (it never
-  // fetches it) — the browser resolves and loads the chosen URL independently later, so
-  // DNS-rebinding between this check and the browser's own load isn't (and can't be) closed
-  // here, same caveat as isDisallowedHost itself.
-  // The document's <base href> (if any) governs relative *link* resolution, but never the
-  // origin default above: that's always derived from the fetched page URL itself.
   const baseUrl = extractBaseUrl(text, finalUrl)
   const iconCandidate = extractIconHref(text, baseUrl)
   let faviconUrl = originFavicon

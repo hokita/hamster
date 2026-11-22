@@ -2,20 +2,8 @@ import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai'
 import { withSignal } from './safeFetch'
 import type { ContentSource } from './summarizer'
 
-// Labelling is a cheaper task than summarizing the same page, so it gets a flash-lite model. Not
-// "the lite sibling of the summarizer's gemini-3.6-flash": no such model exists — that id shipped
-// once and 404'd on every call in production (ListModels is the source of truth, and 3.5 is the
-// newest flash-lite there). Pinned rather than `gemini-flash-lite-latest` because a silent model
-// upgrade behind an alias is how the summarizer's thinking-budget breakage happened.
 const MODEL = 'gemini-3.5-flash-lite'
-// The route's HTTP response now waits on this call (and returns its result), so this timeout
-// bounds how much a hung Gemini call can add to a summary request; flash-lite typically answers
-// in 1-3s.
 const TIMEOUT_MS = 10_000
-// Labels cost tens of output tokens, but thinking tokens are drawn from the same pool. A tight
-// budget on a thinking model is exactly the failure the summarizer hit at 1024 (every request
-// dying on the MAX_TOKENS guard before the first output token) — generous here costs nothing
-// because MINIMAL thinking keeps actual usage tiny.
 const MAX_OUTPUT_TOKENS = 4096
 const THINKING_LEVEL = ThinkingLevel.MINIMAL
 const MAX_LABELS = 5
@@ -28,9 +16,6 @@ export class LabelerUnavailableError extends Error {
   }
 }
 
-// Trusted instructions live in the system-instruction channel, same pattern as the summarizer:
-// a mitigation against a hostile page overriding the rules, not a guarantee. The realistic worst
-// case if bypassed is a silly label, not a breach.
 function buildSystemInstruction(source: ContentSource): string {
   const subject = source === 'video' ? 'video' : 'web page'
   return [
@@ -46,10 +31,6 @@ function buildSystemInstruction(source: ContentSource): string {
   ].join('\n')
 }
 
-// Stored labels are prior model output derived from untrusted pages, so they get the same
-// fencing as the page content. Labels containing a quote or newline could break out of the
-// fence; normalize()'s charset check now rejects those before storage, so this is belt-and-braces
-// for labels stored before that check existed or hand-edited documents.
 function buildContents(
   title: string,
   text: string,
@@ -77,16 +58,8 @@ function buildContents(
   ].join('\n')
 }
 
-// The model is told the rules, but nothing enforces them — this is the write-time guard that
-// does. A schema-valid string can still contain newlines, quotes, control characters, or markup
-// (plausible after a page-content prompt injection); allowing only lowercase ASCII letters,
-// digits, spaces, and a small set of punctuation used in real tech labels (c++, c#, .net, ci/cd,
-// node.js) means none of that can ever reach Firestore or the UI. This is also what makes
-// buildContents' "labels can't contain a quote or newline" fence assumption true.
 const ALLOWED_LABEL_PATTERN = /^[a-z0-9.][a-z0-9 .+#&/-]*$/
 
-// Anything that survives is lowercase, trimmed, charset-restricted, unique, bounded in length and
-// count.
 function normalize(labels: string[]): string[] {
   const seen = new Set<string>()
   for (const raw of labels) {
@@ -99,9 +72,6 @@ function normalize(labels: string[]): string[] {
   return [...seen]
 }
 
-// The article fetcher hands over whole articles (up to 200k chars) so the summarizer can replace
-// reading them. Labeling only needs the gist, and this model runs on a 10s timeout — so the
-// labeler keeps its own input bound at the pre-expansion cap instead of inheriting the fetcher's.
 const MAX_INPUT_CHARS = 20_000
 
 export async function generateLabels(
@@ -132,8 +102,6 @@ export async function generateLabels(
     signal
   )
 
-  // A response cut off at the token cap is truncated JSON; JSON.parse below would throw anyway,
-  // but this names the actual failure instead of reporting it as malformed model output.
   if (response.candidates?.[0]?.finishReason === 'MAX_TOKENS') {
     throw new Error('gemini response was truncated at the token limit')
   }

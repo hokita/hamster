@@ -2,18 +2,9 @@ import { GoogleGenAI, ThinkingLevel } from '@google/genai'
 import { withSignal } from './safeFetch'
 import type { ContentSource } from './summarizer'
 
-// Same model as the summarizer: answering a question about a whole article is the same
-// read-and-condense task, and the pinned id comes from Google's published model list.
 const MODEL = 'gemini-3.8-flash'
-// An answer is a paragraph or two, far shorter than a summary; Flash reaches that comfortably
-// inside 30s even with the whole article in context.
 const TIMEOUT_MS = 30_000
-// The budget also covers LOW-thinking tokens, drawn from the same pool (the failure mode the
-// summarizer hit at 1024). Answers are a few hundred tokens, so 8192 is ample headroom even in
-// Japanese, and the MAX_TOKENS guard below still catches a model gone off-script.
 const MAX_OUTPUT_TOKENS = 8192
-// gemini-3.8-flash takes only low/medium/high (3.7 already rejected MINIMAL with 400
-// INVALID_ARGUMENT, verified live 2026-08-15 for the summarizer); LOW is the least it accepts.
 const THINKING_LEVEL = ThinkingLevel.LOW
 
 export interface ChatMessage {
@@ -28,15 +19,10 @@ export class ChatUnavailableError extends Error {
   }
 }
 
-// Same predicate contract as the summarizer's: an early-exit optimisation for callers, not the
-// authoritative guard — answerQuestion() itself still throws when the key is missing.
 export function isChatConfigured(): boolean {
   return Boolean(process.env.GEMINI_API_KEY)
 }
 
-// Trusted instructions live in the system-instruction channel, same pattern as the summarizer:
-// a mitigation against a hostile page overriding the rules, not a guarantee. The realistic worst
-// case if bypassed is a misleading answer about one article, not a breach.
 function buildSystemInstruction(source: ContentSource): string {
   const video = source === 'video'
   return [
@@ -76,9 +62,6 @@ function buildSystemInstruction(source: ContentSource): string {
   ].join('\n')
 }
 
-// Both the title and the body come from the fetched page, so both are untrusted. Each is fenced
-// and labelled the same way as the summarizer's prompt — a page that contains "ignore the above
-// instructions" is content, not a command. No trusted instruction text lives in this string.
 function buildArticleTurn(title: string, text: string, source: ContentSource): string {
   const kind = source === 'video' ? 'video' : 'page'
   const body = source === 'video' ? 'transcript' : 'body'
@@ -106,13 +89,6 @@ export async function answerQuestion(
 
   const ai = new GoogleGenAI({ apiKey })
   const signal = AbortSignal.timeout(TIMEOUT_MS)
-  // The article rides in the user channel rather than the system instruction: it is untrusted
-  // page content, and the system channel is reserved for the trusted rules above. It cannot be
-  // its own leading turn, though — the route guarantees messages starts with a user turn, and
-  // Gemini's multi-turn contract wants user/model roles alternating, so a separate article turn
-  // followed by the first question would be two consecutive user contents. Instead the article is
-  // an extra part of the first user turn: same channel, same fencing, valid alternation. The rest
-  // of the conversation follows as its own turns, so a follow-up sees the exchanges before it.
   const [firstMessage, ...laterMessages] = messages
   const response = await withSignal(
     ai.models.generateContent({
@@ -146,8 +122,6 @@ export async function answerQuestion(
     signal
   )
 
-  // An answer truncated at the cap ends mid-sentence with no indication; a retryable failure is
-  // better than presenting half an answer as whole.
   if (response.candidates?.[0]?.finishReason === 'MAX_TOKENS') {
     throw new Error('gemini response was truncated at the token limit')
   }
