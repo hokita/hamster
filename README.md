@@ -9,7 +9,7 @@ delete the ones you're done with.
 | Layer | Tech |
 |---|---|
 | Frontend | React 18, Vite, TypeScript, Tailwind CSS v4, Firebase Auth |
-| Backend | Node.js 24, Express, TypeScript |
+| Backend | Node.js 26, Express, TypeScript |
 | Storage | Firestore (via the backend only — the frontend never touches Firestore directly) |
 | Hosting | Firebase Hosting (frontend) + Cloud Run (backend) — see the deploy plan |
 
