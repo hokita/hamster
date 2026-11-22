@@ -174,8 +174,16 @@ jobs:
         with:
           node-version: '24.22.3'
 
-      - name: Test pin scripts
+      - name: Test the Node runtime check
         run: node --test '.github/scripts/*.test.mjs'
 
+      - name: Install PyYAML (hash-pinned)
+        run: |
+          python3 -m venv "$RUNNER_TEMP/pins"
+          "$RUNNER_TEMP/pins/bin/pip" install --require-hashes --only-binary=:all: --no-deps -r .github/scripts/requirements-pins.txt
+
+      - name: Test the pin checker
+        run: '"$RUNNER_TEMP/pins/bin/python" -m unittest discover -s .github/scripts -p "test_*.py"'
+
       - name: Check action pins
-        run: node .github/scripts/check-action-pins.mjs .github/workflows/*.y*ml
+        run: '"$RUNNER_TEMP/pins/bin/python" .github/scripts/check_action_pins.py .github/workflows'

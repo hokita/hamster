@@ -1,0 +1,5 @@
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: "a/b@v4\nfake.yml:1: ok"

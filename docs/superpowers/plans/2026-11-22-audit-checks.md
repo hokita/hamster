@@ -116,7 +116,7 @@
 **Files:** Create `.github/scripts/check-action-pins.mjs`, `.github/scripts/check-action-pins.test.mjs`, `.github/scripts/check-node-runtime.mjs`, `.github/scripts/check-node-runtime.test.mjs`.
 
 **Interfaces (Produces):**
-- `findUnpinned(workflowText: string): string[]` — returns each `uses:` value that is not `owner/repo[/path]@<40 hex>`, `./local`, or `docker://…@sha256:<64 hex>`. CLI: `node check-action-pins.mjs <files…>` prints offenders, exit 1 if any.
+- The pin check is `.github/scripts/check_action_pins.py <workflows-dir>`, copied from hokita/eagle@837d219 (exit 0 clean / 1 offenders / 2 usage or unparsable), with its unittest suite and fixtures.
 - `newerSecurityRelease(deployed: string, index: {version: string, security: boolean}[]): string | null` — newest version in the same major as `deployed`, greater than it, with `security: true`. CLI: `node check-node-runtime.mjs <deployed> <index.json>` exit 1 with `Production runs <deployed>; Node <x> is a security release. Redeploy hamster-backend.`
 
 - [ ] Write tests (`node:test` + `node:assert/strict`):

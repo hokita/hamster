@@ -1,0 +1,6 @@
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    env: &a [*a]
+    steps:
+      - uses: a/b@v4
