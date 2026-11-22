@@ -31,7 +31,14 @@
 
 - Every high+ has a fix. **No exception needs the user.**
 - The spec's "vitest ≥3.2.6" is out of date: the advisory range is now `vitest ≤4.1.10` (and `@vitest/mocker ≤4.1.11`). The target is vitest 4.1.12.
-- Still unknown until the draft gates PR runs: Trivy findings in `node:24.22.3-alpine` (Alpine packages, npm bundled in the image) and in the backend image's `node_modules`.
+- Trivy on the backend image (draft PR #40, CI run 45018018569 retried): alpine 3.24.4 0, `app/node_modules` 0, `/opt/yarn-v1.22.22` 0, corepack 0. 6 HIGH, all in the npm bundled at `usr/local/lib/node_modules/npm`, all with fixed versions:
+
+  | package | installed | CVE | fixed |
+  |---|---|---|---|
+  | brace-expansion | 5.0.9 | CVE-2026-102276, CVE-2026-102278 | 5.0.11 |
+  | undici | 6.28.0 | CVE-2026-109383, CVE-2026-109869, CVE-2026-19534, CVE-2026-87018 | 6.29.1 |
+
+  Fix (Task 2 image step): the runtime stage drops npm and npx.
 - `frontend` imports only `firebase/app` and `firebase/auth`. Nothing in the app or tests loads Firestore, so no test exercises grpc-js. PR 1 says so plainly.
 
 ## Review Focus
