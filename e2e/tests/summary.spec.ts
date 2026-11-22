@@ -2,14 +2,6 @@ import { test, expect, type Page } from '@playwright/test'
 import { signIn } from '../fixtures/auth'
 import { clearFirestore, seedBookmark } from '../fixtures/firestore'
 
-// Deliberately not a second real external site: this loopback literal is rejected synchronously
-// by the backend's SSRF guard (isDisallowedHost in backend/src/services/ipGuard.ts checks
-// node:net's isIP() before ever touching DNS or the network), so fetchMetadata always returns a
-// null title with no network round trip and no flake risk. The bookmarks route then falls back to
-// the URL itself as the title (backend/src/routes/bookmarks.ts: `title ?? url`), giving these
-// tests a second, deterministic, offline-safe title that's clearly distinct from "Example Domain"
-// — enough to prove the summary page renders the bookmark named by the URL's id, not just
-// "whichever bookmark happens to exist".
 const SECOND_URL = 'http://127.0.0.1/blocked-by-ip-guard'
 
 async function addBookmark(page: Page, url: string, expectedTitle: string) {
@@ -33,8 +25,6 @@ test.describe('bookmark summary page', () => {
     await expect(page).toHaveURL(/\/bookmarks\/.+/)
     await expect(page.getByRole('heading', { name: SECOND_URL })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Example Domain' })).not.toBeVisible()
-    // No GEMINI_API_KEY in the e2e environment, so generation is unavailable and the page
-    // stays in its empty state.
     await expect(page.getByText('No summary yet.')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Generate summary' })).toBeVisible()
   })
@@ -59,8 +49,6 @@ test.describe('bookmark summary page', () => {
 
     await page.getByRole('button', { name: 'Generate summary' }).click()
 
-    // No GEMINI_API_KEY in the e2e environment, so POST /:id/summary deterministically returns
-    // 503 and the page flips from its empty state to its failure state.
     await expect(page.getByText("Couldn't generate a summary.")).toBeVisible()
     const retryButton = page.getByRole('button', { name: 'Try again' })
     await expect(retryButton).toBeVisible()
@@ -79,8 +67,6 @@ test.describe('bookmark summary page', () => {
 
     await page.getByRole('button', { name: 'Regenerate' }).click()
 
-    // Same deterministic 503 as the generate case above — no GEMINI_API_KEY in e2e. The point
-    // here is that a failed regeneration is non-destructive: the stored summary is still shown.
     await expect(page.getByText(/Couldn't regenerate the summary/)).toBeVisible()
     await expect(page.getByText('A stored summary.')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Regenerate' })).toBeEnabled()

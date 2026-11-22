@@ -1,9 +1,6 @@
 import { test, expect } from '@playwright/test'
 import type { APIResponse } from '@playwright/test'
 
-// A missing asset does not 404 here: both Vite's history fallback and the Firebase
-// Hosting `**` rewrite serve index.html with a 200. So status alone proves nothing —
-// every asset assertion has to look at the bytes that actually came back.
 const SIGNATURES: Record<string, { type: RegExp; magic: (b: Buffer) => boolean }> = {
   png: {
     type: /^image\/png/,
@@ -65,7 +62,6 @@ test.describe('app icon and title', () => {
     const hrefs = await page
       .locator('link[rel*="icon"]')
       .evaluateAll((links) => links.map((l) => (l as HTMLLinkElement).getAttribute('href') ?? ''))
-    // rel="icon" x2, rel="shortcut icon", rel="apple-touch-icon"
     expect(hrefs).toHaveLength(4)
 
     for (const href of hrefs) {
@@ -90,9 +86,6 @@ test.describe('app icon and title', () => {
     }
   })
 
-  // The manifest's display member is honoured by iOS 15.4+ for Add to Home Screen, so
-  // anything other than `browser` drops Safari's navigation controls (no back button).
-  // This PR only adds an icon; it should not change how the app launches.
   test('home screen launches keep browser navigation controls', async ({ request }) => {
     const manifest = JSON.parse((await (await request.get('/site.webmanifest')).body()).toString())
 
