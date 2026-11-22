@@ -1,0 +1,159 @@
+name: Audit (nightly)
+
+on:
+  schedule:
+    - cron: '0 18 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  audit-prod-backend:
+    name: Audit prod (backend)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.22.3'
+
+      - name: Audit dependencies
+        working-directory: backend
+        run: npm audit --omit=dev --audit-level=high
+
+  audit-prod-frontend:
+    name: Audit prod (frontend)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.22.3'
+
+      - name: Audit dependencies
+        working-directory: frontend
+        run: npm audit --omit=dev --audit-level=high
+
+  audit-dev-backend:
+    name: Audit dev (backend)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.22.3'
+
+      - name: Audit dependencies
+        working-directory: backend
+        run: npm audit --audit-level=high
+
+  audit-dev-frontend:
+    name: Audit dev (frontend)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.22.3'
+
+      - name: Audit dependencies
+        working-directory: frontend
+        run: npm audit --audit-level=high
+
+  audit-dev-e2e:
+    name: Audit dev (e2e)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.22.3'
+
+      - name: Audit dependencies
+        working-directory: e2e
+        run: npm audit --audit-level=high
+
+  audit-dev-root:
+    name: Audit dev (root)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.22.3'
+
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+
+  actions-pinned:
+    name: Actions pinned
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.22.3'
+
+      - name: Test pin scripts
+        run: node --test '.github/scripts/*.test.mjs'
+
+      - name: Check action pins
+        run: node .github/scripts/check-action-pins.mjs .github/workflows/*.yml
+
+  deployed-image-backend:
+    name: Deployed image (backend)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.22.3'
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          project_id: hamster-52b093
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker asia-northeast1-docker.pkg.dev --quiet
+
+      - name: Resolve deployed image
+        run: |
+          REV=$(gcloud run services describe hamster-backend --region asia-northeast1 --format 'value(status.latestReadyRevisionName)')
+          test -n "$REV"
+          IMAGE=$(gcloud run revisions describe "$REV" --region asia-northeast1 --format 'value(status.imageDigest)')
+          test -n "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Pull deployed image
+        run: docker pull "$IMAGE"
+
+      - name: Scan deployed image with Trivy
+        run: docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 "$IMAGE"
+
+      - name: Check Node.js runtime for security releases
+        run: |
+          curl -fsSo index.json https://nodejs.org/dist/index.json
+          node .github/scripts/check-node-runtime.mjs "$(docker run --rm --entrypoint node "$IMAGE" --version)" index.json
