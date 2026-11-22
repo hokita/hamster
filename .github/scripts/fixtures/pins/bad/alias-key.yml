@@ -1,0 +1,7 @@
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+        k: &k uses
+      - *k : actions/checkout@v4

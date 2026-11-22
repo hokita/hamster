@@ -1,0 +1,4 @@
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    steps: ["\x75ses": a/b@v4]

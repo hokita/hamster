@@ -1,0 +1,3 @@
+jobs:
+  a:
+    uses: org/repo/.github/workflows/r.yml@main

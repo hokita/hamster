@@ -1,0 +1,8 @@
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    steps:
+      - &m
+        uses: a/b@v4
+      - <<: *m
+        name: x

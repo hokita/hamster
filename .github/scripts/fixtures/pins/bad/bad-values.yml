@@ -1,0 +1,12 @@
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/upper@0123456789ABCDEF0123456789abcdef01234567
+      - uses: actions/short@0123456
+      - uses: actions/short@0123456789abcdef0123456789abcdef0123456
+      - uses: actions/long@0123456789abcdef0123456789abcdef012345678
+      - uses: docker://alpine:3
+      - uses: docker://x@0123456789abcdef0123456789abcdef01234567
+      - uses: foo@0123456789abcdef0123456789abcdef01234567
+      - uses: 'a/b@0123456789abcdef0123456789abcdef01234567 # x'
